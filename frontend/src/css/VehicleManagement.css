@@ -1,0 +1,277 @@
+/* Main Container */
+
+.vehicle-management {
+
+    min-height: 100vh;
+    padding: 30px;
+    background: #f4f7fb;
+    font-family: Arial, sans-serif;
+}
+
+
+/* Back Button */
+
+.back-btn {
+
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 15px;
+    transition: 0.3s;
+
+}
+
+
+.back-btn:hover {
+
+    background: #1d4ed8;
+
+}
+
+
+
+/* Heading */
+
+.vehicle-management h1 {
+
+    text-align: center;
+    color: #1e293b;
+    margin: 25px 0;
+    font-size: 32px;
+
+}
+
+
+
+/* Add Vehicle Form */
+
+.vehicle-management form {
+
+    background: white;
+    width: 400px;
+    margin: auto;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0px 5px 20px rgba(0,0,0,0.1);
+
+}
+
+
+
+.vehicle-management input {
+
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 15px;
+
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+
+    font-size: 15px;
+    outline: none;
+
+}
+
+
+
+.vehicle-management input:focus {
+
+    border-color: #2563eb;
+
+}
+
+
+
+/* Add Button */
+
+.vehicle-management form button {
+
+    width: 100%;
+
+    background: #16a34a;
+
+    color: white;
+
+    border: none;
+
+    padding: 12px;
+
+    border-radius: 6px;
+
+    cursor: pointer;
+
+    font-size: 16px;
+
+    transition: 0.3s;
+
+}
+
+
+
+.vehicle-management form button:hover {
+
+    background: #15803d;
+
+}
+
+
+
+/* Vehicle List */
+
+.vehicle-list {
+
+    margin-top: 35px;
+
+    display: flex;
+
+    justify-content: center;
+
+    gap: 20px;
+
+    flex-wrap: wrap;
+
+}
+
+
+
+/* Vehicle Card */
+
+.vehicle-card {
+
+    width: 260px;
+
+    background: white;
+
+    padding: 20px;
+
+    border-radius: 12px;
+
+    box-shadow: 0px 5px 15px rgba(0,0,0,0.1);
+
+    text-align: center;
+
+    transition: 0.3s;
+
+}
+
+
+
+.vehicle-card:hover {
+
+    transform: translateY(-5px);
+
+}
+
+
+
+/* Vehicle Name */
+
+.vehicle-card h3 {
+
+    color:#2563eb;
+
+    margin-bottom:15px;
+
+}
+
+
+
+/* Capacity */
+
+.vehicle-card p {
+
+    color:#334155;
+
+    font-size:16px;
+
+}
+
+
+
+/* Empty Message */
+
+.vehicle-list p {
+
+    color:#64748b;
+
+    font-size:18px;
+
+}
+
+
+
+/* Mobile Responsive */
+
+@media(max-width:768px){
+
+
+    .vehicle-management{
+
+        padding:15px;
+
+    }
+
+
+    .vehicle-management form{
+
+        width:90%;
+
+    }
+
+
+    .vehicle-management h1{
+
+        font-size:24px;
+
+    }
+
+
+    .vehicle-card{
+
+        width:90%;
+
+    }
+
+}
+
+.edit-btn{
+
+    background:#dda036;
+    color:white;
+    border:none;
+    padding:8px 18px;
+    border-radius:6px;
+    cursor:pointer;
+    margin-right:10px;
+
+}
+
+
+.edit-btn:hover{
+
+    background:#da8b30;
+
+}
+
+
+
+.delete-btn{
+
+    background:#8e8686;
+    color:white;
+    border:none;
+    padding:8px 18px;
+    border-radius:6px;
+    cursor:pointer;
+
+}
+
+
+.delete-btn:hover{
+
+    background:#a15858;
+
+}

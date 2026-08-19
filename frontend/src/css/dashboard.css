@@ -1,0 +1,77 @@
+.dashboard {
+    display: flex;
+    min-height: 100vh;
+    background: var(--bg-primary);
+}
+
+.dashboard-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* Prevents flex flex-grow overflow issues */
+}
+
+.dashboard-content {
+    padding: 2.5rem;
+    flex: 1;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.dashboard-content h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.dashboard-content > p {
+    color: var(--text-secondary);
+    margin-bottom: 2.5rem;
+}
+
+.dashboard-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+}
+
+/* Dashboard Specific Card Additions (Base .card is in global.css) */
+.dashboard-cards .card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.dashboard-cards .card::after {
+    content: '';
+    position: absolute;
+    right: -20px;
+    bottom: -20px;
+    width: 100px;
+    height: 100px;
+    background: var(--accent-gradient);
+    opacity: 0.05;
+    border-radius: 50%;
+    transition: transform 0.3s ease;
+}
+
+.dashboard-cards .card:hover::after {
+    transform: scale(1.2);
+}
+
+.card h2 {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.card span {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+}

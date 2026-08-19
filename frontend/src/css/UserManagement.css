@@ -1,0 +1,159 @@
+/* User Management Container */
+
+.user-container {
+    min-height: 100vh;
+    padding: 30px;
+    background: #f4f7fb;
+    font-family: Arial, sans-serif;
+}
+
+
+/* Back Button */
+
+.back-btn {
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 15px;
+    margin-bottom: 20px;
+    transition: 0.3s;
+}
+
+
+.back-btn:hover {
+    background: #1d4ed8;
+}
+
+
+
+/* Heading */
+
+.user-container h1 {
+
+    color: #1e293b;
+    margin-bottom: 30px;
+    font-size: 32px;
+
+}
+
+
+
+/* Table */
+
+table {
+
+    width: 90%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0px 5px 20px rgba(0,0,0,0.1);
+
+}
+
+
+
+/* Table Header */
+
+thead {
+
+    background: #2563eb;
+    color: white;
+
+}
+
+
+th {
+
+    padding: 15px;
+    font-size: 16px;
+    text-align: center;
+
+}
+
+
+
+/* Table Body */
+
+td {
+
+    padding: 14px;
+    text-align: center;
+    border-bottom: 1px solid #e5e7eb;
+    color: #334155;
+
+}
+
+
+
+/* Row Hover */
+
+tbody tr:hover {
+
+    background: #eff6ff;
+
+}
+
+
+
+/* Alternate Rows */
+
+tbody tr:nth-child(even){
+
+    background: #f8fafc;
+
+}
+
+
+
+/* Loading */
+
+h2 {
+
+    text-align: center;
+    margin-top: 50px;
+    color: #2563eb;
+
+}
+
+
+
+/* Responsive */
+
+@media(max-width:768px){
+
+
+    .user-container{
+
+        padding:15px;
+
+    }
+
+
+    table{
+
+        width:100%;
+        font-size:14px;
+        overflow-x:auto;
+
+    }
+
+
+    th,td{
+
+        padding:10px;
+
+    }
+
+
+    .user-container h1{
+
+        font-size:24px;
+
+    }
+
+
+}

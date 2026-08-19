@@ -1,0 +1,377 @@
+/* ============================================================
+   LOCATION SEARCH BOX — Google Maps-Grade Component Styles
+   ============================================================ */
+
+/* Root container */
+.location-search-box {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+}
+
+/* Input Row */
+.location-search-input-wrapper {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+}
+
+/* Search Magnifier Icon */
+.location-search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 16px;
+    pointer-events: none;
+    user-select: none;
+    line-height: 1;
+    z-index: 2;
+    opacity: 0.8;
+}
+
+/* Main Text Input */
+.location-search-input {
+    width: 100%;
+    height: 46px;
+    padding: 0 44px 0 42px;
+    border: 1.5px solid #d1d5db;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #111827;
+    font-size: 14.5px;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.location-search-input:focus {
+    border-color: #2563eb;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.location-search-input:disabled {
+    background: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+.location-search-input::placeholder {
+    color: #9ca3af;
+    font-size: 14px;
+}
+
+/* Spinner Loader */
+.location-search-loading {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+}
+
+.location-search-spinner {
+    display: block;
+    width: 17px;
+    height: 17px;
+    border: 2.5px solid #e5e7eb;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: location-search-spin 0.65s linear infinite;
+}
+
+@keyframes location-search-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Clear Button */
+.location-search-clear {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 50%;
+    background: #f3f4f6;
+    color: #6b7280;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0;
+    transition: all 0.15s ease;
+}
+
+.location-search-clear:hover {
+    background: #e5e7eb;
+    color: #1f2937;
+    transform: translateY(-50%) scale(1.08);
+}
+
+/* ============================================================
+   AUTOCOMPLETE DROPDOWN
+   Must sit ABOVE the Leaflet map (Leaflet has z-index ~400-1000)
+   ============================================================ */
+
+.location-search-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    max-height: 380px;
+    overflow-y: auto;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.18), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    z-index: 99999;
+    padding: 6px 0;
+    animation: location-dropdown-fade 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes location-dropdown-fade {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.location-search-dropdown::-webkit-scrollbar {
+    width: 6px;
+}
+
+.location-search-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.location-search-dropdown::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 6px;
+}
+
+/* Provider badge header */
+.location-search-provider-bar {
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #f1f5f9;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.provider-active {
+    color: #16a34a;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.provider-warning {
+    color: #d97706;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Key missing alert card inside dropdown */
+.location-search-key-warning {
+    margin: 6px 12px 10px;
+    padding: 10px 12px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: #92400e;
+    line-height: 1.45;
+}
+
+.location-search-key-warning strong {
+    display: block;
+    color: #b45309;
+    font-size: 13px;
+    margin-bottom: 3px;
+}
+
+.location-search-key-warning p {
+    margin: 0;
+}
+
+.location-search-key-warning code {
+    background: #fef3c7;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 11.5px;
+}
+
+/* Result Row */
+.location-search-result {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border: none;
+    background: #ffffff;
+    text-align: left;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: background 0.12s ease, transform 0.1s ease;
+}
+
+.location-search-result:hover,
+.location-search-result.highlighted {
+    background: #f8fafc;
+}
+
+.location-search-result.highlighted {
+    background: #eff6ff;
+}
+
+/* Icon */
+.location-result-icon {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    border-radius: 50%;
+    background: #f1f5f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    border: 1px solid #e2e8f0;
+}
+
+.location-search-result.highlighted .location-result-icon {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+}
+
+/* Content */
+.location-result-content {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.location-result-name {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.location-result-address {
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.location-result-type {
+    display: inline-block;
+    margin-top: 3px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: capitalize;
+    width: fit-content;
+}
+
+.location-search-result.highlighted .location-result-type {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+/* ============================================================
+   NO RESULTS STATE
+   ============================================================ */
+
+.location-search-no-results {
+    padding: 22px 18px;
+    text-align: center;
+    color: #64748b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.location-search-no-results .no-results-icon {
+    font-size: 24px;
+    opacity: 0.7;
+}
+
+.location-search-no-results p {
+    margin: 0;
+    font-size: 13.5px;
+    color: #334155;
+}
+
+.location-search-no-results small {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* Error banner */
+.location-search-error-banner {
+    margin: 6px 12px;
+    padding: 8px 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    color: #b91c1c;
+    font-size: 12px;
+}
+
+/* ============================================================
+   RESPONSIVE DESIGN
+   ============================================================ */
+
+@media (max-width: 768px) {
+    .location-search-input {
+        height: 44px;
+        font-size: 14px;
+    }
+
+    .location-search-dropdown {
+        max-height: 300px;
+    }
+
+    .location-search-result {
+        padding: 9px 12px;
+    }
+}
