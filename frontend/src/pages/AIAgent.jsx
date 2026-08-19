@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { toast } from "react-hot-toast";
 import {
     getAIData,
     generateRecommendations,
+    getActivePlan,
+    resetAIPlan,
     getManualRoutes,
     saveSelectedPlan,
     getSelectedPlan
@@ -117,6 +120,10 @@ export default function AIAgent() {
     const [selectionMessage, setSelectionMessage] = useState("");
     const [lastSelection, setLastSelection] = useState(null);
 
+    const [showResetModal, setShowResetModal] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [resetSuccessMessage, setResetSuccessMessage] = useState("");
+
     const [manualRoutes, setManualRoutes] = useState([]);
     const [manualRoutesLoading, setManualRoutesLoading] = useState(true);
     const [loading, setLoading] = useState(true);
@@ -128,6 +135,7 @@ export default function AIAgent() {
     const loadPageData = async () => {
         await Promise.all([
             loadAIData(),
+            loadActivePlan(),
             loadLastSelection(),
             loadManualRoutes()
         ]);
@@ -140,6 +148,29 @@ export default function AIAgent() {
             setData(response);
         } catch (error) {
             console.error("Unable to load AI data:", error);
+        }
+    };
+
+    const loadActivePlan = async () => {
+        try {
+            const response = await getActivePlan();
+            if (response?.success && response?.active && response?.plan) {
+                const plan = response.plan;
+                setPlanData(plan);
+                if (plan.source && hasValidCoordinates(plan.source)) {
+                    setSourceLocation(plan.source);
+                }
+                if (plan.destination && hasValidCoordinates(plan.destination)) {
+                    setDestinationLocation(plan.destination);
+                } else if (plan.startingPoint && hasValidCoordinates(plan.startingPoint) && !plan.source) {
+                    setDestinationLocation(plan.startingPoint);
+                }
+            } else {
+                setPlanData(null);
+            }
+        } catch (error) {
+            console.error("Unable to load active AI plan:", error);
+            setPlanData(null);
         }
     };
 
@@ -182,6 +213,7 @@ export default function AIAgent() {
             setGenerating(true);
             setGenerationError("");
             setSelectionMessage("");
+            setResetSuccessMessage("");
 
             let tripMode = "INWARD";
             if (hasSource && !hasDestination) {
@@ -204,6 +236,8 @@ export default function AIAgent() {
 
             setPlanData(response);
             setSelectedPlanType("");
+            toast.success("AI route plan generated and saved successfully.");
+            await loadAIData();
         } catch (error) {
             console.error("AI plan generation error:", error);
             setPlanData(null);
@@ -214,6 +248,39 @@ export default function AIAgent() {
             );
         } finally {
             setGenerating(false);
+        }
+    };
+
+    const handleConfirmReset = async () => {
+        try {
+            setResetting(true);
+            const response = await resetAIPlan();
+
+            if (response?.success) {
+                setPlanData(null);
+                setSourceLocation(null);
+                setDestinationLocation(null);
+                setSelectedPlanType("");
+                setLastSelection(null);
+                setGenerationError("");
+                setSelectionMessage("");
+                setShowResetModal(false);
+                const msg = "AI route reset successfully. Student travel responses have been reset to Pending.";
+                setResetSuccessMessage(msg);
+                toast.success(msg);
+                await loadAIData();
+            } else {
+                throw new Error(response?.message || "Unable to reset AI transportation plan.");
+            }
+        } catch (error) {
+            console.error("Reset AI Plan Error:", error);
+            toast.error(
+                error?.response?.data?.message ||
+                error?.message ||
+                "Failed to reset AI route."
+            );
+        } finally {
+            setResetting(false);
         }
     };
 
@@ -301,7 +368,7 @@ export default function AIAgent() {
             <div className="ai-page">
                 <div className="ai-loading">
                     <span className="spinner"></span>
-                    Loading AI Transportation Engine...
+                    Loading saved AI plan...
                 </div>
             </div>
         );
@@ -318,11 +385,39 @@ export default function AIAgent() {
                         The AI Agent independently generates optimized, continuous road routes using confirmed Coming users, stopping areas, vehicle capacities, and schedule availability. Map visualization is managed in Route Management, and the administrator makes the final decision.
                     </p>
                 </div>
-                <div className="ai-ready">
-                    <span className="ready-dot"></span>
-                    AI Engine Ready
+                <div className="ai-header-actions">
+                    <div className="ai-ready">
+                        <span className="ready-dot"></span>
+                        AI Engine Ready
+                    </div>
+                    <button
+                        type="button"
+                        className="reset-ai-route-btn"
+                        onClick={() => setShowResetModal(true)}
+                        title="Reset AI Generated Route and all student responses for the next trip"
+                    >
+                        🔄 Reset AI Generated Route
+                    </button>
                 </div>
             </div>
+
+            {/* Reset Success Message Banner */}
+            {resetSuccessMessage && (
+                <div className="reset-success-banner">
+                    <span className="banner-icon">✓</span>
+                    <div className="banner-text">
+                        <strong>AI Route Reset Complete</strong>
+                        <p>{resetSuccessMessage}</p>
+                    </div>
+                    <button
+                        type="button"
+                        className="banner-close"
+                        onClick={() => setResetSuccessMessage("")}
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
             {/* Top Statistics */}
             <section className="summary-grid">
@@ -519,10 +614,30 @@ export default function AIAgent() {
                         </div>
                     )}
 
+                    {/* Empty State when no active AI plan exists */}
+                    {!aiPlan && !generating && (
+                        <div className="empty-ai-box">
+                            <span className="empty-ai-icon">🤖</span>
+                            <div className="empty-ai-text">
+                                <h3>No AI transportation plan generated.</h3>
+                                <p>
+                                    Select a <strong>Source</strong> or <strong>Destination</strong> above and click <strong>⚡ Generate AI Plan</strong> to calculate and save an optimized route plan.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
                     {/* AI Plan Card */}
                     {aiPlan && (
                         <div className="plan-card ai-plan-card">
-                            <div className="plan-status">✓ AI Plan Generated &amp; Road Certified</div>
+                            <div className="plan-status-row">
+                                <div className="plan-status">✓ Active AI Plan Saved in Database</div>
+                                {planData?.generatedAt && (
+                                    <small className="plan-saved-at">
+                                        Saved on {new Date(planData.generatedAt).toLocaleString()}
+                                    </small>
+                                )}
+                            </div>
 
                             <div className="plan-title-row">
                                 <div>
@@ -988,6 +1103,55 @@ export default function AIAgent() {
                     </div>
                 )}
             </section>
+
+            {/* Reset Confirmation Modal */}
+            {showResetModal && (
+                <div
+                    className="ai-modal-overlay"
+                    onClick={() => !resetting && setShowResetModal(false)}
+                >
+                    <div
+                        className="ai-modal-card"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="ai-modal-header">
+                            <span className="ai-modal-icon">⚠️</span>
+                            <h2>Reset AI Generated Route?</h2>
+                        </div>
+
+                        <div className="ai-modal-body">
+                            <p>
+                                This will remove the currently generated AI transportation
+                                route and reset all student travel responses.
+                            </p>
+                            <p>
+                                Students will return to <strong>Pending</strong> and will need to confirm
+                                whether they are <strong>Coming</strong> or <strong>Not Coming</strong> for the next trip.
+                            </p>
+                        </div>
+
+                        <div className="ai-modal-actions">
+                            <button
+                                type="button"
+                                className="ai-modal-btn cancel-btn"
+                                onClick={() => setShowResetModal(false)}
+                                disabled={resetting}
+                            >
+                                Cancel
+                            </button>
+
+                            <button
+                                type="button"
+                                className="ai-modal-btn reset-btn"
+                                onClick={handleConfirmReset}
+                                disabled={resetting}
+                            >
+                                {resetting ? "Resetting..." : "Reset"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

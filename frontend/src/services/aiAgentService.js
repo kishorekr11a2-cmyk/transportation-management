@@ -16,6 +16,18 @@ const api = axios.create({
     }
 });
 
+// Automatically attach JWT Token
+api.interceptors.request.use(
+    (config) => {
+        const token = localStorage.getItem("token");
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
+
 /* -------------------------------------------------------
    GET AI DATA
 ------------------------------------------------------- */
@@ -72,6 +84,24 @@ export const generateRecommendations = async (payload) => {
 };
 
 /* -------------------------------------------------------
+   GET ACTIVE SAVED AI PLAN
+------------------------------------------------------- */
+
+export const getActivePlan = async () => {
+    const response = await api.get("/ai-agent/active-plan");
+    return response.data;
+};
+
+/* -------------------------------------------------------
+   RESET AI PLAN & STUDENT TRAVEL STATUSES
+------------------------------------------------------- */
+
+export const resetAIPlan = async () => {
+    const response = await api.post("/ai-agent/reset");
+    return response.data;
+};
+
+/* -------------------------------------------------------
    SAVE FINAL PLAN
 ------------------------------------------------------- */
 
@@ -95,6 +125,8 @@ export default {
     searchPlaces,
     resolveLocation,
     generateRecommendations,
+    getActivePlan,
+    resetAIPlan,
     saveSelectedPlan,
     getSelectedPlan,
     isValidCoordinate,

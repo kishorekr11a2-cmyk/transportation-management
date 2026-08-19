@@ -1,4 +1,6 @@
 import express from "express";
+import authMiddleware from "../middleware/authMiddleware.js";
+import adminMiddleware from "../middleware/adminMiddleware.js";
 
 import {
     getAIData,
@@ -6,7 +8,9 @@ import {
     resolveLocation,
     generateAgentRecommendations,
     saveSelectedPlan,
-    getSelectedPlan
+    getSelectedPlan,
+    getActiveAIPlan,
+    resetAIPlanAndStudents
 } from "../services/aiAgentService.js";
 
 const router =
@@ -320,6 +324,88 @@ router.get(
 
                 message:
                     "Unable to load selected plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| GET ACTIVE SAVED AI PLAN
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+    "/active-plan",
+    async (
+        req,
+        res
+    ) => {
+        try {
+            const result =
+                await getActiveAIPlan();
+
+            res.json(
+                result
+            );
+
+        } catch (error) {
+            console.error(
+                "Get active AI plan error:",
+                error
+            );
+
+            res.status(
+                500
+            ).json({
+                success: false,
+
+                plan:
+                    null,
+
+                message:
+                    "Unable to load active AI plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| RESET AI GENERATED PLAN & RESET STUDENT TRAVEL RESPONSES
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/reset",
+    authMiddleware,
+    adminMiddleware,
+    async (
+        req,
+        res
+    ) => {
+        try {
+            const result =
+                await resetAIPlanAndStudents();
+
+            res.json(
+                result
+            );
+
+        } catch (error) {
+            console.error(
+                "Reset AI plan error:",
+                error
+            );
+
+            res.status(
+                500
+            ).json({
+                success: false,
+
+                message:
+                    error?.message ||
+                    "Unable to reset AI transportation plan."
             });
         }
     }

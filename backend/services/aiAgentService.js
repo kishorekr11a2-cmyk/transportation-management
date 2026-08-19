@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import AiPlan from "../models/AiPlan.js";
+import User from "../models/User.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -2992,7 +2994,7 @@ export const generateAgentRecommendations = async (payload = {}) => {
     const uniqueStoppingAreas = resolvedStops.length;
     const totalRouteStopVisits = aiPlan.totalRouteStopVisits || 0;
 
-    return {
+    const planResult = {
         success: true,
         generatedAt: new Date().toISOString(),
         tripMode: effectiveTripMode,
@@ -3025,6 +3027,37 @@ export const generateAgentRecommendations = async (payload = {}) => {
         manualPlan,
         recommendations: aiPlan ? [aiPlan] : []
     };
+
+    // Persist final generated AI plan to MongoDB AiPlan collection
+    try {
+        await AiPlan.updateMany(
+            { active: true },
+            { $set: { active: false, status: "superseded" } }
+        );
+
+        const savedPlanDoc = await AiPlan.create({
+            active: true,
+            status: "active",
+            planType: "AI",
+            tripMode: effectiveTripMode,
+            source: sourceHub,
+            destination: destinationHub,
+            startingPoint: anchorHub,
+            hubProvenance: resolvedHubInfo?.provenance || "User Selection",
+            summary: planResult.summary,
+            stoppingGroups: planResult.stoppingGroups,
+            aiPlan: planResult.aiPlan,
+            manualPlan: planResult.manualPlan,
+            recommendations: planResult.recommendations,
+            generatedAt: new Date()
+        });
+
+        planResult.planId = savedPlanDoc._id;
+    } catch (persistErr) {
+        console.error("Failed to persist generated AI plan to database:", persistErr.message);
+    }
+
+    return planResult;
 };
 
 /*
@@ -3048,14 +3081,21 @@ export const saveSelectedPlan = async (selection) => {
 
     const collection = mongoose.connection.db.collection("ai_selected_plans");
 
+    // Deactivate previous active selections rather than deleting historical records
+    await collection.updateMany(
+        { active: { $ne: false } },
+        { $set: { active: false, status: "superseded" } }
+    );
+
     const document = {
+        active: true,
+        status: "active",
         planType: selection.planType,
         plan: selection.plan,
         startingPoint: selection.startingPoint || null,
         selectedAt: new Date()
     };
 
-    await collection.deleteMany({});
     const result = await collection.insertOne(document);
 
     return {
@@ -3076,7 +3116,7 @@ export const getSelectedPlan = async () => {
 
         const selected = await mongoose.connection.db
             .collection("ai_selected_plans")
-            .findOne({}, { sort: { selectedAt: -1 } });
+            .findOne({ active: { $ne: false } }, { sort: { selectedAt: -1 } });
 
         return {
             success: true,
@@ -3105,4 +3145,102 @@ export const analyzeTransport = async () => {
         ready: true,
         data
     };
+};
+
+/*
+|--------------------------------------------------------------------------
+| GET ACTIVE AI PLAN FROM DATABASE
+|--------------------------------------------------------------------------
+*/
+
+export const getActiveAIPlan = async () => {
+    try {
+        const activePlan = await AiPlan.findOne({ active: true })
+            .sort({ createdAt: -1 })
+            .lean();
+
+        if (!activePlan) {
+            return {
+                success: true,
+                active: false,
+                plan: null
+            };
+        }
+
+        return {
+            success: true,
+            active: true,
+            plan: {
+                ...activePlan,
+                generatedAt: activePlan.generatedAt ? activePlan.generatedAt.toISOString() : activePlan.createdAt
+            }
+        };
+    } catch (error) {
+        console.error("Get active AI plan error:", error.message);
+        return {
+            success: false,
+            active: false,
+            plan: null,
+            message: "Unable to load active AI plan."
+        };
+    }
+};
+
+/*
+|--------------------------------------------------------------------------
+| RESET AI PLAN & STUDENT TRAVEL STATUSES (IDEMPOTENT & SAFE)
+|--------------------------------------------------------------------------
+*/
+
+export const resetAIPlanAndStudents = async () => {
+    try {
+        // 1. Deactivate all active AI plans
+        const planUpdate = await AiPlan.updateMany(
+            { active: true },
+            {
+                $set: {
+                    active: false,
+                    status: "reset",
+                    resetAt: new Date()
+                }
+            }
+        );
+
+        // 2. Deactivate currently active selected plans without deleting historical data
+        if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+            await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                { active: { $ne: false } },
+                {
+                    $set: {
+                        active: false,
+                        status: "reset",
+                        resetAt: new Date()
+                    }
+                }
+            );
+        }
+
+        // 3. Reset student travel status back to "Pending"
+        const userUpdate = await User.updateMany(
+            {
+                role: "student",
+                travelStatus: { $in: ["Coming", "Not Coming"] }
+            },
+            {
+                $set: {
+                    travelStatus: "Pending"
+                }
+            }
+        );
+
+        return {
+            success: true,
+            message: "AI route reset successfully. Student travel responses have been reset to Pending.",
+            planReset: (planUpdate?.modifiedCount || 0) > 0 || (planUpdate?.matchedCount || 0) > 0,
+            studentsReset: userUpdate?.modifiedCount || 0
+        };
+    } catch (error) {
+        console.error("Reset AI plan and students error:", error.message);
+        throw new Error(error.message || "Failed to reset AI plan and student travel responses.");
+    }
 };

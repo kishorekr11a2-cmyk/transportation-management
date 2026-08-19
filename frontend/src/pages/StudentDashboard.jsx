@@ -126,7 +126,7 @@ const StudentDashboard = () => {
 
                     {/* Buttons show ONLY when status is Pending */}
 
-                    {student.travelStatus === "Pending" && (
+                    {(!student.travelStatus || student.travelStatus === "Pending") && (
                         <div className="travel-buttons">
 
                             <button
