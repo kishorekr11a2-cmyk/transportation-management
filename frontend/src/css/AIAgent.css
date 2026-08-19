@@ -1550,6 +1550,15 @@
     background: #f8fafc;
 }
 
+.empty-ai-box.zero-demand-box {
+    border-color: #fde047;
+    background: #fefce8;
+}
+
+.empty-ai-box.zero-demand-box .empty-ai-text h3 {
+    color: #854d0e;
+}
+
 .empty-ai-icon {
     font-size: 36px;
 }

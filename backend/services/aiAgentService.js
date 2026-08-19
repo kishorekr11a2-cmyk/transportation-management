@@ -1515,60 +1515,51 @@ const groupStopsIntoCorridors = (stops, anchorHub) => {
 |
 */
 
-export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", sourceHub = null) => {
+export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", sourceHub = null, destinationHub = null) => {
     if (!Array.isArray(stops) || stops.length === 0) return [];
+
+    // The starting origin hub for the route:
+    // OUTWARD starts from SOURCE
+    // INWARD starts from DESTINATION
+    const startHub = tripMode === "OUTWARD"
+        ? (sourceHub || anchorHub)
+        : (destinationHub || anchorHub);
+
     if (stops.length === 1) {
         const single = stops[0];
-        const startPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
-        const legDist = calculateDistanceKm(startPoint.latitude, startPoint.longitude, single.latitude, single.longitude);
+        const legDist = calculateDistanceKm(startHub.latitude, startHub.longitude, single.latitude, single.longitude);
         return [{
             ...single,
             order: 1,
             legDistanceKm: Number(legDist.toFixed(2)),
-            selectionReason: `${single.name} selected as primary stop (+${legDist.toFixed(2)} km from ${startPoint.name || "hub"}).`
+            selectionReason: `${single.name} selected as primary stop (+${legDist.toFixed(2)} km from ${startHub.name || (tripMode === "OUTWARD" ? "source" : "destination")}).`
         }];
     }
 
-    const startHub = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
-
     const unvisited = stops.map((s) => ({
         ...s,
-        distFromHub: calculateDistanceKm(startHub.latitude, startHub.longitude, s.latitude, s.longitude),
-        bearingFromHub: calculateBearing(startHub.latitude, startHub.longitude, s.latitude, s.longitude)
+        distFromStart: calculateDistanceKm(startHub.latitude, startHub.longitude, s.latitude, s.longitude),
+        bearingFromStart: calculateBearing(startHub.latitude, startHub.longitude, s.latitude, s.longitude)
     }));
 
     const orderedTour = [];
 
     // Step 1: Initial Stop Selection
-    // For OUTWARD: Nearest suitable stop from Source
-    // For INWARD: Farthest suitable stop from Destination (outermost start of morning pickup line)
+    // For BOTH OUTWARD and INWARD:
+    // Select the NEAREST valid road-connected stopping area from the starting origin hub.
     let initialIndex = 0;
-    if (tripMode === "OUTWARD") {
-        let minDist = Infinity;
-        unvisited.forEach((s, idx) => {
-            if (s.distFromHub < minDist) {
-                minDist = s.distFromHub;
-                initialIndex = idx;
-            }
-        });
-    } else {
-        let maxDist = -1;
-        unvisited.forEach((s, idx) => {
-            if (s.distFromHub > maxDist) {
-                maxDist = s.distFromHub;
-                initialIndex = idx;
-            }
-        });
-    }
+    let minDist = Infinity;
+    unvisited.forEach((s, idx) => {
+        if (s.distFromStart < minDist) {
+            minDist = s.distFromStart;
+            initialIndex = idx;
+        }
+    });
 
     const initialStop = unvisited.splice(initialIndex, 1)[0];
-    const initialLegDist = tripMode === "OUTWARD"
-        ? calculateDistanceKm(startHub.latitude, startHub.longitude, initialStop.latitude, initialStop.longitude)
-        : calculateDistanceKm(initialStop.latitude, initialStop.longitude, unvisited[0]?.latitude || startHub.latitude, unvisited[0]?.longitude || startHub.longitude);
+    const initialLegDist = calculateDistanceKm(startHub.latitude, startHub.longitude, initialStop.latitude, initialStop.longitude);
 
-    initialStop.selectionReason = tripMode === "OUTWARD"
-        ? `${initialStop.name} selected first: nearest road-connected stopping area (+${initialLegDist.toFixed(2)} km) from ${startHub.name || "selected source"}.`
-        : `${initialStop.name} selected first: outermost pickup point (+${initialLegDist.toFixed(2)} km from next sector stop).`;
+    initialStop.selectionReason = `${initialStop.name} selected first: nearest road-connected stopping area (+${initialLegDist.toFixed(2)} km) from ${startHub.name || (tripMode === "OUTWARD" ? "selected source" : "selected destination")}.`;
 
     orderedTour.push(initialStop);
 
@@ -1587,28 +1578,20 @@ export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", 
 
             let score = legDist;
 
-            if (tripMode === "OUTWARD") {
-                // Penalize jumping backward toward the source
-                const distRegress = currentStop.distFromHub - candidate.distFromHub;
-                if (distRegress > 1.0) {
-                    score += distRegress * 3.0; // Strong backtracking penalty
-                }
+            // Continuous directional progression: penalize jumping backward toward the start origin
+            const distRegress = currentStop.distFromStart - candidate.distFromStart;
+            if (distRegress > 1.0) {
+                score += distRegress * 3.0; // Backtracking penalty
+            }
 
-                // Penalize sharp U-turn deviations
-                if (prevPoint) {
-                    const bearing1 = calculateBearing(prevPoint.latitude, prevPoint.longitude, currentStop.latitude, currentStop.longitude);
-                    const bearing2 = calculateBearing(currentStop.latitude, currentStop.longitude, candidate.latitude, candidate.longitude);
-                    let turnAngle = Math.abs(bearing2 - bearing1);
-                    if (turnAngle > 180) turnAngle = 360 - turnAngle;
-                    if (turnAngle > 120) {
-                        score += (turnAngle / 180) * 4.0;
-                    }
-                }
-            } else {
-                // Inward: progress closer to destination hub
-                const distRegress = candidate.distFromHub - currentStop.distFromHub;
-                if (distRegress > 1.0) {
-                    score += distRegress * 3.0;
+            // Penalize sharp U-turn deviations (>120°) from the previous segment
+            if (prevPoint) {
+                const bearing1 = calculateBearing(prevPoint.latitude, prevPoint.longitude, currentStop.latitude, currentStop.longitude);
+                const bearing2 = calculateBearing(currentStop.latitude, currentStop.longitude, candidate.latitude, candidate.longitude);
+                let turnAngle = Math.abs(bearing2 - bearing1);
+                if (turnAngle > 180) turnAngle = 360 - turnAngle;
+                if (turnAngle > 120) {
+                    score += (turnAngle / 180) * 4.0;
                 }
             }
 
@@ -1621,7 +1604,7 @@ export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", 
 
         if (bestCandidateIdx !== -1) {
             const chosen = unvisited.splice(bestCandidateIdx, 1)[0];
-            chosen.selectionReason = `${chosen.name} selected next: continuous road progression (+${bestLegDist.toFixed(2)} km) maintaining corridor alignment.`;
+            chosen.selectionReason = `${chosen.name} selected next: continuous road progression (+${bestLegDist.toFixed(2)} km) along corridor.`;
             orderedTour.push(chosen);
             prevPoint = currentStop;
             currentStop = chosen;
@@ -1632,14 +1615,14 @@ export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", 
         }
     }
 
-    // Step 3: 2-Opt Optimization with Strict Continuity Protection
+    // Step 3: 2-Opt Optimization preserving the initial nearest stop and continuous directional flow
     const optimizedTour = optimizeContinuousStopOrder2Opt(orderedTour, startHub, tripMode);
 
     return optimizedTour;
 };
 
 // 2-Opt Optimizer with Directional Progress & Backtracking Penalties
-export const optimizeContinuousStopOrder2Opt = (stops, anchorHub, tripMode = "OUTWARD") => {
+export const optimizeContinuousStopOrder2Opt = (stops, startHub, tripMode = "OUTWARD") => {
     if (!Array.isArray(stops) || stops.length <= 2) return [...(stops || [])];
 
     let currentTour = [...stops];
@@ -1650,28 +1633,19 @@ export const optimizeContinuousStopOrder2Opt = (stops, anchorHub, tripMode = "OU
             const curr = tour[i];
             const next = i < tour.length - 1 ? tour[i + 1] : null;
 
-            if (i === 0 && tripMode === "OUTWARD") {
-                totalCost += calculateDistanceKm(anchorHub.latitude, anchorHub.longitude, curr.latitude, curr.longitude);
+            if (i === 0) {
+                totalCost += calculateDistanceKm(startHub.latitude, startHub.longitude, curr.latitude, curr.longitude);
             }
 
             if (next) {
                 const legDist = calculateDistanceKm(curr.latitude, curr.longitude, next.latitude, next.longitude);
                 totalCost += legDist;
 
-                if (tripMode === "OUTWARD") {
-                    const currDistFromHub = calculateDistanceKm(anchorHub.latitude, anchorHub.longitude, curr.latitude, curr.longitude);
-                    const nextDistFromHub = calculateDistanceKm(anchorHub.latitude, anchorHub.longitude, next.latitude, next.longitude);
-                    const regress = currDistFromHub - nextDistFromHub;
-                    if (regress > 1.2) {
-                        totalCost += regress * 3.0; // Backtracking penalty
-                    }
-                } else {
-                    const currDistFromHub = calculateDistanceKm(anchorHub.latitude, anchorHub.longitude, curr.latitude, curr.longitude);
-                    const nextDistFromHub = calculateDistanceKm(anchorHub.latitude, anchorHub.longitude, next.latitude, next.longitude);
-                    const regress = nextDistFromHub - currDistFromHub;
-                    if (regress > 1.2) {
-                        totalCost += regress * 3.0;
-                    }
+                const currDistFromStart = calculateDistanceKm(startHub.latitude, startHub.longitude, curr.latitude, curr.longitude);
+                const nextDistFromStart = calculateDistanceKm(startHub.latitude, startHub.longitude, next.latitude, next.longitude);
+                const regress = currDistFromStart - nextDistFromStart;
+                if (regress > 1.2) {
+                    totalCost += regress * 3.0; // Backtracking penalty
                 }
             }
         }
@@ -1687,10 +1661,8 @@ export const optimizeContinuousStopOrder2Opt = (stops, anchorHub, tripMode = "OU
         improved = false;
         iteration++;
 
-        // Preserve first stop in OUTWARD mode (ensure nearest stop remains initial stop)
-        const startIndex = tripMode === "OUTWARD" ? 1 : 0;
-
-        for (let i = startIndex; i < currentTour.length - 1; i++) {
+        // Preserve first stop (ensure nearest stop remains initial stop)
+        for (let i = 1; i < currentTour.length - 1; i++) {
             for (let j = i + 1; j < currentTour.length; j++) {
                 const candidateTour = [
                     ...currentTour.slice(0, i),
@@ -2050,7 +2022,7 @@ const allocateInstitutionalBuses = ({
         if (corridorDemands[cIdx] === 0 || vehicleIdx >= sortedVehicles.length) return;
 
         const numBusesForCorridor = busesByCorridor[cIdx] || 1;
-        const orderedCorridor = sequenceStopsContinuous(corridor, anchorHub, tripMode, sourceHub);
+        const orderedCorridor = sequenceStopsContinuous(corridor, anchorHub, tripMode, sourceHub, destinationHub);
 
         const mutableCorridorStops = orderedCorridor.map((s) =>
             allMutableStops.get(s.name) || { ...s, remainingUsers: 0, remainingUserIds: [] }
@@ -2063,7 +2035,7 @@ const allocateInstitutionalBuses = ({
 
             let assignedUsers = 0;
             const currentBusStops = [];
-            let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
+            let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
             for (const stopData of mutableCorridorStops) {
                 if (assignedUsers >= capacity) break;
@@ -2099,7 +2071,7 @@ const allocateInstitutionalBuses = ({
 
             let cumulativePassengers = 0;
             let passengersOnBus = assignedUsers;
-            const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
+            const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
             const stopsWithPassengers = currentBusStops.map((s, idx) => {
                 const consecutiveLegDist = idx === 0
@@ -2132,8 +2104,8 @@ const allocateInstitutionalBuses = ({
                         userIds: s.userIds || [],
                         resolved: true,
                         selectionReason: idx === 0
-                            ? `${s.name} selected first: outermost pickup point in sector.`
-                            : `${s.name} selected next: continuous progression (+${consecutiveLegDist.toFixed(2)} km) toward destination.`
+                            ? `${s.name} selected first: nearest road-connected stopping area (+${consecutiveLegDist.toFixed(2)} km) from ${startPt.name || "selected destination"}.`
+                            : `${s.name} selected next: continuous progression (+${consecutiveLegDist.toFixed(2)} km) along corridor.`
                     };
                 }
             });
@@ -2154,7 +2126,7 @@ const allocateInstitutionalBuses = ({
 
             const routeNumber = rawBuses.length + 1;
             const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-            const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || "Departure Hub") : stopsWithPassengers[0]?.name;
+            const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || startPt.name || "Departure Hub") : (destinationHub?.name || startPt.name || "Departure Hub");
             const lastPt = tripMode === "OUTWARD"
                 ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
                 : (destinationHub?.name || anchorHub.name);
@@ -2897,7 +2869,6 @@ export const generateAgentRecommendations = async (payload = {}) => {
     const requestedDate = normalizeDate(
         payload?.date || payload?.scheduleDate || payload?.schedule?.date
     );
-
     const [allUsers, rawVehicles, routes, schedules] = await Promise.all([
         getCollectionData("users"),
         getCollectionData("vehicles"),
@@ -2906,12 +2877,16 @@ export const generateAgentRecommendations = async (payload = {}) => {
     ]);
 
     const users = getManagedUsers(allUsers);
-    let confirmedUsers = getConfirmedUsers(users);
+    const confirmedUsers = getConfirmedUsers(users);
 
-    if (confirmedUsers.length === 0 && users.length > 0) {
-        confirmedUsers = users.filter(
-            (u) => normalize(u?.travelStatus).toLowerCase() !== "not coming"
-        );
+    // ZERO-DEMAND RULE: If there are ZERO Coming students, DO NOT GENERATE ANY ROUTES.
+    if (confirmedUsers.length === 0) {
+        return {
+            success: false,
+            comingUsers: 0,
+            confirmedUsers: 0,
+            message: "No Coming students available. Students must confirm their travel status before an AI route can be generated."
+        };
     }
 
     const availableVehicles = getAvailableVehicles(rawVehicles, schedules, requestedDate);
@@ -2922,58 +2897,16 @@ export const generateAgentRecommendations = async (payload = {}) => {
     let resolvedStops = stoppingGroups.filter((s) => isValidCoordinate(s.latitude, s.longitude));
 
     if (resolvedStops.length === 0) {
-        console.warn("[AI Agent] No user stops could be resolved in the transit region around:", anchorHub.name);
         return {
-            success: true,
-            generatedAt: new Date().toISOString(),
-            tripMode: effectiveTripMode,
-            source: sourceHub,
-            destination: destinationHub,
-            startingPoint: anchorHub,
-            hubProvenance: resolvedHubInfo?.provenance || "User Input",
-            summary: {
-                totalUsers: users.length,
-                confirmedUsers: 0,
-                comingUsers: 0,
-                vehicles: rawVehicles.length,
-                availableVehicles: availableVehicles.length,
-                totalAvailableCapacity: availableVehicles.reduce((s, v) => s + getVehicleCapacity(v), 0),
-                routes: routes.length,
-                schedules: schedules.length,
-                stoppingAreas: 0,
-                uniqueStoppingAreas: 0,
-                totalRouteStopVisits: 0,
-                mappedStoppingAreas: 0,
-                capacityShortage: false,
-                unallocatedUsers: 0
-            },
-            stoppingGroups: [],
-            aiPlan: {
-                planType: "AI",
-                buses: [],
-                comingUsers: 0,
-                assignedUsers: 0,
-                unassignedUsers: 0,
-                totalCapacity: 0,
-                availableTotalCapacity: availableVehicles.reduce((s, v) => s + getVehicleCapacity(v), 0),
-                utilization: 0,
-                availableVehicleCount: availableVehicles.length,
-                allStopsAllocated: true,
-                unassignedStops: [],
-                recommendationsList: ["No user stopping areas found. Add users with stopping areas to see route plans."],
-                warnings: []
-            },
-            manualPlan: buildManualPlan(routes, rawVehicles),
-            recommendations: []
+            success: false,
+            comingUsers: confirmedUsers.length,
+            message: "No valid stopping areas with Coming students could be resolved."
         };
     }
 
-    const totalComingUsers =
-        confirmedUsers.length > 0
-            ? confirmedUsers.length
-            : resolvedStops.reduce((sum, s) => sum + (s.users?.length || 0), 0);
+    const totalComingUsers = confirmedUsers.length;
 
-    // Build AI Recommended Plan with 2-opt continuous progression and route consolidation
+    // Build AI Recommended Plan with continuous road progression and route consolidation
     const aiPlan = await buildAIPlan({
         sourceHub,
         destinationHub,
@@ -2985,14 +2918,16 @@ export const generateAgentRecommendations = async (payload = {}) => {
     });
 
     const manualPlan = buildManualPlan(routes, rawVehicles);
-
     const totalAvailableCapacity = availableVehicles.reduce(
         (sum, v) => sum + getVehicleCapacity(v),
         0
     );
 
     const uniqueStoppingAreas = resolvedStops.length;
-    const totalRouteStopVisits = aiPlan.totalRouteStopVisits || 0;
+    const totalRouteStopVisits = (aiPlan.buses || []).reduce(
+        (sum, b) => sum + (Array.isArray(b.stops) ? b.stops.length : 0),
+        0
+    );
 
     const planResult = {
         success: true,
@@ -3028,33 +2963,35 @@ export const generateAgentRecommendations = async (payload = {}) => {
         recommendations: aiPlan ? [aiPlan] : []
     };
 
-    // Persist final generated AI plan to MongoDB AiPlan collection
-    try {
-        await AiPlan.updateMany(
-            { active: true },
-            { $set: { active: false, status: "superseded" } }
-        );
+    // Persist final generated AI plan to MongoDB AiPlan collection ONLY if demand > 0 and routes generated
+    if (totalComingUsers > 0 && aiPlan?.buses?.length > 0) {
+        try {
+            await AiPlan.updateMany(
+                { active: true },
+                { $set: { active: false, status: "superseded" } }
+            );
 
-        const savedPlanDoc = await AiPlan.create({
-            active: true,
-            status: "active",
-            planType: "AI",
-            tripMode: effectiveTripMode,
-            source: sourceHub,
-            destination: destinationHub,
-            startingPoint: anchorHub,
-            hubProvenance: resolvedHubInfo?.provenance || "User Selection",
-            summary: planResult.summary,
-            stoppingGroups: planResult.stoppingGroups,
-            aiPlan: planResult.aiPlan,
-            manualPlan: planResult.manualPlan,
-            recommendations: planResult.recommendations,
-            generatedAt: new Date()
-        });
+            const savedPlanDoc = await AiPlan.create({
+                active: true,
+                status: "active",
+                planType: "AI",
+                tripMode: effectiveTripMode,
+                source: sourceHub,
+                destination: destinationHub,
+                startingPoint: anchorHub,
+                hubProvenance: resolvedHubInfo?.provenance || "User Selection",
+                summary: planResult.summary,
+                stoppingGroups: planResult.stoppingGroups,
+                aiPlan: planResult.aiPlan,
+                manualPlan: planResult.manualPlan,
+                recommendations: planResult.recommendations,
+                generatedAt: new Date()
+            });
 
-        planResult.planId = savedPlanDoc._id;
-    } catch (persistErr) {
-        console.error("Failed to persist generated AI plan to database:", persistErr.message);
+            planResult.planId = savedPlanDoc._id;
+        } catch (persistErr) {
+            console.error("Failed to persist generated AI plan to database:", persistErr.message);
+        }
     }
 
     return planResult;
