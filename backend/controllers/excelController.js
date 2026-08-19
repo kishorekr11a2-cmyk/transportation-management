@@ -59,7 +59,7 @@ export const uploadExcel = async (req, res) => {
                 stoppings,
                 password,
                 role: "student",
-                travelStatus: "Pending"
+                travelStatus: "Coming"
             });
         }
 

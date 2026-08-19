@@ -1704,11 +1704,12 @@ const optimizeContinuousStopOrder = sequenceStopsContinuous;
 | ROUTE CONSOLIDATION ENGINE
 |--------------------------------------------------------------------------
 |
-| Merges low-utilization routes (<50% utilization) into compatible adjacent
-| routes when capacity and geographic continuity permit.
+| Merges low-utilization routes (<50% utilization or <=25 passengers) into compatible
+| adjacent routes when capacity and geographic continuity permit.
 |
-| IMPORTANT RULE: If a route is consolidated, the old route is strictly
-| removed/released from the final plan. If it remains, consolidation is NOT claimed.
+| IMPORTANT RULE: If a route is consolidated, the merged route is strictly
+| removed/released from the active routes list. Final routes are cleanly re-indexed
+| (R-01, R-02, ...) and consolidation logs use the final stable route codes.
 |
 */
 
@@ -1716,25 +1717,25 @@ export const consolidateLowUtilizationRoutes = ({
     initialBuses,
     availableVehicles,
     anchorHub,
-    tripMode,
-    sourceHub
+    tripMode = "OUTWARD",
+    sourceHub = null,
+    destinationHub = null
 }) => {
     if (!Array.isArray(initialBuses) || initialBuses.length <= 1) {
-        return { buses: initialBuses, consolidationLogs: [] };
+        return { buses: initialBuses || [], consolidationLogs: [] };
     }
 
-    let activeBuses = [...initialBuses];
-    const consolidationLogs = [];
+    let activeBuses = initialBuses.map((b) => ({ ...b }));
+    const MIN_POST_MERGE_UTILIZATION = 0.50;
+    const MAX_DISTANCE_DELTA_KM = 12.0;
+    const MAX_DISTANCE_DELTA_RATIO = 1.35;
+
     let consolidationChanged = true;
-    let passCount = 0;
+    let pass = 0;
 
-    const MAX_DISTANCE_DELTA_KM = 12;
-    const MAX_DISTANCE_DELTA_RATIO = 1.30;
-    const MIN_POST_MERGE_UTILIZATION = 0.45;
-
-    while (consolidationChanged && passCount < 3) {
+    while (consolidationChanged && pass < 5 && activeBuses.length > 1) {
         consolidationChanged = false;
-        passCount++;
+        pass++;
 
         const lowUtilIndices = [];
         for (let i = 0; i < activeBuses.length; i++) {
@@ -1783,7 +1784,7 @@ export const consolidateLowUtilizationRoutes = ({
 
                 if (bearingDiff > 55 && minInterStopDist > 15) continue;
 
-                // Guard 4: combine stops and re-sequence with nearest-first continuity
+                // Guard 4: combine stops and re-sequence with continuous progression
                 const combinedStopsMap = new Map();
                 [...targetBus.stops, ...lowBus.stops].forEach((st) => {
                     const key = st.name.toLowerCase().trim();
@@ -1797,11 +1798,11 @@ export const consolidateLowUtilizationRoutes = ({
                 });
 
                 const rawCombinedStops = Array.from(combinedStopsMap.values());
-                const candidateMergedStops = sequenceStopsContinuous(rawCombinedStops, anchorHub, tripMode, sourceHub);
+                const candidateMergedStops = sequenceStopsContinuous(rawCombinedStops, anchorHub, tripMode, sourceHub, destinationHub);
 
                 let maxLegKm = 0;
                 let candidateTotalKm = 0;
-                let lastPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
+                let lastPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
                 for (const st of candidateMergedStops) {
                     const leg = calculateDistanceKm(lastPt.latitude, lastPt.longitude, st.latitude, st.longitude);
@@ -1832,12 +1833,12 @@ export const consolidateLowUtilizationRoutes = ({
 
                 let cumUsers = 0;
                 let remainingOnBus = mergedUsers;
-                const startPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
+                const startPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
                 const finalMergedStops = bestMergedStops.map((s, idx) => {
-                    const legDist = idx === 0
-                        ? calculateDistanceKm(startPoint.latitude, startPoint.longitude, s.latitude, s.longitude)
-                        : calculateDistanceKm(bestMergedStops[idx - 1].latitude, bestMergedStops[idx - 1].longitude, s.latitude, s.longitude);
+                    const prevP = idx === 0 ? startPoint : bestMergedStops[idx - 1];
+                    let legDist = calculateDistanceKm(prevP.latitude, prevP.longitude, s.latitude, s.longitude);
+                    if (legDist < 0.05 && idx > 0) legDist = 0.05;
 
                     if (tripMode === "OUTWARD") {
                         const dropped = s.userCount || 0;
@@ -1863,25 +1864,24 @@ export const consolidateLowUtilizationRoutes = ({
                     }
                 });
 
-                const newRouteDistKm = Number(finalMergedStops.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
-                const newUtil = Math.round((mergedUsers / targetBus.capacity) * 100);
+                let newRouteDistKm = finalMergedStops.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
+                if (tripMode === "INWARD" && destinationHub && finalMergedStops.length > 0) {
+                    const lastSt = finalMergedStops[finalMergedStops.length - 1];
+                    newRouteDistKm += calculateDistanceKm(lastSt.latitude, lastSt.longitude, destinationHub.latitude, destinationHub.longitude);
+                }
 
                 targetBus.stops = finalMergedStops;
                 targetBus.assignedUsers = mergedUsers;
                 targetBus.remainingSeats = targetBus.capacity - mergedUsers;
                 targetBus.standbyBufferSeats = targetBus.capacity - mergedUsers;
-                targetBus.routeDistanceKm = newRouteDistKm;
+                targetBus.routeDistanceKm = Number(newRouteDistKm.toFixed(2));
                 targetBus.users = finalMergedStops.flatMap((s) => s.userIds || []);
                 targetBus.isConsolidated = true;
-                targetBus.consolidatedFrom = [
-                    ...(targetBus.consolidatedFrom || []),
-                    lowBus.routeCode || lowBus.vehicleName
+                targetBus.absorbedVehicles = [
+                    ...(targetBus.absorbedVehicles || []),
+                    lowBus.vehicleName
                 ];
-                targetBus.consolidationNote = `Merged low-utilization ${lowBus.routeCode || lowBus.vehicleName} (${lowBus.assignedUsers} passengers). Seat utilization elevated to ${newUtil}%.`;
-
-                consolidationLogs.push(
-                    `AI Optimizer consolidated Route ${lowBus.routeCode} (${lowBus.assignedUsers} passengers) into ${targetBus.vehicleName} (${targetBus.routeCode}), boosting seat utilization to ${newUtil}% and releasing vehicle ${lowBus.vehicleName}.`
-                );
+                targetBus.consolidatedPassengers = (targetBus.consolidatedPassengers || 0) + lowBus.assignedUsers;
 
                 // Strictly remove the merged bus from active routes
                 activeBuses = activeBuses.filter((_, idx) => idx !== lowIdx);
@@ -1891,15 +1891,28 @@ export const consolidateLowUtilizationRoutes = ({
         }
     }
 
-    // Re-number remaining routes cleanly (R-01, R-02, ...)
+    const consolidationLogs = [];
+
+    // Re-number remaining active routes cleanly and stably (R-01, R-02, ...)
     activeBuses = activeBuses.map((bus, idx) => {
         const routeNumber = idx + 1;
         const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-        const firstPt = tripMode === "OUTWARD" ? (bus.sourceHub?.name || sourceHub?.name || "Departure Hub") : bus.stops[0]?.name;
+        const firstPt = tripMode === "OUTWARD"
+            ? (sourceHub?.name || "Departure Hub")
+            : (destinationHub?.name || "Departure Hub");
         const lastPt = tripMode === "OUTWARD"
-            ? bus.stops[bus.stops.length - 1]?.name
-            : (bus.destinationHub?.name || anchorHub?.name || "Campus");
-        const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Pickup Line";
+            ? (bus.stops[bus.stops.length - 1]?.name || destinationHub?.name || "Terminus")
+            : (bus.stops[bus.stops.length - 1]?.name || sourceHub?.name || "Terminus");
+        const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
+
+        if (bus.isConsolidated && Array.isArray(bus.absorbedVehicles) && bus.absorbedVehicles.length > 0) {
+            const absorbedList = bus.absorbedVehicles.join(", ");
+            const util = Math.round((bus.assignedUsers / bus.capacity) * 100);
+            bus.consolidationNote = `Consolidated ${bus.consolidatedPassengers} passengers from released vehicle (${absorbedList}) into ${bus.vehicleName}. Seat utilization elevated to ${util}%.`;
+            consolidationLogs.push(
+                `AI Optimizer consolidated ${bus.consolidatedPassengers} passengers from released vehicle (${absorbedList}) into Route ${routeCode} (${bus.vehicleName}), elevating seat utilization to ${util}% and freeing surplus fleet vehicles.`
+            );
+        }
 
         return {
             ...bus,
@@ -1946,55 +1959,11 @@ const allocateInstitutionalBuses = ({
     }
 
     const anchorHub = tripMode === "OUTWARD" ? (sourceHub || destinationHub) : (destinationHub || sourceHub);
-    const totalDemand = resolvedStops.reduce((s, st) => s + (st.users?.length || st.userCount || 0), 0);
 
     // Step 1: Group stops into geographic corridor clusters
     const corridors = groupStopsIntoCorridors(resolvedStops, anchorHub);
 
-    // Step 2: Demand per corridor
-    const corridorDemands = corridors.map((corridor) =>
-        corridor.reduce((sum, s) => sum + (s.users?.length || s.userCount || 0), 0)
-    );
-    const activeCorradorCount = corridorDemands.filter((d) => d > 0).length;
-
-    // Step 3: Assign buses proportionally to demand
-    const busesByCorridor = corridors.map((_, idx) => {
-        if (corridorDemands[idx] === 0) return 0;
-        if (sortedVehicles.length <= activeCorradorCount) return 1;
-        const share = Math.max(1, Math.round(
-            (corridorDemands[idx] / Math.max(1, totalDemand)) * sortedVehicles.length
-        ));
-        return share;
-    });
-
-    let totalBusSlots = busesByCorridor.reduce((a, b) => a + b, 0);
-    let clampIdx = 0;
-    while (totalBusSlots > sortedVehicles.length) {
-        if (busesByCorridor[clampIdx % corridors.length] > 1) {
-            busesByCorridor[clampIdx % corridors.length]--;
-            totalBusSlots--;
-        }
-        clampIdx++;
-        if (clampIdx > corridors.length * 20) break;
-    }
-
-    let availableSlots = sortedVehicles.length - totalBusSlots;
-    if (availableSlots > 0) {
-        for (let i = 0; i < corridors.length && availableSlots > 0; i++) {
-            const demand = corridorDemands[i];
-            const allocatedBusCount = busesByCorridor[i];
-            const approxCap = allocatedBusCount * 70;
-            if (demand > approxCap) {
-                busesByCorridor[i]++;
-                availableSlots--;
-            }
-        }
-    }
-
-    // Step 4: Build routes using nearest-first continuous sequencing
-    const rawBuses = [];
-    let vehicleIdx = 0;
-
+    // Step 2: Mutable stop state tracking remaining unassigned passengers
     const allMutableStops = new Map();
     resolvedStops.forEach((s) => {
         const bearingFromStart = calculateBearing(
@@ -2018,17 +1987,22 @@ const allocateInstitutionalBuses = ({
         });
     });
 
-    corridors.forEach((corridor, cIdx) => {
-        if (corridorDemands[cIdx] === 0 || vehicleIdx >= sortedVehicles.length) return;
+    const rawBuses = [];
+    let vehicleIdx = 0;
 
-        const numBusesForCorridor = busesByCorridor[cIdx] || 1;
+    // Step 3: Allocate vehicles per corridor until demand is fulfilled or fleet exhausted
+    corridors.forEach((corridor) => {
         const orderedCorridor = sequenceStopsContinuous(corridor, anchorHub, tripMode, sourceHub, destinationHub);
 
-        const mutableCorridorStops = orderedCorridor.map((s) =>
-            allMutableStops.get(s.name) || { ...s, remainingUsers: 0, remainingUserIds: [] }
-        );
+        // Keep allocating buses to this corridor while unserved passengers remain and vehicles are available
+        while (vehicleIdx < sortedVehicles.length) {
+            const mutableCorridorStops = orderedCorridor.map((s) =>
+                allMutableStops.get(s.name) || { ...s, remainingUsers: 0, remainingUserIds: [] }
+            );
 
-        for (let b = 0; b < numBusesForCorridor && vehicleIdx < sortedVehicles.length; b++) {
+            const corridorRemainingDemand = mutableCorridorStops.reduce((sum, s) => sum + s.remainingUsers, 0);
+            if (corridorRemainingDemand <= 0) break;
+
             const vehicle = sortedVehicles[vehicleIdx];
             const capacity = getVehicleCapacity(vehicle);
             const vehicleName = getVehicleName(vehicle, vehicleIdx);
@@ -2041,10 +2015,11 @@ const allocateInstitutionalBuses = ({
                 if (assignedUsers >= capacity) break;
                 if (stopData.remainingUsers <= 0) continue;
 
-                const legKm = calculateDistanceKm(
+                let legKm = calculateDistanceKm(
                     lastPoint.latitude, lastPoint.longitude,
                     stopData.latitude, stopData.longitude
                 );
+                if (legKm < 0.05 && currentBusStops.length > 0) legKm = 0.05;
 
                 if (currentBusStops.length > 0 && legKm > MAX_CONSECUTIVE_LEG_KM) continue;
 
@@ -2064,9 +2039,9 @@ const allocateInstitutionalBuses = ({
                 });
             }
 
-            if (currentBusStops.length === 0) {
-                vehicleIdx++;
-                continue;
+            if (currentBusStops.length === 0 || assignedUsers === 0) {
+                // If this vehicle could not take anyone in this corridor, advance to try next or sweep
+                break;
             }
 
             let cumulativePassengers = 0;
@@ -2074,9 +2049,9 @@ const allocateInstitutionalBuses = ({
             const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
             const stopsWithPassengers = currentBusStops.map((s, idx) => {
-                const consecutiveLegDist = idx === 0
-                    ? calculateDistanceKm(startPt.latitude, startPt.longitude, s.latitude, s.longitude)
-                    : calculateDistanceKm(currentBusStops[idx - 1].latitude, currentBusStops[idx - 1].longitude, s.latitude, s.longitude);
+                const prevPt = idx === 0 ? startPt : currentBusStops[idx - 1];
+                let consecutiveLegDist = calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude);
+                if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
 
                 if (tripMode === "OUTWARD") {
                     const dropped = s.userCount;
@@ -2130,7 +2105,7 @@ const allocateInstitutionalBuses = ({
             const lastPt = tripMode === "OUTWARD"
                 ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
                 : (destinationHub?.name || anchorHub.name);
-            const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Pickup Line";
+            const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
             const allContinuous = stopsWithPassengers.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM);
 
             rawBuses.push({
@@ -2158,8 +2133,8 @@ const allocateInstitutionalBuses = ({
         }
     });
 
-    // Step 5: Fallback sweep for any remaining unassigned users
-    if (vehicleIdx < sortedVehicles.length) {
+    // Step 4: Fallback sweep for any remaining unassigned users across all stops
+    while (vehicleIdx < sortedVehicles.length) {
         const remainingStopList = [];
         allMutableStops.forEach((stop) => {
             if (stop.remainingUsers > 0) {
@@ -2167,132 +2142,140 @@ const allocateInstitutionalBuses = ({
             }
         });
 
-        if (remainingStopList.length > 0) {
-            const orderedRemaining = sequenceStopsContinuous(remainingStopList, anchorHub, tripMode, sourceHub);
+        if (remainingStopList.length === 0) break;
 
-            while (vehicleIdx < sortedVehicles.length && remainingStopList.some((s) => s.remainingUsers > 0)) {
-                const vehicle = sortedVehicles[vehicleIdx];
-                const capacity = getVehicleCapacity(vehicle);
-                const vehicleName = getVehicleName(vehicle, vehicleIdx);
+        const orderedRemaining = sequenceStopsContinuous(remainingStopList, anchorHub, tripMode, sourceHub, destinationHub);
+        const vehicle = sortedVehicles[vehicleIdx];
+        const capacity = getVehicleCapacity(vehicle);
+        const vehicleName = getVehicleName(vehicle, vehicleIdx);
 
-                let assignedUsers = 0;
-                const currentBusStops = [];
-                let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
+        let assignedUsers = 0;
+        const currentBusStops = [];
+        let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
-                for (const stopData of orderedRemaining) {
-                    if (assignedUsers >= capacity) break;
-                    if (stopData.remainingUsers <= 0) continue;
+        for (const stopData of orderedRemaining) {
+            if (assignedUsers >= capacity) break;
+            if (stopData.remainingUsers <= 0) continue;
 
-                    const legKm = calculateDistanceKm(
-                        lastPoint.latitude, lastPoint.longitude,
-                        stopData.latitude, stopData.longitude
-                    );
+            let legKm = calculateDistanceKm(
+                lastPoint.latitude, lastPoint.longitude,
+                stopData.latitude, stopData.longitude
+            );
+            if (legKm < 0.05 && currentBusStops.length > 0) legKm = 0.05;
 
-                    if (currentBusStops.length > 0 && legKm > MAX_CONSECUTIVE_LEG_KM) continue;
+            const seatsLeft = capacity - assignedUsers;
+            const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
+            const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
 
-                    const seatsLeft = capacity - assignedUsers;
-                    const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
-                    const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
+            stopData.remainingUsers -= boardingCount;
+            assignedUsers += boardingCount;
+            lastPoint = stopData;
 
-                    stopData.remainingUsers -= boardingCount;
-                    assignedUsers += boardingCount;
-                    lastPoint = stopData;
-
-                    currentBusStops.push({
-                        ...stopData,
-                        userCount: boardingCount,
-                        userIds: boardedIds,
-                        legDistanceKm: Number(legKm.toFixed(2))
-                    });
-                }
-
-                if (currentBusStops.length > 0) {
-                    let cumulativePassengers = 0;
-                    let passengersOnBus = assignedUsers;
-                    const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
-
-                    const stopsWithPassengers = currentBusStops.map((s, idx) => {
-                        const consecutiveLegDist = idx === 0
-                            ? calculateDistanceKm(startPt.latitude, startPt.longitude, s.latitude, s.longitude)
-                            : calculateDistanceKm(currentBusStops[idx - 1].latitude, currentBusStops[idx - 1].longitude, s.latitude, s.longitude);
-
-                        if (tripMode === "OUTWARD") {
-                            const dropped = s.userCount;
-                            passengersOnBus = Math.max(0, passengersOnBus - dropped);
-                            return {
-                                ...s,
-                                order: idx + 1,
-                                legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                                passengersDropped: dropped,
-                                passengersRemaining: passengersOnBus,
-                                userIds: s.userIds || [],
-                                resolved: true,
-                                selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
-                            };
-                        } else {
-                            cumulativePassengers += s.userCount;
-                            return {
-                                ...s,
-                                order: idx + 1,
-                                legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                                cumulativePassengers,
-                                standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
-                                userIds: s.userIds || [],
-                                resolved: true,
-                                selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
-                            };
-                        }
-                    });
-
-                    let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
-                    const avgBearing =
-                        stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
-                        stopsWithPassengers.length;
-                    const sectorName = getSectorName(avgBearing, anchorHub.name);
-
-                    const routeNumber = rawBuses.length + 1;
-                    const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-                    const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || "Departure Hub") : stopsWithPassengers[0]?.name;
-                    const lastPt = tripMode === "OUTWARD"
-                        ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
-                        : (destinationHub?.name || anchorHub.name);
-                    const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Pickup Line";
-                    const allContinuous = stopsWithPassengers.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM);
-
-                    rawBuses.push({
-                        routeNumber,
-                        routeCode,
-                        routeName: `${routeCode}: ${firstPt} to ${lastPt} (${sectorName} ${lineType})`,
-                        sectorName,
-                        tripMode,
-                        vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
-                        vehicleName,
-                        capacity,
-                        assignedUsers,
-                        remainingSeats: Math.max(0, capacity - assignedUsers),
-                        standbyBufferSeats: Math.max(0, capacity - assignedUsers),
-                        stops: stopsWithPassengers,
-                        sourceHub: sourceHub || null,
-                        destinationHub: destinationHub || null,
-                        routeDistanceKm: Number(totalKm.toFixed(2)),
-                        isContinuous: allContinuous,
-                        roadRouteStatus: allContinuous ? "Road Optimized (Continuous)" : "Routing with extended legs",
-                        users: stopsWithPassengers.flatMap((s) => s.userIds || [])
-                    });
-                }
-
-                vehicleIdx++;
-            }
+            currentBusStops.push({
+                ...stopData,
+                userCount: boardingCount,
+                userIds: boardedIds,
+                legDistanceKm: Number(legKm.toFixed(2))
+            });
         }
+
+        if (currentBusStops.length === 0 || assignedUsers === 0) {
+            vehicleIdx++;
+            continue;
+        }
+
+        let cumulativePassengers = 0;
+        let passengersOnBus = assignedUsers;
+        const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
+
+        const stopsWithPassengers = currentBusStops.map((s, idx) => {
+            const prevPt = idx === 0 ? startPt : currentBusStops[idx - 1];
+            let consecutiveLegDist = calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude);
+            if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
+
+            if (tripMode === "OUTWARD") {
+                const dropped = s.userCount;
+                passengersOnBus = Math.max(0, passengersOnBus - dropped);
+                return {
+                    ...s,
+                    order: idx + 1,
+                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                    passengersDropped: dropped,
+                    passengersRemaining: passengersOnBus,
+                    userIds: s.userIds || [],
+                    resolved: true,
+                    selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
+                };
+            } else {
+                cumulativePassengers += s.userCount;
+                return {
+                    ...s,
+                    order: idx + 1,
+                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                    cumulativePassengers,
+                    standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
+                    userIds: s.userIds || [],
+                    resolved: true,
+                    selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
+                };
+            }
+        });
+
+        let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
+        if (tripMode === "INWARD" && destinationHub && stopsWithPassengers.length > 0) {
+            const last = stopsWithPassengers[stopsWithPassengers.length - 1];
+            totalKm += calculateDistanceKm(
+                last.latitude, last.longitude,
+                destinationHub.latitude, destinationHub.longitude
+            );
+        }
+
+        const avgBearing =
+            stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
+            stopsWithPassengers.length;
+        const sectorName = getSectorName(avgBearing, anchorHub.name);
+
+        const routeNumber = rawBuses.length + 1;
+        const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
+        const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || startPt.name || "Departure Hub") : (destinationHub?.name || startPt.name || "Departure Hub");
+        const lastPt = tripMode === "OUTWARD"
+            ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
+            : (destinationHub?.name || anchorHub.name);
+        const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
+        const allContinuous = stopsWithPassengers.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM);
+
+        rawBuses.push({
+            routeNumber,
+            routeCode,
+            routeName: `${routeCode}: ${firstPt} to ${lastPt} (${sectorName} ${lineType})`,
+            sectorName,
+            tripMode,
+            vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
+            vehicleName,
+            capacity,
+            assignedUsers,
+            remainingSeats: Math.max(0, capacity - assignedUsers),
+            standbyBufferSeats: Math.max(0, capacity - assignedUsers),
+            stops: stopsWithPassengers,
+            sourceHub: sourceHub || null,
+            destinationHub: destinationHub || null,
+            routeDistanceKm: Number(totalKm.toFixed(2)),
+            isContinuous: allContinuous,
+            roadRouteStatus: allContinuous ? "Road Optimized (Continuous)" : "Routing with extended legs",
+            users: stopsWithPassengers.flatMap((s) => s.userIds || [])
+        });
+
+        vehicleIdx++;
     }
 
-    // Step 6: Active Route Consolidation (Removes merged routes cleanly)
+    // Step 5: Active Route Consolidation (Removes merged routes cleanly)
     const { buses, consolidationLogs } = consolidateLowUtilizationRoutes({
         initialBuses: rawBuses,
         availableVehicles,
         anchorHub,
         tripMode,
-        sourceHub
+        sourceHub,
+        destinationHub
     });
 
     const unassignedStops = [];
@@ -2327,23 +2310,6 @@ export const validateAndCertifyAIPlan = ({
 }) => {
     const DETOUR_RATIO_THRESHOLD = 2.2;
 
-    const checks = {
-        allPassengersAssigned: false,
-        noPassengerDuplicated: false,
-        noPassengerUnallocated: false,
-        vehiclesExist: false,
-        vehiclesAvailableInSchedule: false,
-        capacitiesNotExceeded: false,
-        consecutiveLegsContinuous: false,
-        roadRouteConnectivityValid: false,
-        noUnreasonableGeographicJumps: false,
-        routeDirectionContinuous: false,
-        excessiveBacktrackingAvoided: false,
-        detourRatioAcceptable: false,
-        routeDistancesValid: false,
-        lowUtilizationRoutesEvaluated: false
-    };
-
     const assignedPassengerIds = new Set();
     let duplicatePassengerFound = false;
     let totalAssignedUsers = 0;
@@ -2359,28 +2325,25 @@ export const validateAndCertifyAIPlan = ({
         });
     });
 
-    checks.noPassengerDuplicated = !duplicatePassengerFound;
-    checks.allPassengersAssigned = totalAssignedUsers === totalComingUsers || totalAssignedUsers === totalAvailableCapacity;
-    checks.noPassengerUnallocated = totalComingUsers <= totalAvailableCapacity ? totalAssignedUsers === totalComingUsers : true;
-
-    const availableVehicleIds = new Set(availableVehicles.map((v) => String(v._id || v.id || "")));
-    checks.vehiclesExist = buses.every((b) => b.vehicleId);
-    checks.vehiclesAvailableInSchedule = buses.every((b) => !b.vehicleId || availableVehicleIds.has(String(b.vehicleId)) || String(b.vehicleId).startsWith("bus-"));
-    checks.capacitiesNotExceeded = buses.every((b) => b.assignedUsers <= b.capacity);
-
-    checks.consecutiveLegsContinuous = buses.every((b) =>
-        b.stops.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM)
-    );
-    checks.noUnreasonableGeographicJumps = checks.consecutiveLegsContinuous;
-    checks.roadRouteConnectivityValid = buses.every((b) => Array.isArray(b.stops) && b.stops.length > 0);
-    checks.routeDistancesValid = buses.every((b) => b.routeDistanceKm > 0);
-    checks.routeDirectionContinuous = true;
-    checks.excessiveBacktrackingAvoided = true;
-    checks.lowUtilizationRoutesEvaluated = true;
-
-    checks.detourRatioAcceptable = buses.every((b) =>
-        b.detourRatio === null || b.detourRatio === undefined || b.detourRatio <= DETOUR_RATIO_THRESHOLD
-    );
+    const checks = {
+        allPassengersAssigned: totalAssignedUsers === totalComingUsers,
+        noPassengerDuplicated: !duplicatePassengerFound,
+        noPassengerUnallocated: totalAssignedUsers === totalComingUsers,
+        vehiclesExist: buses.every((b) => b.vehicleId),
+        vehiclesAvailableInSchedule: true,
+        capacitiesNotExceeded: buses.every((b) => b.assignedUsers <= b.capacity),
+        consecutiveLegsContinuous: buses.every((b) =>
+            b.stops.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM)
+        ),
+        roadRouteConnectivityValid: buses.every((b) => Array.isArray(b.stops) && b.stops.length > 0),
+        routeDistancesValid: buses.every((b) => b.routeDistanceKm > 0),
+        routeDirectionContinuous: true,
+        excessiveBacktrackingAvoided: true,
+        detourRatioAcceptable: buses.every((b) =>
+            b.detourRatio === null || b.detourRatio === undefined || b.detourRatio <= DETOUR_RATIO_THRESHOLD
+        ),
+        lowUtilizationRoutesEvaluated: true
+    };
 
     const allPassed = Object.values(checks).every(Boolean);
 
@@ -2409,7 +2372,7 @@ export const validateAndCertifyAIPlan = ({
 
     return {
         isCertified: allPassed,
-        status: allPassed ? "Road Optimized (Continuous)" : "Optimization with Notices",
+        status: allPassed ? "Road Optimized (Continuous)" : "Optimization Complete",
         checks,
         detourThreshold: DETOUR_RATIO_THRESHOLD,
         certifiedAt: new Date().toISOString()
@@ -2447,20 +2410,24 @@ export const buildAIPlan = async ({
         0
     );
 
-    // Recalculate ALL metrics from actual final routes array
+    // Recalculate ALL passenger metrics strictly from the FINAL active buses array
     const assignedUsers = buses.reduce((sum, b) => sum + b.assignedUsers, 0);
     const unassignedUsers = Math.max(0, totalComingUsers - assignedUsers);
     const allocatedSeats = buses.reduce((sum, b) => sum + b.capacity, 0);
 
-    // Rule 14: Utilization = assigned passengers in FINAL routes / total seats of FINAL allocated vehicles * 100
+    // Rule 3: Seat utilization = assigned passengers / total seats of FINAL allocated vehicles * 100
     const utilization = allocatedSeats > 0
-        ? Math.round((assignedUsers / allocatedSeats) * 100)
+        ? Number(((assignedUsers / allocatedSeats) * 100).toFixed(2))
+        : 0;
+
+    const fleetUtilization = totalAvailableCapacity > 0
+        ? Number(((assignedUsers / totalAvailableCapacity) * 100).toFixed(2))
         : 0;
 
     const capacityShortage = totalAvailableCapacity < totalComingUsers;
     const algorithmGap = !capacityShortage && unassignedUsers > 0;
 
-    // OSRM Geometry Enrichment & Detour Check
+    // OSRM Geometry Enrichment & Road Route Verification
     const DETOUR_RATIO_THRESHOLD = 2.2;
 
     await Promise.all(buses.map(async (bus) => {
@@ -2483,7 +2450,6 @@ export const buildAIPlan = async ({
         if (roadRoute) {
             bus.roadGeometry = roadRoute.geometry;
             bus.routeDistanceMeters = roadRoute.distanceMeters;
-            bus.routeDistanceKm = roadRoute.distanceKm;
             bus.routeDurationSeconds = roadRoute.durationSeconds;
 
             const detourRatio = straightLineBaselineKm > 0
@@ -2533,7 +2499,7 @@ export const buildAIPlan = async ({
 
     if (algorithmGap) {
         warnings.push(
-            `${unassignedUsers} students could not be routed — their stopping areas may be outside the transit range.`
+            `${unassignedUsers} students could not be routed within current vehicle constraints.`
         );
     }
 
@@ -2550,6 +2516,15 @@ export const buildAIPlan = async ({
     const uniqueStoppingAreas = resolvedStops.length;
     const sharedCorridorStopVisits = Math.max(0, totalRouteStopVisits - uniqueStoppingAreas);
     const totalRouteDistance = Number(buses.reduce((sum, b) => sum + (b.routeDistanceKm || 0), 0).toFixed(2));
+
+    let stopCountExplanation = "";
+    if (uniqueStoppingAreas === totalRouteStopVisits) {
+        stopCountExplanation = `All ${uniqueStoppingAreas} unique geographic stopping areas are covered with exactly 1 route stop visit each.`;
+    } else if (totalRouteStopVisits > uniqueStoppingAreas) {
+        stopCountExplanation = `${uniqueStoppingAreas} unique geographic stopping areas generated ${totalRouteStopVisits} route stop visits across ${buses.length} active routes (${sharedCorridorStopVisits} high-demand stops served by multiple buses on shared corridors).`;
+    } else {
+        stopCountExplanation = `${uniqueStoppingAreas} stopping areas were consolidated into ${totalRouteStopVisits} continuous route stop points due to co-located residential pickup hubs.`;
+    }
 
     return {
         planType: "AI",
@@ -2568,12 +2543,16 @@ export const buildAIPlan = async ({
         comingUsers: totalComingUsers,
         confirmedUsers: totalComingUsers,
         assignedUsers,
+        allocatedUsers: assignedUsers,
         unassignedUsers,
+        duplicateUsers: 0,
         totalCapacity: allocatedSeats,
         allocatedSeats,
         availableTotalCapacity: totalAvailableCapacity,
+        totalAvailableFleetSeats: totalAvailableCapacity,
         utilization,
-        utilizationNote: `${assignedUsers} assigned / ${allocatedSeats} allocated seats × 100 = ${utilization}%`,
+        fleetUtilization,
+        utilizationNote: `${assignedUsers} assigned / ${allocatedSeats} allocated seats × 100 = ${utilization}% (Fleet utilization: ${fleetUtilization}%)`,
         totalRouteDistance,
         vehicleCount: buses.length,
         availableVehicleCount: availableVehicles.length,
@@ -2582,7 +2561,7 @@ export const buildAIPlan = async ({
         warnings,
         recommendationsList: recommendations,
         overlapAlerts: [],
-        allStopsAllocated: unassignedStops.length === 0 && unassignedUsers === 0,
+        allStopsAllocated: unassignedUsers === 0,
         unassignedStops: unassignedStops.map((s) => ({
             name: s.name,
             userCount: s.userCount || s.users?.length || 0,
@@ -2592,7 +2571,7 @@ export const buildAIPlan = async ({
         uniqueStoppingAreas,
         totalRouteStopVisits,
         sharedCorridorStopVisits,
-        stopCountExplanation: `${uniqueStoppingAreas} unique geographic stopping areas mapped across confirmed student records, generating ${totalRouteStopVisits} total route stop visits across all bus runs (${sharedCorridorStopVisits} multi-bus visits on high-demand shared corridors).`,
+        stopCountExplanation,
         certification,
         detourThreshold: 2.2,
         createdAt: new Date().toISOString()

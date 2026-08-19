@@ -1260,83 +1260,74 @@ export default function AIAgent() {
                             </div>
                         )}
 
-                    {/* AI Plan */}
-                    {aiPlan && (
-                        <div className="plan-card ai-plan-card">
+                    {/* Generating Spinner */}
+                    {generating && (
+                        <div className="ai-generating-box">
+                            <div className="pulse-spinner"></div>
 
-                            <div className="plan-status-row">
+                            <h3>
+                                AI Engine Is
+                                Optimizing
+                                Routes...
+                            </h3>
 
-                                <div className="plan-status">
-                                    ✓ Active AI Plan
-                                    Saved in Database
-                                </div>
+                            <p>
+                                Evaluating{" "}
+                                <b>
+                                    {
+                                        summary.confirmedUsers
+                                    }
+                                </b>{" "}
+                                Coming students, mapping
+                                residential stopping
+                                areas, running 2-Opt road
+                                continuity &amp;
+                                directional progress,
+                                consolidating
+                                low-utilization routes,
+                                and assigning vehicle
+                                capacities.
+                            </p>
+                        </div>
+                    )}
 
-                                {planData?.generatedAt && (
-                                    <small className="plan-saved-at">
-                                        Saved on{" "}
-                                        {new Date(
-                                            planData.generatedAt
-                                        ).toLocaleString()}
-                                    </small>
-                                )}
+                    {/* Plan Result */}
+                    {aiPlan && !generating && (
+                        <div className="ai-plan-result">
 
-                            </div>
+                            {/* Plan Meta */}
+                            <div className="plan-meta-bar">
 
-                            <div className="plan-title-row">
+                                <div className="plan-title-col">
+                                    <h3>
+                                        {aiPlan.title ||
+                                            "AI Recommended Continuous Route Plan"}
+                                    </h3>
 
-                                <div>
-
-                                    <span className="option-label">
-                                        OPTION 1
+                                    <span className="plan-mode-chip">
+                                        {aiPlan.tripMode ===
+                                            "OUTWARD"
+                                            ? "OUTWARD: Continuous Drop-off Routes"
+                                            : aiPlan.tripMode ===
+                                                "SOURCE_TO_DESTINATION"
+                                                ? "CORRIDOR: Continuous Source-to-Destination Routes"
+                                                : "INWARD: Continuous Pickup Routes"}
                                     </span>
-
-                                    <h2>
-                                        AI Recommended Plan
-                                    </h2>
-
-                                    <p>
-                                        Independently
-                                        calculated and
-                                        certified by the AI
-                                        engine from demand,
-                                        2-opt road networks,
-                                        and vehicle
-                                        consolidation.
-                                    </p>
-
-                                    {planData?.hubProvenance && (
-                                        <div
-                                            style={{
-                                                marginTop:
-                                                    "6px",
-                                                fontSize:
-                                                    "12px",
-                                                color:
-                                                    "#475569"
-                                            }}
-                                        >
-                                            📍{" "}
-                                            <strong>
-                                                Hub Source:
-                                            </strong>{" "}
-                                            {
-                                                planData.hubProvenance
-                                            }{" "}
-                                            (
-                                            {
-                                                planData
-                                                    ?.startingPoint
-                                                    ?.name ||
-                                                "Campus"
-                                            }
-                                            )
-                                        </div>
-                                    )}
-
                                 </div>
 
-                                <span className="ai-plan-badge">
-                                    🤖 AI PLAN
+                                <span className="timestamp-badge">
+                                    Generated:{" "}
+                                    {aiPlan.createdAt
+                                        ? new Date(
+                                            aiPlan.createdAt
+                                        ).toLocaleTimeString(
+                                            [],
+                                            {
+                                                hour: "2-digit",
+                                                minute: "2-digit"
+                                            }
+                                        )
+                                        : "Just now"}
                                 </span>
 
                             </div>
@@ -1347,42 +1338,32 @@ export default function AIAgent() {
                                 <div className="check-item">
                                     ✓{" "}
                                     <b>
-                                        {
-                                            aiPlan.comingUsers
-                                        }
+                                        {aiPlan.allocatedUsers ?? aiPlan.assignedUsers ?? aiAssigned}
                                     </b>{" "}
                                     coming users allocated
-                                    (0 unallocated, 0
-                                    duplicates)
-                                </div>
-
-                                <div className="check-item">
-                                    ✓{" "}
-                                    <b>
-                                        {aiPlan.uniqueStoppingAreas ||
-                                            summary.stoppingAreas}
-                                    </b>{" "}
-                                    unique stopping areas
-                                    mapped (
-                                    <b>
-                                        {totalAIStops}
-                                    </b>{" "}
-                                    route stop visits)
+                                    {(aiPlan.unassignedUsers ?? aiUnassigned) > 0
+                                        ? ` (${aiPlan.unassignedUsers ?? aiUnassigned} unallocated, ${aiPlan.duplicateUsers || 0} duplicates)`
+                                        : ` (0 unallocated, 0 duplicates)`}
                                 </div>
 
                                 <div className="check-item">
                                     ✓{" "}
                                     <b>
                                         {
-                                            aiPlan.availableVehicleCount
+                                            aiPlan.availableVehicleCount ||
+                                            summary.availableVehicles
                                         }
                                     </b>{" "}
                                     available vehicles
-                                    evaluated
+                                    evaluated (
+                                    <b>
+                                        {aiBuses.length}
+                                    </b>{" "}
+                                    allocated)
                                 </div>
 
                                 <div className="check-item">
-                                    ✓ 2-Opt road continuity
+                                    ✓ Road continuity
                                     &amp; directional
                                     progress verified
                                 </div>
@@ -1415,6 +1396,16 @@ export default function AIAgent() {
                                     <small>
                                         Coming Users
                                     </small>
+                                    <span
+                                        style={{
+                                            display: "block",
+                                            fontSize: "10px",
+                                            color: (aiPlan.unassignedUsers ?? aiUnassigned) > 0 ? "#ef4444" : "#22c55e",
+                                            marginTop: "2px"
+                                        }}
+                                    >
+                                        {(aiPlan.allocatedUsers ?? aiPlan.assignedUsers ?? aiAssigned)} Allocated • {(aiPlan.unassignedUsers ?? aiUnassigned)} Unallocated
+                                    </span>
                                 </div>
 
                                 <div>
@@ -1472,7 +1463,7 @@ export default function AIAgent() {
                                         Seat Utilization
                                     </small>
 
-                                    {aiPlan.utilizationNote && (
+                                    {aiPlan.fleetUtilization !== undefined && (
                                         <span
                                             style={{
                                                 display:
@@ -1485,9 +1476,7 @@ export default function AIAgent() {
                                                     "2px"
                                             }}
                                         >
-                                            {
-                                                aiPlan.utilizationNote
-                                            }
+                                            Fleet Util: {aiPlan.fleetUtilization}%
                                         </span>
                                     )}
                                 </div>
@@ -1504,6 +1493,16 @@ export default function AIAgent() {
                                     <small>
                                         Buses Allocated
                                     </small>
+                                    <span
+                                        style={{
+                                            display: "block",
+                                            fontSize: "10px",
+                                            color: "#94a3b8",
+                                            marginTop: "2px"
+                                        }}
+                                    >
+                                        of {aiPlan.availableVehicleCount || summary.availableVehicles} available
+                                    </span>
                                 </div>
 
                                 <div>
