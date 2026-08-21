@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import connectDB from "./config/db.js";
+import connectDB, { isDbConnected, getDbStatus } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -15,6 +15,7 @@ import excelRoutes from "./routes/excelRoutes.js";
 import stopRoutes from "./routes/stopRoutes.js";
 import mapLocationRoutes from "./routes/mapLocationRoutes.js";
 import aiAgentRoutes from "./routes/aiAgentRoutes.js";
+import locationRoutes from "./routes/locationRoutes.js";
 
 dotenv.config();
 
@@ -54,6 +55,8 @@ app.use("/api/excel", excelRoutes);
 app.use("/api/stops", stopRoutes);
 app.use("/api/map-locations", mapLocationRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
+app.use("/api/location", locationRoutes);
+app.use("/api/locations", locationRoutes);
 
 app.get("/", (req, res) => {
     res.json({
@@ -64,9 +67,26 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
-    res.json({
-        success: true,
-        message: "Server is healthy"
+    const dbConnected = isDbConnected();
+    res.status(dbConnected ? 200 : 503).json({
+        success: dbConnected,
+        app: "ok",
+        database: dbConnected ? "ok" : "unavailable",
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get("/api/health/db", (req, res) => {
+    const dbStatus = getDbStatus();
+    res.status(dbStatus.connected ? 200 : 503).json({
+        success: dbStatus.connected,
+        database: dbStatus.connected ? "ok" : "unavailable",
+        details: {
+            state: dbStatus.state,
+            host: dbStatus.host,
+            name: dbStatus.name
+        },
+        timestamp: new Date().toISOString()
     });
 });
 

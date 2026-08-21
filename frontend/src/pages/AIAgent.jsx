@@ -202,16 +202,41 @@ export default function AIAgent() {
 
     const loadActivePlan = async () => {
         try {
+            // Check localStorage first for instant restoration without flicker
+            const cachedPlanStr = localStorage.getItem("active_ai_plan");
+            if (cachedPlanStr) {
+                try {
+                    const cachedPlan = JSON.parse(cachedPlanStr);
+                    if (cachedPlan && (cachedPlan.aiPlan || cachedPlan.buses || cachedPlan.summary)) {
+                        setPlanData(cachedPlan);
+                        if (cachedPlan.source && hasValidCoordinates(cachedPlan.source)) {
+                            setSourceLocation(cachedPlan.source);
+                        }
+                        if (cachedPlan.destination && hasValidCoordinates(cachedPlan.destination)) {
+                            setDestinationLocation(cachedPlan.destination);
+                        } else if (cachedPlan.startingPoint && hasValidCoordinates(cachedPlan.startingPoint) && !cachedPlan.source) {
+                            setDestinationLocation(cachedPlan.startingPoint);
+                        }
+                    }
+                } catch {
+                    // Ignore parse error
+                }
+            }
+
             const response = await getActivePlan();
 
             if (
                 response?.success &&
-                response?.active &&
                 response?.plan
             ) {
                 const plan = response.plan;
 
                 setPlanData(plan);
+                try {
+                    localStorage.setItem("active_ai_plan", JSON.stringify(plan));
+                } catch {
+                    // Ignore quota error
+                }
 
                 if (
                     plan.source &&
@@ -240,7 +265,7 @@ export default function AIAgent() {
                         plan.startingPoint
                     );
                 }
-            } else {
+            } else if (!cachedPlanStr) {
                 setPlanData(null);
             }
         } catch (error) {
@@ -248,8 +273,6 @@ export default function AIAgent() {
                 "Unable to load active AI plan:",
                 error
             );
-
-            setPlanData(null);
         }
     };
 
@@ -341,11 +364,10 @@ export default function AIAgent() {
                 destinationLocation
             );
 
-        if (!hasSource && !hasDestination) {
+        if (!hasDestination && !hasSource) {
             setGenerationError(
-                "Please select a Source (leave from here) or a Destination (arrive here)."
+                "Select a destination to generate the AI transportation plan."
             );
-
             return;
         }
 
@@ -355,57 +377,44 @@ export default function AIAgent() {
             setSelectionMessage("");
             setResetSuccessMessage("");
 
-            let tripMode = "INWARD";
-
-            if (
-                hasSource &&
-                !hasDestination
-            ) {
-                tripMode = "OUTWARD";
-            } else if (
-                hasSource &&
-                hasDestination
-            ) {
-                tripMode =
-                    "SOURCE_TO_DESTINATION";
+            let tripMode = "TO_DESTINATION";
+            if (hasSource && !hasDestination) {
+                tripMode = "FROM_SOURCE";
+            } else {
+                tripMode = "TO_DESTINATION";
             }
 
             const payload = {
                 tripMode,
-
-                ...(hasSource
-                    ? {
-                        source:
-                            sourceLocation
-                    }
-                    : {}),
-
-                ...(hasDestination
-                    ? {
-                        destination:
-                            destinationLocation
-                    }
-                    : {})
+                ...(hasSource ? { source: sourceLocation } : {}),
+                ...(hasDestination ? { destination: destinationLocation } : {})
             };
 
-            const response =
-                await generateRecommendations(
-                    payload
-                );
+            const response = await generateRecommendations(payload);
 
             if (!response?.success) {
                 throw new Error(
-                    response?.message ||
-                    "Unable to generate AI plan."
+                    response?.message || "Unable to generate AI plan."
                 );
             }
 
             setPlanData(response);
+            try {
+                localStorage.setItem("active_ai_plan", JSON.stringify(response));
+            } catch {
+                // Ignore storage quota errors
+            }
             setSelectedPlanType("");
 
-            toast.success(
-                "AI route plan generated and saved successfully."
-            );
+            if (response?.status === "ZERO_DEMAND" || response?.comingUsers === 0) {
+                toast("No confirmed passengers available for route generation.", {
+                    icon: "ℹ️"
+                });
+            } else {
+                toast.success(
+                    "AI route plan generated and saved successfully."
+                );
+            }
 
             await loadAIData();
         } catch (error) {
@@ -434,6 +443,7 @@ export default function AIAgent() {
                 await resetAIPlan();
 
             if (response?.success) {
+                localStorage.removeItem("active_ai_plan");
                 setPlanData(null);
                 setSourceLocation(null);
                 setDestinationLocation(null);
@@ -621,6 +631,18 @@ export default function AIAgent() {
             0
         );
 
+    const currentDemandCount = Number(
+        data?.confirmedUserCount ?? data?.comingUsers ?? 0
+    );
+    const planDemandCount = planData?.summary?.confirmedUsers ?? planData?.comingUsers ?? null;
+    const hasActivePlan = Boolean(aiPlan || planData?.buses?.length > 0 || (planData?.summary && planData.summary.allocatedSeats > 0));
+    const isPlanInvalidated = Boolean(
+        hasActivePlan &&
+        planDemandCount !== null &&
+        currentDemandCount > 0 &&
+        planDemandCount !== currentDemandCount
+    );
+
     if (loading) {
         return (
             <div className="ai-page">
@@ -662,9 +684,27 @@ export default function AIAgent() {
                 </div>
 
                 <div className="ai-header-actions">
-                    <div className="ai-ready">
+                    <div className={`ai-ready ${
+                        generating
+                            ? "generating"
+                            : generationError
+                            ? "error"
+                            : isPlanInvalidated
+                            ? "invalidated"
+                            : hasActivePlan
+                            ? "generated"
+                            : "ready"
+                    }`}>
                         <span className="ready-dot"></span>
-                        AI Engine Ready
+                        {generating
+                            ? "Generating optimized route..."
+                            : generationError
+                            ? "Route generation failed"
+                            : isPlanInvalidated
+                            ? "Route requires regeneration"
+                            : hasActivePlan
+                            ? "AI Route Generated"
+                            : "AI Engine Ready"}
                     </div>
 
                     <button
@@ -706,6 +746,29 @@ export default function AIAgent() {
                     >
                         ×
                     </button>
+                </div>
+            )}
+
+            {/* State Invalidation Alert Banner */}
+            {isPlanInvalidated && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    background: "#fffbeb",
+                    border: "1.5px solid #fde68a",
+                    borderRadius: "12px",
+                    padding: "14px 18px",
+                    marginBottom: "24px",
+                    color: "#92400e"
+                }}>
+                    <span style={{ fontSize: "22px" }}>⚠️</span>
+                    <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "14px", display: "block", marginBottom: "2px" }}>Route Data Has Changed — Regeneration Recommended</strong>
+                        <p style={{ margin: 0, fontSize: "13px", color: "#78350f" }}>
+                            Student travel responses or demand changed from <b>{planDemandCount}</b> to <b>{currentDemandCount}</b> confirmed passengers since this plan was generated. Click <b>⚡ Generate AI Plan</b> below to update vehicle allocation and routes.
+                        </p>
+                    </div>
                 </div>
             )}
 
@@ -848,9 +911,7 @@ export default function AIAgent() {
                                 </strong>
 
                                 <small>
-                                    Where buses leave from —
-                                    residential areas, depot,
-                                    or township
+                                    Departure point — residential area, depot, bus stand, station, airport, or any location
                                 </small>
                             </div>
 
@@ -863,7 +924,7 @@ export default function AIAgent() {
 
                         <div className="search-box-row">
                             <LocationSearchBox
-                                placeholder="Search source: residential area, depot, bus stand, township..."
+                                placeholder="Search departure: residential area, station, airport, depot, street, city..."
                                 selectedLocation={
                                     sourceLocation
                                 }
@@ -944,10 +1005,7 @@ export default function AIAgent() {
                                 </strong>
 
                                 <small>
-                                    Where buses arrive —
-                                    college, school,
-                                    institution, or campus
-                                    (required)
+                                    Arrival hub — college, university, company, hospital, airport, office, or landmark (required)
                                 </small>
                             </div>
 
@@ -960,7 +1018,7 @@ export default function AIAgent() {
 
                         <div className="search-box-row">
                             <LocationSearchBox
-                                placeholder="Search destination: college, school, campus, institution..."
+                                placeholder="Search arrival: college, university, company, hospital, airport, landmark, city..."
                                 selectedLocation={
                                     destinationLocation
                                 }
@@ -1291,6 +1349,26 @@ export default function AIAgent() {
                         </div>
                     )}
 
+                    {/* Zero Demand Box */}
+                    {planData?.status === "ZERO_DEMAND" && !generating && (
+                        <div
+                            style={{
+                                padding: "36px 20px",
+                                textAlign: "center",
+                                background: "#f8fafc",
+                                borderRadius: "12px",
+                                border: "1px dashed #cbd5e1",
+                                margin: "20px 0"
+                            }}
+                        >
+                            <div style={{ fontSize: "36px", marginBottom: "10px" }}>👥</div>
+                            <h4 style={{ color: "#334155", fontWeight: "600", marginBottom: "6px" }}>No Confirmed Passengers</h4>
+                            <p style={{ color: "#64748b", maxWidth: "520px", margin: "0 auto", fontSize: "14px" }}>
+                                No confirmed passengers available for route generation. Students must confirm their travel status ("Coming") before AI routes can be generated.
+                            </p>
+                        </div>
+                    )}
+
                     {/* Plan Result */}
                     {aiPlan && !generating && (
                         <div className="ai-plan-result">
@@ -1304,15 +1382,7 @@ export default function AIAgent() {
                                             "AI Recommended Continuous Route Plan"}
                                     </h3>
 
-                                    <span className="plan-mode-chip">
-                                        {aiPlan.tripMode ===
-                                            "OUTWARD"
-                                            ? "OUTWARD: Continuous Drop-off Routes"
-                                            : aiPlan.tripMode ===
-                                                "SOURCE_TO_DESTINATION"
-                                                ? "CORRIDOR: Continuous Source-to-Destination Routes"
-                                                : "INWARD: Continuous Pickup Routes"}
-                                    </span>
+
                                 </div>
 
                                 <span className="timestamp-badge">
@@ -1363,9 +1433,9 @@ export default function AIAgent() {
                                 </div>
 
                                 <div className="check-item">
-                                    ✓ Road continuity
-                                    &amp; directional
-                                    progress verified
+                                    {aiBuses.every((b) => b.isRoadVerified)
+                                        ? "✓ Road continuity & directional progress verified (OSRM)"
+                                        : "⚠ Road network routing unavailable (Straight-line estimate)"}
                                 </div>
 
                                 <div className="check-item">
@@ -1453,17 +1523,14 @@ export default function AIAgent() {
                                     <span>📊</span>
 
                                     <strong>
-                                        {
-                                            aiUtilization
-                                        }
-                                        %
+                                        {aiPlan.routeAllocationUtilization ?? aiUtilization}%
                                     </strong>
 
                                     <small>
-                                        Seat Utilization
+                                        Route Seat Utilization
                                     </small>
 
-                                    {aiPlan.fleetUtilization !== undefined && (
+                                    {(aiPlan.physicalFleetUtilization !== undefined || aiPlan.fleetUtilization !== undefined) && (
                                         <span
                                             style={{
                                                 display:
@@ -1476,7 +1543,7 @@ export default function AIAgent() {
                                                     "2px"
                                             }}
                                         >
-                                            Fleet Util: {aiPlan.fleetUtilization}%
+                                            Fleet Seat: {aiPlan.physicalFleetUtilization ?? aiPlan.fleetUtilization}%
                                         </span>
                                     )}
                                 </div>
@@ -1501,7 +1568,9 @@ export default function AIAgent() {
                                             marginTop: "2px"
                                         }}
                                     >
-                                        of {aiPlan.availableVehicleCount || summary.availableVehicles} available
+                                        {aiPlan.fleetVehicleUtilization !== undefined
+                                            ? `${aiPlan.fleetVehicleUtilization}% fleet used (${aiBuses.length}/${aiPlan.availableVehicleCount || summary.availableVehicles})`
+                                            : `of ${aiPlan.availableVehicleCount || summary.availableVehicles} available`}
                                     </span>
                                 </div>
 
@@ -1521,202 +1590,123 @@ export default function AIAgent() {
 
                                 <div>
                                     <span>🚏</span>
-
                                     <strong>
                                         {totalAIStops}
                                     </strong>
-
                                     <small>
                                         Route Stop Visits
                                     </small>
                                 </div>
-
                             </div>
 
                             {/* Stop Count Explanation */}
                             {summary?.stopCountExplanation && (
                                 <div
                                     style={{
-                                        background:
-                                            "#f1f5f9",
-                                        padding:
-                                            "10px 14px",
-                                        borderRadius:
-                                            "8px",
-                                        fontSize:
-                                            "12px",
-                                        color:
-                                            "#334155",
-                                        margin:
-                                            "12px 0"
+                                        background: "#f1f5f9",
+                                        padding: "10px 14px",
+                                        borderRadius: "8px",
+                                        fontSize: "12px",
+                                        color: "#334155",
+                                        margin: "12px 0"
                                     }}
                                 >
-                                    ℹ️{" "}
-                                    <b>
-                                        Stop Breakdown:
-                                    </b>{" "}
-                                    {
-                                        summary.stopCountExplanation
-                                    }
+                                    ℹ️ <b>Stop Breakdown:</b> {summary.stopCountExplanation}
                                 </div>
                             )}
 
-                            {/* Capacity Shortage */}
+                            {/* Capacity Shortage / Allocation Alerts */}
                             {aiUnassigned > 0 && (
                                 <div className="capacity-shortage-alert">
-
                                     <div className="alert-header">
                                         <span>⚠</span>
-
                                         <strong>
-                                            INSUFFICIENT
-                                            VEHICLE CAPACITY
-                                            DETECTED
+                                            {aiPlan.unallocatedReason === "VEHICLE_CAPACITY"
+                                                ? "TOTAL PHYSICAL FLEET CAPACITY EXCEEDED"
+                                                : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY"
+                                                    ? "SCHEDULED FLEET CAPACITY RESTRICTION"
+                                                    : aiPlan.unallocatedReason === "CORRIDOR_CAPACITY"
+                                                        ? "CORRIDOR SEAT ALLOCATION RESTRICTION"
+                                                        : "PASSENGER ALLOCATION RESTRICTION"}
                                         </strong>
                                     </div>
 
                                     <p>
-                                        {aiPlan.comingUsers >
-                                            aiAvailableCapacity ? (
+                                        {aiPlan.unallocatedReason === "VEHICLE_CAPACITY" ? (
                                             <>
-                                                Passenger demand
-                                                exceeds available
-                                                fleet capacity:{" "}
-                                                <b>
-                                                    {
-                                                        aiPlan.comingUsers
-                                                    }
-                                                </b>{" "}
-                                                coming users vs{" "}
-                                                <b>
-                                                    {
-                                                        aiAvailableCapacity
-                                                    }
-                                                </b>{" "}
-                                                total available
-                                                seats.
-                                                <b>
-                                                    {" "}
-                                                    {
-                                                        aiUnassigned
-                                                    }
-                                                </b>{" "}
-                                                users could not
-                                                be assigned
-                                                without
-                                                overbooking.
+                                                Passenger demand exceeds total fleet capacity: <b>{aiPlan.comingUsers}</b> coming users vs <b>{aiPlan.physicalFleetCapacity || aiAvailableCapacity}</b> total physical fleet seats. <b>{aiUnassigned}</b> users could not be allocated.
+                                            </>
+                                        ) : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY" ? (
+                                            <>
+                                                Active schedule limits available fleet capacity to <b>{aiAvailableCapacity}</b> seats for <b>{aiPlan.comingUsers}</b> coming users. <b>{aiUnassigned}</b> users could not be scheduled.
                                             </>
                                         ) : (
                                             <>
-                                                <b>
-                                                    {
-                                                        aiUnassigned
-                                                    }
-                                                </b>{" "}
-                                                passengers could
-                                                not be assigned
-                                                to available
-                                                routes due to
-                                                corridor
-                                                capacity
-                                                constraints.
-                                                Fleet capacity
-                                                is{" "}
-                                                <b>
-                                                    {
-                                                        aiAvailableCapacity
-                                                    }
-                                                </b>{" "}
-                                                seats for{" "}
-                                                <b>
-                                                    {
-                                                        aiPlan.comingUsers
-                                                    }
-                                                </b>{" "}
-                                                coming users.
+                                                <b>{aiUnassigned}</b> passengers could not be assigned to available routes due to corridor/bus capacity constraints. Total fleet capacity is <b>{aiPlan.physicalFleetCapacity || aiAvailableCapacity}</b> seats (<b>{aiAvailableCapacity}</b> scheduled) for <b>{aiPlan.comingUsers}</b> coming users.
                                             </>
                                         )}
                                     </p>
 
                                     <div className="shortage-recommendations">
-                                        <strong>
-                                            AI Recommendations:
-                                        </strong>
-
+                                        <strong>AI Recommendations:</strong>
                                         <ul>
-                                            <li>
-                                                Mark another bus
-                                                as "Available"
-                                                in Schedule
-                                                Management.
-                                            </li>
-
-                                            <li>
-                                                Add an additional
-                                                vehicle to the
-                                                fleet in Vehicle
-                                                Management.
-                                            </li>
-
-                                            <li>
-                                                Schedule a second
-                                                trip for
-                                                high-capacity
-                                                corridors.
-                                            </li>
+                                            <li>Mark another bus as "Available" in Schedule Management.</li>
+                                            <li>Add an additional vehicle to the fleet in Vehicle Management.</li>
+                                            <li>Schedule a second trip for high-capacity corridors.</li>
                                         </ul>
                                     </div>
-
                                 </div>
                             )}
 
                             {aiUnassigned === 0 && (
                                 <div className="success-box">
-                                    ✓ All{" "}
-                                    {
-                                        aiPlan.comingUsers
-                                    }{" "}
-                                    confirmed passengers
-                                    successfully
-                                    accommodated within
-                                    vehicle seat limits
-                                    with road continuity
-                                    verified.
+                                    ✓ All {aiPlan.comingUsers} confirmed passengers successfully accommodated within vehicle seat limits
+                                    {aiBuses.every((b) => b.isRoadVerified) ? " with road continuity verified." : " (road network offline, straight-line distance computed)."}
                                 </div>
                             )}
 
                             {/* AI Recommendations */}
-                            {Array.isArray(
-                                aiPlan.recommendationsList
-                            ) &&
-                                aiPlan
-                                    .recommendationsList
-                                    .length > 0 && (
+                            {Array.isArray(aiPlan.recommendationsList) &&
+                                aiPlan.recommendationsList.length > 0 && (
                                     <div className="ai-insights-box">
-
-                                        <strong>
-                                            🧠 AI Route
-                                            Consolidation
-                                            &amp; Insights:
-                                        </strong>
-
+                                        <strong>🧠 AI Route Consolidation &amp; Insights:</strong>
                                         <ul>
-                                            {aiPlan.recommendationsList.map(
-                                                (
-                                                    rec,
-                                                    idx
-                                                ) => (
-                                                    <li
-                                                        key={
-                                                            idx
-                                                        }
-                                                    >
-                                                        {rec}
-                                                    </li>
-                                                )
-                                            )}
+                                            {aiPlan.recommendationsList.map((rec, idx) => (
+                                                <li key={idx}>{rec}</li>
+                                            ))}
                                         </ul>
+                                    </div>
+                                )}
 
+                            {/* Route Consolidation Audit Trail */}
+                            {Array.isArray(aiPlan.consolidationAudit) &&
+                                aiPlan.consolidationAudit.length > 0 && (
+                                    <div className="ai-insights-box" style={{ borderLeft: "3px solid #6366f1", background: "#f8fafc", marginTop: "12px" }}>
+                                        <strong>📋 Route Consolidation Audit Trail:</strong>
+                                        <div style={{ overflowX: "auto", marginTop: "8px" }}>
+                                            <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                                                <thead>
+                                                    <tr style={{ borderBottom: "1px solid #cbd5e1", textAlign: "left", color: "#475569" }}>
+                                                        <th style={{ padding: "6px 8px" }}>Source</th>
+                                                        <th style={{ padding: "6px 8px" }}>Destination</th>
+                                                        <th style={{ padding: "6px 8px" }}>Pax Moved</th>
+                                                        <th style={{ padding: "6px 8px" }}>Before / After Seats</th>
+                                                        <th style={{ padding: "6px 8px" }}>Reason</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {aiPlan.consolidationAudit.map((audit, idx) => (
+                                                        <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                                                            <td style={{ padding: "6px 8px" }}>{audit.sourceRoute} ({audit.sourceVehicle})</td>
+                                                            <td style={{ padding: "6px 8px" }}>{audit.destinationRoute} ({audit.destinationVehicle})</td>
+                                                            <td style={{ padding: "6px 8px", fontWeight: "bold", color: "#0284c7" }}>+{audit.passengersMoved}</td>
+                                                            <td style={{ padding: "6px 8px" }}>{audit.beforeCapacity} → {audit.afterCapacity}</td>
+                                                            <td style={{ padding: "6px 8px", color: "#64748b" }}>{audit.reason}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
 
@@ -1890,8 +1880,8 @@ export default function AIAgent() {
 
                                                     <span
                                                         className={`status-pill ${bus.isContinuous
-                                                                ? "continuous"
-                                                                : "warning"
+                                                            ? "continuous"
+                                                            : "warning"
                                                             }`}
                                                     >
                                                         {bus.roadRouteStatus ||
@@ -2047,12 +2037,10 @@ export default function AIAgent() {
                                                 {/* Route Timeline */}
                                                 <div className="route-timeline">
 
-                                                    {(bus.tripMode ===
-                                                        "OUTWARD" ||
-                                                        bus.tripMode ===
-                                                        "SOURCE_TO_DESTINATION" ||
-                                                        planData?.tripMode ===
-                                                        "OUTWARD") && (
+                                                    {(bus.tripMode === "OUTWARD" ||
+                                                        bus.tripMode === "FROM_SOURCE" ||
+                                                        planData?.tripMode === "OUTWARD" ||
+                                                        planData?.tripMode === "FROM_SOURCE") && (
                                                             <div className="timeline-start source-terminal-hub">
 
                                                                 <span className="timeline-dot source-dot"></span>
@@ -2069,14 +2057,11 @@ export default function AIAgent() {
                                                                     </strong>
 
                                                                     <small>
-                                                                        Departure
-                                                                        point ·{" "}
+                                                                        Departure point ·{" "}
                                                                         {
                                                                             assigned
                                                                         }{" "}
-                                                                        passengers
-                                                                        board
-                                                                        here
+                                                                        passengers board here
                                                                     </small>
                                                                 </div>
 
@@ -2092,10 +2077,10 @@ export default function AIAgent() {
                                                                 stopIndex
                                                             ) => {
                                                                 const isOutward =
-                                                                    bus.tripMode ===
-                                                                    "OUTWARD" ||
-                                                                    planData?.tripMode ===
-                                                                    "OUTWARD";
+                                                                    bus.tripMode === "OUTWARD" ||
+                                                                    bus.tripMode === "FROM_SOURCE" ||
+                                                                    planData?.tripMode === "OUTWARD" ||
+                                                                    planData?.tripMode === "FROM_SOURCE";
 
                                                                 const userCount =
                                                                     getAIStopUsers(
@@ -2133,6 +2118,12 @@ export default function AIAgent() {
                                                                                                 stop.legDistanceKm
                                                                                             }{" "}
                                                                                             km
+                                                                                            {stop.legDurationMin !==
+                                                                                                undefined &&
+                                                                                                stop.legDurationMin >
+                                                                                                0
+                                                                                                ? ` · ~${stop.legDurationMin}m`
+                                                                                                : ""}
                                                                                         </span>
                                                                                     )}
 
@@ -2243,10 +2234,10 @@ export default function AIAgent() {
                                                             }
                                                         )}
 
-                                                    {(bus.tripMode !==
-                                                        "OUTWARD" &&
-                                                        planData?.tripMode !==
-                                                        "OUTWARD") && (
+                                                    {(bus.tripMode !== "OUTWARD" &&
+                                                        bus.tripMode !== "FROM_SOURCE" &&
+                                                        planData?.tripMode !== "OUTWARD" &&
+                                                        planData?.tripMode !== "FROM_SOURCE") && (
                                                             <div className="timeline-start terminal-hub">
 
                                                                 <span className="timeline-dot terminal-dot"></span>
@@ -2291,9 +2282,9 @@ export default function AIAgent() {
 
                             <button
                                 className={`select-plan-btn ${selectedPlanType ===
-                                        "AI"
-                                        ? "selected"
-                                        : ""
+                                    "AI"
+                                    ? "selected"
+                                    : ""
                                     }`}
                                 onClick={
                                     handleSelectAIPlan
@@ -2503,9 +2494,9 @@ export default function AIAgent() {
 
                         <button
                             className={`select-plan-btn admin ${selectedPlanType ===
-                                    "ADMIN"
-                                    ? "selected"
-                                    : ""
+                                "ADMIN"
+                                ? "selected"
+                                : ""
                                 }`}
                             onClick={
                                 handleSelectAdminPlan
@@ -2551,9 +2542,9 @@ export default function AIAgent() {
 
                     <div
                         className={`decision-option ${selectedPlanType ===
-                                "AI"
-                                ? "active"
-                                : ""
+                            "AI"
+                            ? "active"
+                            : ""
                             }`}
                         onClick={
                             aiPlan
@@ -2597,9 +2588,9 @@ export default function AIAgent() {
 
                     <div
                         className={`decision-option ${selectedPlanType ===
-                                "ADMIN"
-                                ? "active admin-active"
-                                : ""
+                            "ADMIN"
+                            ? "active admin-active"
+                            : ""
                             }`}
                         onClick={
                             manualRoutes.length
@@ -2683,8 +2674,8 @@ export default function AIAgent() {
                         className={`final-message ${selectionMessage.includes(
                             "successfully"
                         )
-                                ? "success"
-                                : "error"
+                            ? "success"
+                            : "error"
                             }`}
                     >
                         {selectionMessage}

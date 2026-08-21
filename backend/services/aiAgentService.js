@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import AiPlan from "../models/AiPlan.js";
 import User from "../models/User.js";
+import { isDbConnected } from "../config/db.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -15,7 +16,7 @@ const normalize = (value) => {
     return String(value).trim();
 };
 
-const isValidCoordinate = (latitude, longitude) => {
+export const isValidCoordinate = (latitude, longitude) => {
     const lat = Number(latitude);
     const lng = Number(longitude);
 
@@ -56,7 +57,7 @@ const coordinateCache = new Map();
 
 const getCollectionData = async (collectionName) => {
     try {
-        if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
+        if (!isDbConnected() || !mongoose.connection.db) {
             return [];
         }
 
@@ -72,13 +73,8 @@ const getCollectionData = async (collectionName) => {
 
 /*
 |--------------------------------------------------------------------------
-| USER MANAGEMENT - DEMAND FILTERING
+| USER MANAGEMENT - DEMAND FILTERING & DEDUPLICATION
 |--------------------------------------------------------------------------
-|
-| AI Agent uses ONLY users whose travel status is "Coming" (or Confirmed).
-| Total users are tracked for reporting, but passenger demand relies strictly
-| on confirmed coming users.
-|
 */
 
 export const getManagedUsers = (users) => {
@@ -110,6 +106,25 @@ export const getConfirmedUsers = (users) => {
             "attending"
         ].includes(status);
     });
+};
+
+export const deduplicateUsers = (users) => {
+    if (!Array.isArray(users)) return { uniqueUsers: [], duplicateCount: 0 };
+    const seenIds = new Set();
+    const uniqueUsers = [];
+    let duplicateCount = 0;
+
+    users.forEach((user) => {
+        const id = String(user?.userId || user?._id || user?.id || "").trim();
+        if (id && seenIds.has(id)) {
+            duplicateCount++;
+        } else {
+            if (id) seenIds.add(id);
+            uniqueUsers.push(user);
+        }
+    });
+
+    return { uniqueUsers, duplicateCount };
 };
 
 /*
@@ -182,38 +197,39 @@ export const calculateStoppingGroups = (users) => {
     users.forEach((user) => {
         const stoppings = getUserStoppings(user);
         const coordinateStops = getStopCoordinatesFromUser(user);
+        const primaryStop = stoppings[0];
+        if (!primaryStop) return;
 
-        stoppings.forEach((stop, index) => {
-            const key = stop.toLowerCase().replace(/\s+/g, " ").trim();
+        const key = primaryStop.toLowerCase().replace(/\s+/g, " ").trim();
 
-            if (!groups[key]) {
-                groups[key] = {
-                    name: stop,
-                    users: [],
-                    userIds: [],
-                    latitude: null,
-                    longitude: null
-                };
-            }
+        if (!groups[key]) {
+            groups[key] = {
+                name: primaryStop,
+                users: [],
+                userIds: [],
+                userCount: 0,
+                latitude: null,
+                longitude: null
+            };
+        }
 
-            groups[key].users.push(user);
+        groups[key].users.push(user);
 
-            if (user?._id) {
-                groups[key].userIds.push(String(user._id));
-            } else if (user?.userId) {
-                groups[key].userIds.push(String(user.userId));
-            }
+        const uId = String(user?._id || user?.userId || user?.id || "");
+        if (uId) {
+            groups[key].userIds.push(uId);
+        }
+        groups[key].userCount = groups[key].users.length;
 
-            const coordinate = coordinateStops[index];
-            if (
-                coordinate &&
-                isValidCoordinate(coordinate.latitude, coordinate.longitude) &&
-                !isValidCoordinate(groups[key].latitude, groups[key].longitude)
-            ) {
-                groups[key].latitude = coordinate.latitude;
-                groups[key].longitude = coordinate.longitude;
-            }
-        });
+        const coordinate = coordinateStops[0];
+        if (
+            coordinate &&
+            isValidCoordinate(coordinate.latitude, coordinate.longitude) &&
+            !isValidCoordinate(groups[key].latitude, groups[key].longitude)
+        ) {
+            groups[key].latitude = coordinate.latitude;
+            groups[key].longitude = coordinate.longitude;
+        }
     });
 
     return Object.values(groups).sort(
@@ -250,77 +266,63 @@ export const getVehicleName = (vehicle, index = 0) => {
     );
 };
 
-export const getAvailableVehicles = (rawVehicles, schedules = [], requestedDate = null) => {
-    if (!Array.isArray(rawVehicles) || rawVehicles.length === 0) {
-        return [];
-    }
+export const getAvailableVehicles = (
+    rawVehicles,
+    schedules = [],
+    requestedDate = null
+) => {
+    if (!Array.isArray(rawVehicles)) return [];
 
-    if (!Array.isArray(schedules) || schedules.length === 0) {
-        return rawVehicles.filter((v) => getVehicleCapacity(v) > 0);
-    }
-
-    const normalizedRequestedDate = normalizeDate(requestedDate);
-    const unavailableVehicleIds = new Set();
-    const explicitAvailableVehicleIds = new Set();
-
-    schedules.forEach((schedule) => {
-        const scheduleDate = normalizeDate(schedule?.date);
-        const availability = normalize(schedule?.availability).toLowerCase();
-
-        if (normalizedRequestedDate && scheduleDate && scheduleDate !== normalizedRequestedDate) {
-            return;
-        }
-
-        const vehicleId = String(
-            schedule?.vehicle?._id || schedule?.vehicle || ""
-        );
-
-        if (!vehicleId) return;
-
-        if (
-            availability === "not available" ||
-            availability === "unavailable" ||
-            availability === "maintenance" ||
-            availability === "offline" ||
-            availability === "disabled"
-        ) {
-            unavailableVehicleIds.add(vehicleId);
-        } else if (
-            availability === "available" ||
-            availability === "active" ||
-            availability === "open"
-        ) {
-            explicitAvailableVehicleIds.add(vehicleId);
-        }
-    });
+    const targetDate = normalizeDate(requestedDate);
 
     return rawVehicles.filter((vehicle) => {
-        if (!vehicle) return false;
-        const vehicleId = String(vehicle._id || vehicle.id || "");
+        const capacity = getVehicleCapacity(vehicle);
+        if (capacity <= 0) return false;
 
-        if (getVehicleCapacity(vehicle) <= 0) {
-            return false;
-        }
+        const vehicleId = String(vehicle?._id || vehicle?.id || "");
 
-        if (unavailableVehicleIds.has(vehicleId)) {
-            return false;
-        }
-
-        if (explicitAvailableVehicleIds.has(vehicleId)) {
+        if (!targetDate || !Array.isArray(schedules) || schedules.length === 0) {
             return true;
         }
 
-        return !unavailableVehicleIds.has(vehicleId);
+        const match = schedules.find((s) => {
+            const schedVehicleId = String(
+                s?.vehicle?._id || s?.vehicle || s?.vehicleId || ""
+            );
+            const schedDate = normalizeDate(s?.date);
+
+            return (
+                schedVehicleId &&
+                schedVehicleId === vehicleId &&
+                schedDate === targetDate
+            );
+        });
+
+        if (!match) return true;
+
+        const availability = normalize(
+            match?.availability || match?.status
+        ).toLowerCase();
+
+        return availability !== "not available" && availability !== "unavailable";
     });
 };
 
 /*
 |--------------------------------------------------------------------------
-| AI OVERVIEW DATA
+| GET AI SUMMARY DATA
 |--------------------------------------------------------------------------
 */
 
 export const getAIData = async () => {
+    if (!isDbConnected()) {
+        return {
+            success: false,
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database is currently unavailable."
+        };
+    }
+
     const [allUsers, vehicles, routes, schedules] = await Promise.all([
         getCollectionData("users"),
         getCollectionData("vehicles"),
@@ -330,20 +332,22 @@ export const getAIData = async () => {
 
     const users = getManagedUsers(allUsers);
     const confirmedUsers = getConfirmedUsers(users);
-    const stoppingGroups = calculateStoppingGroups(confirmedUsers);
-    const availableVehicles = getAvailableVehicles(vehicles, schedules);
+    const { uniqueUsers } = deduplicateUsers(confirmedUsers);
+    const comingUserCount = uniqueUsers.length;
 
+    const availableVehicles = getAvailableVehicles(vehicles, schedules);
+    const totalPhysicalCapacity = vehicles.reduce(
+        (sum, v) => sum + getVehicleCapacity(v),
+        0
+    );
     const totalAvailableCapacity = availableVehicles.reduce(
         (sum, v) => sum + getVehicleCapacity(v),
         0
     );
-
-    const comingUserCount = confirmedUsers.length;
-    const capacityShortage = comingUserCount > totalAvailableCapacity;
+    const stoppingGroups = calculateStoppingGroups(uniqueUsers);
 
     return {
         users,
-        confirmedUsers,
         vehicles,
         availableVehicles,
         routes,
@@ -354,8 +358,9 @@ export const getAIData = async () => {
         comingUsers: comingUserCount,
         vehicleCount: vehicles.length,
         availableVehicleCount: availableVehicles.length,
+        totalPhysicalCapacity,
         totalAvailableCapacity,
-        capacityShortage,
+        capacityShortage: totalAvailableCapacity < comingUserCount,
         routeCount: routes.length,
         scheduleCount: schedules.length,
         stopCount: stoppingGroups.length,
@@ -365,6 +370,7 @@ export const getAIData = async () => {
             comingUsers: comingUserCount,
             vehicles: vehicles.length,
             availableVehicles: availableVehicles.length,
+            totalPhysicalCapacity,
             totalAvailableCapacity,
             routes: routes.length,
             schedules: schedules.length,
@@ -375,7 +381,7 @@ export const getAIData = async () => {
 
 /*
 |--------------------------------------------------------------------------
-| GEOGRAPHY & DISTANCE CALCULATIONS
+| GEOGRAPHY & DISTANCE CALCULATIONS (WGS84 Universal)
 |--------------------------------------------------------------------------
 */
 
@@ -396,7 +402,6 @@ export const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
     return 6371 * c;
 };
 
-// Calculate initial bearing from point A to point B in degrees [0, 360)
 const calculateBearing = (lat1, lon1, lat2, lon2) => {
     const rLat1 = toRadians(lat1);
     const rLat2 = toRadians(lat2);
@@ -411,805 +416,510 @@ const calculateBearing = (lat1, lon1, lat2, lon2) => {
     return (initialBearing + 360) % 360;
 };
 
-/*
-|--------------------------------------------------------------------------
-| REGIONAL CAMPUS & HUB KNOWLEDGE BASE
-|--------------------------------------------------------------------------
-*/
-
-// ---------------------------------------------------------------------------
-// NOTE: The REGIONAL_KNOWLEDGE_BASE that previously contained KLNCE, Madurai,
-// Sivagangai, and related Tamil Nadu locations has been removed.
-//
-// Local knowledge hints are now managed through the "localknowledge" database
-// collection. To add hints for your institution, insert documents there via
-// the MongoDB admin interface or a seed script — no code changes required.
-//
-// Organizations outside Madurai simply leave this collection empty; all
-// location searches are served by global OpenStreetMap (Nominatim + Photon).
-// ---------------------------------------------------------------------------
+const normalizeTextBackend = (text) => {
+    if (!text) return "";
+    return String(text)
+        .toLowerCase()
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9\s]/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+};
 
 /*
 |--------------------------------------------------------------------------
-| LOCAL KNOWLEDGE STORE (Generic — no hardcoded institutions)
-|--------------------------------------------------------------------------
-| Administrators can add location hints for their organization via the
-| database collection "localknowledge". Each document should have:
-|   { name, displayName, address, latitude, longitude, type, category, keywords[] }
-|
-| This collection is empty by default. Adding entries is optional — the
-| system works without them using OpenStreetMap (Nominatim + Photon).
-| The KLNCE-specific entries that were previously hardcoded here have been
-| removed. Any organization can seed this collection with their own data.
+| GLOBAL OPENSTREETMAP GEOCODING & PLACE SEARCH (Nominatim + Photon)
 |--------------------------------------------------------------------------
 */
 
-const getLocalKnowledgeEntries = async () => {
-    try {
-        const entries = await getCollectionData("localknowledge");
-        return Array.isArray(entries) ? entries : [];
-    } catch {
-        return [];
-    }
-};
-
-const searchLocalKnowledge = async (query) => {
-    const clean = String(query || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
-    if (!clean) return [];
-
-    const queryTokens = clean.split(/\s+/).filter(Boolean);
-    const entries = await getLocalKnowledgeEntries();
-
-    return entries
-        .filter((entry) => {
-            const text = [
-                entry.name,
-                entry.displayName,
-                entry.address,
-                ...(entry.keywords || [])
-            ].join(" ").toLowerCase().replace(/[^a-z0-9]/g, " ");
-
-            return (
-                queryTokens.every((token) => text.includes(token)) ||
-                (entry.keywords || []).some((kw) => clean.includes(kw) || kw.includes(clean))
-            );
-        })
-        .map((entry) => ({
-            name: entry.name,
-            displayName: entry.displayName || entry.name,
-            address: entry.address || "",
-            latitude: Number(entry.latitude),
-            longitude: Number(entry.longitude),
-            type: entry.type || "Place",
-            category: entry.category || "place",
-            source: "Organization Knowledge Base"
-        }))
-        .filter((e) => isValidCoordinate(e.latitude, e.longitude));
-};
-
-// Keep a thin synchronous wrapper for call-sites that previously used the
-// synchronous searchRegionalKnowledge. Returns [] immediately; callers that
-// need async results should call searchLocalKnowledge directly.
-const searchRegionalKnowledge = (_query) => [];
-
-const generateQueryVariants = (query) => {
-    const clean = String(query || "").trim();
-    const variants = [clean];
-
-    const words = clean.split(/\s+/);
-    const hasShortAcronym = words.some((w) => w.length >= 2 && w.length <= 4 && /^[a-zA-Z]+$/.test(w));
-
-    if (hasShortAcronym) {
-        const withDots = words
-            .map((w) => (w.length >= 2 && w.length <= 4 ? w.split("").join(".") + "." : w))
-            .join(" ");
-        variants.push(withDots);
-
-        const withSpaces = words
-            .map((w) => (w.length >= 2 && w.length <= 4 ? w.split("").join(" ") : w))
-            .join(" ");
-        variants.push(withSpaces);
-    }
-
-    return Array.from(new Set(variants));
-};
-
-const searchSavedMapLocations = async (query) => {
-    try {
-        const search = normalize(query).toLowerCase();
-        if (!search || search.length < 2) return [];
-
-        const [mapLocs, stops, routes, selectedPlans, plans] = await Promise.all([
-            getCollectionData("maplocations"),
-            getCollectionData("stops"),
-            getCollectionData("routes"),
-            getCollectionData("ai_selected_plans"),
-            getCollectionData("ai_plans")
-        ]);
-
-        const allPlans = [...(selectedPlans || []), ...(plans || [])];
-
-        const candidates = [];
-
-        // 1. maplocations collection
-        for (const loc of mapLocs) {
-            candidates.push({
-                name: loc?.name || loc?.locationName || loc?.placeName || "Saved Location",
-                displayName: loc?.displayName || loc?.address || loc?.name || "Saved Map Location",
-                latitude: Number(loc?.latitude ?? loc?.lat),
-                longitude: Number(loc?.longitude ?? loc?.lng ?? loc?.lon),
-                type: loc?.type || "Saved",
-                category: loc?.category || "saved",
-                source: "Saved Map Location"
-            });
-        }
-
-        // 2. stops collection
-        for (const s of stops) {
-            candidates.push({
-                name: s?.stopName || s?.name || "Stop",
-                displayName: s?.displayName || s?.address || s?.stopName || s?.name || "Bus Stop",
-                latitude: Number(s?.latitude ?? s?.lat),
-                longitude: Number(s?.longitude ?? s?.lng ?? s?.lon),
-                type: "Transit Hub",
-                category: "bus_stop",
-                source: "Saved Map Location"
-            });
-        }
-
-        // 3. routes collection (sources, destinations, and intermediate stops)
-        for (const r of routes) {
-            if (r?.source) {
-                candidates.push({
-                    name: r.source.name || "Route Source",
-                    displayName: r.source.displayName || r.source.address || r.source.name,
-                    latitude: Number(r.source.latitude ?? r.source.lat),
-                    longitude: Number(r.source.longitude ?? r.source.lng ?? r.source.lon),
-                    type: "Transit Hub",
-                    category: "route_source",
-                    source: "Saved Map Location"
-                });
-            }
-            if (r?.destination) {
-                candidates.push({
-                    name: r.destination.name || "Route Destination",
-                    displayName: r.destination.displayName || r.destination.address || r.destination.name,
-                    latitude: Number(r.destination.latitude ?? r.destination.lat),
-                    longitude: Number(r.destination.longitude ?? r.destination.lng ?? r.destination.lon),
-                    type: "Destination",
-                    category: "route_destination",
-                    source: "Saved Map Location"
-                });
-            }
-            if (Array.isArray(r?.stops)) {
-                for (const s of r.stops) {
-                    candidates.push({
-                        name: s?.name || "Stop",
-                        displayName: s?.displayName || s?.address || s?.name,
-                        latitude: Number(s?.latitude ?? s?.lat),
-                        longitude: Number(s?.longitude ?? s?.lng ?? s?.lon),
-                        type: "Transit Hub",
-                        category: "route_stop",
-                        source: "Saved Map Location"
-                    });
-                }
-            }
-        }
-
-        // 4. ai_plans / ai_selected_plans collections (startingPoint, sourceHub, destinationHub, startingHub)
-        for (const p of allPlans) {
-            if (p?.startingPoint) {
-                candidates.push({
-                    name: p.startingPoint.name || "Starting Point",
-                    displayName: p.startingPoint.address || p.startingPoint.displayName || p.startingPoint.name,
-                    latitude: Number(p.startingPoint.latitude ?? p.startingPoint.lat),
-                    longitude: Number(p.startingPoint.longitude ?? p.startingPoint.lng ?? p.startingPoint.lon),
-                    type: "College",
-                    category: "institution_hub",
-                    source: "Saved Map Location"
-                });
-            }
-            if (p?.startingHub) {
-                candidates.push({
-                    name: p.startingHub.name || "Starting Hub",
-                    displayName: p.startingHub.address || p.startingHub.displayName || p.startingHub.name,
-                    latitude: Number(p.startingHub.latitude ?? p.startingHub.lat),
-                    longitude: Number(p.startingHub.longitude ?? p.startingHub.lng ?? p.startingHub.lon),
-                    type: "College",
-                    category: "institution_hub",
-                    source: "Saved Map Location"
-                });
-            }
-            if (p?.sourceHub) {
-                candidates.push({
-                    name: p.sourceHub.name,
-                    displayName: p.sourceHub.displayName || p.sourceHub.address || p.sourceHub.name,
-                    latitude: Number(p.sourceHub.latitude ?? p.sourceHub.lat),
-                    longitude: Number(p.sourceHub.longitude ?? p.sourceHub.lng ?? p.sourceHub.lon),
-                    type: "Transit Hub",
-                    category: "source_hub",
-                    source: "Saved Map Location"
-                });
-            }
-            if (p?.destinationHub) {
-                candidates.push({
-                    name: p.destinationHub.name,
-                    displayName: p.destinationHub.displayName || p.destinationHub.address || p.destinationHub.name,
-                    latitude: Number(p.destinationHub.latitude ?? p.destinationHub.lat),
-                    longitude: Number(p.destinationHub.longitude ?? p.destinationHub.lng ?? p.destinationHub.lon),
-                    type: "Destination",
-                    category: "destination_hub",
-                    source: "Saved Map Location"
-                });
-            }
-        }
-
-        const validCandidates = candidates.filter((c) => isValidCoordinate(c.latitude, c.longitude));
-
-        const queryNorm = normalizeTextBackend(search);
-        const queryTokens = tokenizeBackend(search, false);
-
-        return validCandidates.filter((loc) => {
-            const locName = normalizeTextBackend(loc.name);
-            const locDisplay = normalizeTextBackend(loc.displayName);
-            const locTokens = tokenizeBackend(`${loc.name} ${loc.displayName}`, false);
-
-            if (locName.includes(queryNorm) || locDisplay.includes(queryNorm)) return true;
-            if (queryNorm.includes(locName)) return true;
-
-            // Acronym or token match
-            return queryTokens.some((qt) => {
-                if (locTokens.includes(qt)) return true;
-                if (locTokens.some((lt) => (lt.length >= 3 && qt.length >= 3 && (lt.startsWith(qt) || qt.startsWith(lt))))) return true;
-                if (acronymMatchesNameBackend(qt, locTokens)) return true;
-                return false;
-            });
-        });
-    } catch (error) {
-        console.error("Saved map location search error:", error.message);
-        return [];
-    }
-};
-
-const requestOpenStreetMap = async (query, proximityPoint = null) => {
-    const params = {
-        q: query,
-        format: "jsonv2",
-        addressdetails: "1",
-        namedetails: "1",
-        limit: "10"
-    };
+const buildNominatimUrl = (query, proximityPoint = null) => {
+    const clean = encodeURIComponent(String(query).trim());
+    let url =
+        `https://nominatim.openstreetmap.org/search` +
+        `?q=${clean}` +
+        `&format=jsonv2` +
+        `&addressdetails=1` +
+        `&namedetails=1` +
+        `&limit=10`;
 
     if (proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)) {
+        const delta = 0.5;
         const lat = Number(proximityPoint.latitude);
         const lon = Number(proximityPoint.longitude);
-        params.viewbox = `${(lon - 0.6).toFixed(4)},${(lat + 0.6).toFixed(4)},${(lon + 0.6).toFixed(4)},${(lat - 0.6).toFixed(4)}`;
-        params.bounded = "0";
+        url += `&viewbox=${lon - delta},${lat + delta},${lon + delta},${lat - delta}&bounded=0`;
     }
 
-    const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams(params).toString();
-
-    const response = await fetch(url, {
-        headers: {
-            "User-Agent": "AI-Transportation-Management-System/2.5 (transport@example.com)",
-            Accept: "application/json"
-        }
-    });
-
-    if (!response.ok) {
-        throw new Error(`OpenStreetMap returned ${response.status}`);
-    }
-
-    return response.json();
+    return url;
 };
 
-const requestPhotonAPI = async (query, proximityPoint = null) => {
+const buildPhotonUrl = (query, proximityPoint = null) => {
+    const clean = encodeURIComponent(String(query).trim());
+    let url = `https://photon.komoot.io/api/?q=${clean}&limit=10`;
+
+    if (proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)) {
+        url += `&lat=${Number(proximityPoint.latitude)}&lon=${Number(proximityPoint.longitude)}`;
+    }
+
+    return url;
+};
+
+const formatNominatimResult = (item, proximityPoint = null) => {
+    const latitude = Number(item.lat);
+    const longitude = Number(item.lon);
+
+    if (!isValidCoordinate(latitude, longitude)) return null;
+
+    const name = item.namedetails?.name || item.name || item.display_name?.split(",")[0] || "Location";
+    const displayName = item.display_name || name;
+    const address = item.display_name || "";
+
+    const distanceKm = proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)
+        ? Number(calculateDistanceKm(proximityPoint.latitude, proximityPoint.longitude, latitude, longitude).toFixed(2))
+        : null;
+
+    return {
+        name,
+        displayName,
+        address,
+        latitude,
+        longitude,
+        placeId: String(item.place_id || `osm-${latitude}-${longitude}`),
+        type: item.type || "Location",
+        source: "OpenStreetMap",
+        importance: Number(item.importance || 0.5),
+        distanceKm
+    };
+};
+
+const formatPhotonResult = (feature, proximityPoint = null) => {
+    const coordinates = feature?.geometry?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+
+    const longitude = Number(coordinates[0]);
+    const latitude = Number(coordinates[1]);
+
+    if (!isValidCoordinate(latitude, longitude)) return null;
+
+    const props = feature.properties || {};
+    const name = props.name || props.street || "Location";
+    const parts = [
+        props.name,
+        props.street,
+        props.city || props.town || props.village,
+        props.state,
+        props.country
+    ].filter(Boolean);
+    const displayName = parts.join(", ");
+
+    const distanceKm = proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)
+        ? Number(calculateDistanceKm(proximityPoint.latitude, proximityPoint.longitude, latitude, longitude).toFixed(2))
+        : null;
+
+    return {
+        name,
+        displayName: displayName || name,
+        address: displayName || "",
+        latitude,
+        longitude,
+        placeId: String(props.osm_id || `photon-${latitude}-${longitude}`),
+        type: props.osm_value || "Location",
+        source: "OpenStreetMap Photon",
+        importance: 0.5,
+        distanceKm
+    };
+};
+
+const reverseCacheBackend = new Map();
+
+const reverseGeocodeFastBackend = async (lat, lon) => {
+    const key = `${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`;
+    if (reverseCacheBackend.has(key)) return reverseCacheBackend.get(key);
+
     try {
-        const params = {
-            q: query,
-            limit: "10"
-        };
-
-        if (proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)) {
-            params.lat = Number(proximityPoint.latitude).toFixed(4);
-            params.lon = Number(proximityPoint.longitude).toFixed(4);
-        }
-
-        const url = "https://photon.komoot.io/api/?" + new URLSearchParams(params).toString();
-
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-        try {
-            const response = await fetch(url, {
-                headers: {
-                    Accept: "application/json"
-                },
-                signal: controller.signal
-            });
-
-            if (!response.ok) return [];
-
-            const data = await response.json();
-            const features = Array.isArray(data?.features) ? data.features : [];
-
-            return features
-                .map((feature) => {
-                    const props = feature.properties || {};
-                    const coords = feature.geometry?.coordinates || [];
-                    const longitude = Number(coords[0]);
-                    const latitude = Number(coords[1]);
-
-                    const name =
-                        props.name ||
-                        props.street ||
-                        props.city ||
-                        props.state ||
-                        query;
-
-                    const parts = [
-                        props.name,
-                        props.street,
-                        props.district,
-                        props.city,
-                        props.state,
-                        props.country
-                    ].filter(Boolean);
-
-                    const displayName = Array.from(new Set(parts)).join(", ") || name;
-
-                    return {
-                        name,
-                        displayName,
-                        latitude,
-                        longitude,
-                        type: props.type || props.osm_value || "place",
-                        category: props.osm_key || "place",
-                        address: props,
-                        source: "Photon"
-                    };
-                })
-                .filter((p) => isValidCoordinate(p.latitude, p.longitude));
-        } finally {
-            clearTimeout(timeoutId);
+        const timeout = setTimeout(() => controller.abort(), 2500);
+        const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&addressdetails=1&accept-language=en`;
+        const res = await fetch(url, {
+            headers: {
+                Accept: "application/json",
+                "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
+            },
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+            const data = await res.json();
+            const addr = data.address || {};
+            const parts = [
+                addr.road || addr.street,
+                addr.neighbourhood || addr.suburb || addr.locality,
+                addr.village || addr.town || addr.city,
+                addr.state_district || addr.district,
+                addr.state,
+                addr.postcode,
+                addr.country
+            ].filter(Boolean);
+            const resObj = {
+                address: parts.join(", ") || data.display_name,
+                city: addr.city || addr.town || addr.village || "",
+                district: addr.state_district || addr.district || "",
+                state: addr.state || "",
+                country: addr.country || "",
+                postalCode: addr.postcode || ""
+            };
+            reverseCacheBackend.set(key, resObj);
+            return resObj;
         }
     } catch {
-        return [];
+        // continue
     }
-};
-
-const convertOSMResults = (data, originalQuery) => {
-    if (!Array.isArray(data)) return [];
-    return data
-        .map((place) => {
-            const address = place?.address || {};
-            const displayName = place?.display_name || originalQuery;
-
-            const name =
-                place?.name ||
-                place?.namedetails?.name ||
-                address?.amenity ||
-                address?.building ||
-                address?.shop ||
-                address?.hospital ||
-                address?.college ||
-                address?.university ||
-                address?.bus_station ||
-                address?.railway_station ||
-                address?.aeroway ||
-                address?.road ||
-                displayName.split(",")[0] ||
-                originalQuery;
-
-            const latitude = Number(place?.lat);
-            const longitude = Number(place?.lon);
-
-            return {
-                name,
-                displayName,
-                latitude,
-                longitude,
-                type: place?.type || "Place",
-                category: place?.category || "",
-                address,
-                source: "OpenStreetMap"
-            };
-        })
-        .filter((place) => isValidCoordinate(place.latitude, place.longitude));
-};
-
-const searchOpenStreetMap = async (query, proximityPoint = null) => {
-    const variants = [query, ...generateQueryVariants(query).filter((v) => v !== query).slice(0, 2)];
-    const combined = [];
-
-    const promises = [];
-    for (const q of variants) {
-        promises.push(
-            requestPhotonAPI(q, proximityPoint).catch(() => []),
-            requestOpenStreetMap(q, proximityPoint)
-                .then((data) => convertOSMResults(data, q))
-                .catch(() => [])
-        );
-    }
-
-    const settled = await Promise.allSettled(promises);
-    for (const res of settled) {
-        if (res.status === "fulfilled" && Array.isArray(res.value)) {
-            combined.push(...res.value);
-        }
-    }
-
-    return combined;
-};
-
-const LOCATIONIQ_API_KEY =
-    process.env.LOCATIONIQ_API_KEY ||
-    process.env.VITE_LOCATIONIQ_API_KEY ||
-    "";
-
-const requestLocationIQ = async (query, proximityPoint = null) => {
-    const cleanQuery = normalize(query);
-    if (cleanQuery.length < 2 || !LOCATIONIQ_API_KEY) return [];
 
     try {
-        const params = new URLSearchParams({
-            key: LOCATIONIQ_API_KEY,
-            q: cleanQuery,
-            format: "json",
-            addressdetails: "1",
-            limit: "10",
-            normalizecity: "1"
-        });
-
-        if (proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)) {
-            const lat = Number(proximityPoint.latitude);
-            const lon = Number(proximityPoint.longitude);
-            params.set("viewbox", `${(lon - 1.0).toFixed(4)},${(lat + 1.0).toFixed(4)},${(lon + 1.0).toFixed(4)},${(lat - 1.0).toFixed(4)}`);
-            params.set("bounded", "0");
-        }
-
-        const url = `https://api.locationiq.com/v1/autocomplete?${params.toString()}`;
-        const res = await fetch(url, { headers: { Accept: "application/json" } });
-
-        let data = [];
-        if (res.ok) {
-            data = await res.json();
-        } else {
-            const searchUrl = `https://us1.locationiq.com/v1/search?${params.toString()}`;
-            const searchRes = await fetch(searchUrl, { headers: { Accept: "application/json" } });
-            if (searchRes.ok) {
-                data = await searchRes.json();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2500);
+        const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`;
+        const bRes = await fetch(bdcUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (bRes.ok) {
+            const bData = await bRes.json();
+            if (bData && bData.countryName) {
+                const parts = [bData.locality || bData.city, bData.principalSubdivision, bData.countryName].filter(Boolean);
+                const resObj = {
+                    address: parts.join(", "),
+                    city: bData.city || bData.locality || "",
+                    district: "",
+                    state: bData.principalSubdivision || "",
+                    country: bData.countryName || "",
+                    postalCode: bData.postcode || ""
+                };
+                reverseCacheBackend.set(key, resObj);
+                return resObj;
             }
         }
-
-        if (!Array.isArray(data)) return [];
-
-        return data.map((place) => {
-            const address = place?.address || {};
-            const displayName = place?.display_name || cleanQuery;
-            const name =
-                place?.name ||
-                address?.name ||
-                address?.amenity ||
-                address?.building ||
-                address?.university ||
-                address?.college ||
-                address?.school ||
-                address?.hospital ||
-                address?.bus_station ||
-                address?.railway ||
-                address?.road ||
-                displayName.split(",")[0] ||
-                cleanQuery;
-
-            const latitude = Number(place?.lat);
-            const longitude = Number(place?.lon);
-
-            return {
-                name,
-                displayName,
-                latitude,
-                longitude,
-                type: place?.type || place?.class || "Place",
-                category: place?.class || place?.type || "place",
-                address,
-                source: "LocationIQ"
-            };
-        }).filter((p) => isValidCoordinate(p.latitude, p.longitude));
     } catch {
-        return [];
+        // continue
     }
-};
 
-/* -------------------------------------------------------
-   TEXT NORMALIZATION & TOKENIZATION (Backend)
-------------------------------------------------------- */
-const normalizeTextBackend = (text) => {
-    let str = String(text || "").toLowerCase();
-
-    // 1. Collapse dotted single letters: "k.l.n." or "k. l. n." -> "kln"
-    str = str.replace(/\b([a-z0-9])\s*\.\s*(?=[a-z0-9]\b|\.|\s|$)/gi, "$1");
-    str = str.replace(/\b([a-z0-9])\.(?=[a-z0-9]\b)/gi, "$1");
-
-    // 2. Collapse single-letter space-separated sequences: "k l n" -> "kln"
-    let prev;
-    do {
-        prev = str;
-        str = str.replace(/\b([a-z0-9])\s+([a-z0-9])\b/g, "$1$2");
-    } while (str !== prev);
-
-    // 3. Replace punctuation with spaces
-    str = str.replace(/[.,/#!$%^&*;:{}=\-_`~()'"[\]]/g, " ");
-
-    // 4. Collapse whitespace
-    return str.replace(/\s+/g, " ").trim();
-};
-
-const STOP_WORDS_BACKEND = new Set([
-    "of", "the", "in", "and", "at", "to", "for", "a", "an", "on", "by", "near",
-    "de", "la", "le", "der", "die", "das", "und", "en", "et"
-]);
-
-const tokenizeBackend = (text, removeStopWords = true) => {
-    const rawTokens = normalizeTextBackend(text).split(" ").filter((t) => t.length > 0);
-    if (!removeStopWords || rawTokens.length <= 2) {
-        return rawTokens;
-    }
-    const filtered = rawTokens.filter((t) => !STOP_WORDS_BACKEND.has(t));
-    return filtered.length > 0 ? filtered : rawTokens;
-};
-
-const GENERIC_CATEGORY_TOKENS_BACKEND = new Set([
-    "college", "colleges", "university", "universities", "institute", "institutes",
-    "institution", "institutions", "polytechnic", "campus", "campuses", "school", "schools",
-    "academy", "academies", "faculty", "department", "hospital", "hospitals", "clinic",
-    "clinics", "medical", "healthcare", "health", "pharmacy", "dispensary", "station",
-    "railway", "train", "metro", "junction", "terminal", "airport", "airfield", "aerodrome",
-    "stand", "stop", "bus", "transport", "transit", "mall", "market", "bazaar", "theatre",
-    "theater", "cinema", "hotel", "resort", "lodge", "park", "beach", "temple", "church",
-    "mosque", "monument", "hall", "stadium", "complex", "center", "centre", "tower", "plaza",
-    "building", "house", "block", "floor", "road", "street", "avenue", "lane", "highway",
-    "expressway", "cross", "main", "nagar", "colony", "layout", "village", "town", "city",
-    "district", "state", "zone", "ward", "area", "engineering", "technology", "tech",
-    "arts", "science", "commerce", "management", "international", "national", "state"
-]);
-
-const splitTokensBackend = (query) => {
-    const allTokens = tokenizeBackend(query, true);
-    const distinctiveTokens = [];
-    const categoryTokens = [];
-
-    allTokens.forEach((token) => {
-        if (GENERIC_CATEGORY_TOKENS_BACKEND.has(token)) {
-            categoryTokens.push(token);
-        } else {
-            distinctiveTokens.push(token);
-        }
-    });
-
-    return { allTokens, distinctiveTokens, categoryTokens };
-};
-
-const detectCategoryIntentBackend = (queryTokens) => {
-    const qStr = queryTokens.join(" ");
-    if (/college|university|school|institute|polytechnic|iit|nit|engineering|arts|science|campus|academy/.test(qStr)) return "College";
-    if (/hospital|clinic|health|medical|doctor|dispensary/.test(qStr)) return "Hospital";
-    if (/station|railway|train|metro|junction|bus.?stand|bus.?stop|terminal|transit/.test(qStr)) return "Transit Hub";
-    if (/airport|flight|airfield/.test(qStr)) return "Airport";
-    if (/theatre|theater|cinema|mall|market|stadium|park|beach|temple|church|mosque|hotel/.test(qStr)) return "Landmark";
-    if (/nagar|colony|layout|street|road|avenue|area|district|city|town|village/.test(qStr)) return "City Area";
     return null;
 };
 
-const acronymMatchesNameBackend = (acronym, nameTokens) => {
-    if (acronym.length < 2 || acronym.length > 6 || !/^[a-z]+$/.test(acronym)) {
-        return false;
+const searchWikidataBackend = async (query) => {
+    try {
+        const clean = String(query || "").trim();
+        if (!clean) return [];
+
+        const queriesToTry = [clean];
+        const words = clean.split(/\s+/);
+        const first = words[0];
+        if (/^[a-zA-Z]{2,4}$/i.test(first) && !["of", "and", "the", "in", "at", "for", "to", "a", "an", "is", "on"].includes(first.toLowerCase())) {
+            const spaced = first.split("").join(". ") + ".";
+            queriesToTry.push(clean.replace(new RegExp(`\\b${first}\\b`, "i"), spaced));
+        }
+        if (words.length >= 3) {
+            queriesToTry.push(words.slice(0, -1).join(" "));
+            if (/^[a-zA-Z]{2,4}$/i.test(first)) {
+                const spaced = first.split("").join(". ") + ".";
+                queriesToTry.push(`${spaced} ${words.slice(1, -1).join(" ")}`);
+            }
+        }
+
+        let searchResults = [];
+        for (const q of Array.from(new Set(queriesToTry))) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 3500);
+                const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}&language=en&limit=5&format=json&origin=*`;
+                const res = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "User-Agent": "AITransportationManagement/6.0 (https://ai-trans.app; support@ai-trans.app)"
+                    },
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data?.search) && data.search.length > 0) {
+                        searchResults = data.search;
+                        break;
+                    }
+                }
+            } catch {
+                // continue
+            }
+        }
+
+        if (searchResults.length === 0) return [];
+
+        const ids = searchResults.slice(0, 5).map((s) => s.id).join("|");
+        const claimsUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(ids)}&props=claims|labels|descriptions&languages=en&format=json&origin=*`;
+        const cRes = await fetch(claimsUrl, {
+            headers: {
+                Accept: "application/json",
+                "User-Agent": "AITransportationManagement/6.0 (https://ai-trans.app; support@ai-trans.app)"
+            }
+        });
+        if (!cRes.ok) return [];
+        const cData = await cRes.json();
+
+        const results = [];
+        for (const item of searchResults) {
+            const entity = cData.entities?.[item.id];
+            const p625 = entity?.claims?.P625?.[0]?.mainsnak?.datavalue?.value;
+            if (p625 && isValidCoordinate(p625.latitude, p625.longitude)) {
+                const name = item.label || clean;
+                const lat = Number(p625.latitude);
+                const lon = Number(p625.longitude);
+
+                let rev = null;
+                try {
+                    rev = await reverseGeocodeFastBackend(lat, lon);
+                } catch {
+                    // ignore
+                }
+
+                const address = rev?.address || (item.description ? `${item.description}` : name);
+
+                results.push({
+                    name: String(name).trim(),
+                    address,
+                    displayName: `${name}, ${address}`,
+                    latitude: lat,
+                    longitude: lon,
+                    placeId: `wikidata-${item.id}`,
+                    types: ["landmark", "point_of_interest"],
+                    type: "College / Landmark",
+                    importance: 0.95,
+                    source: "Wikidata Open Geocoding"
+                });
+            }
+        }
+        return results;
+    } catch {
+        return [];
     }
-    const initials = nameTokens.filter((t) => t.length >= 1).map((t) => t[0]);
-    const initialsStr = initials.join("");
-    return initialsStr.includes(acronym);
 };
 
 export const searchPlaces = async (query, proximityPoint = null) => {
-    const cleanQuery = normalize(query);
-    if (cleanQuery.length < 2) return [];
+    const clean = String(query || "").trim();
+    if (!clean || clean.length < 2) return [];
 
-    // 1. Query LocationIQ, Local Knowledge, and Saved Map Locations concurrently
-    const [locationIQResults, localKnowledge, savedLocations] = await Promise.all([
-        requestLocationIQ(cleanQuery, proximityPoint),
-        searchLocalKnowledge(cleanQuery),
-        searchSavedMapLocations(cleanQuery)
-    ]);
-
-    // 2. Query OSM / Photon fallback if LocationIQ returned few results
-    let osmLocations = [];
-    if (locationIQResults.length < 3) {
-        osmLocations = await searchOpenStreetMap(cleanQuery, proximityPoint);
+    const cacheKey = `${clean.toLowerCase()}_${proximityPoint?.latitude || ""}_${proximityPoint?.longitude || ""}`;
+    if (coordinateCache.has(cacheKey)) {
+        return [coordinateCache.get(cacheKey)];
     }
 
-    const combined = [...locationIQResults, ...localKnowledge, ...savedLocations, ...osmLocations];
+    const variants = [clean];
+    // Acronym dotting / undotting
+    const unpunct = clean.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"+\[\]|\\]/g, " ").replace(/\s+/g, " ").trim();
+    if (unpunct && unpunct !== clean) variants.push(unpunct);
 
-    const normQuery = normalizeTextBackend(cleanQuery);
-    const { allTokens, distinctiveTokens, categoryTokens } = splitTokensBackend(cleanQuery);
-    const detectedIntent = detectCategoryIntentBackend(categoryTokens.length > 0 ? categoryTokens : allTokens);
-
-    const scored = combined.map((place) => {
-        const placeName = place.name || "";
-        const placeDisplayName = place.displayName || place.address || "";
-        const normName = normalizeTextBackend(placeName);
-        const normDisplayName = normalizeTextBackend(placeDisplayName);
-        const nameTokens = tokenizeBackend(placeName, false);
-        const allPlaceTokens = tokenizeBackend(`${placeName} ${placeDisplayName}`, false);
-        const placeType = place.type || "Place";
-
-        let score = 0;
-
-        // 1. Exact Name Matches (Highest Priority)
-        if (normName === normQuery) {
-            score += 800;
-        } else if (normName.startsWith(normQuery)) {
-            score += 500;
-        } else if (normName.includes(normQuery)) {
-            score += 350;
-        } else if (normDisplayName.includes(normQuery)) {
-            score += 150;
+    const words = unpunct.split(/\s+/).filter(Boolean);
+    for (const w of words) {
+        if (/^[a-zA-Z]{2,4}$/.test(w) && !["the", "and", "for", "out", "new"].includes(w.toLowerCase())) {
+            const spacedDotted = w.split("").join(". ") + ".";
+            variants.push(clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.toUpperCase()));
+            variants.push(clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.replace(/\s+/g, "").toUpperCase()));
         }
+    }
 
-        // 2. DISTINCTIVE / IDENTITY TOKEN MATCHING
-        let distinctiveNameMatchCount = 0;
-        let distinctiveAddressMatchCount = 0;
+    const withoutRd = unpunct.replace(/\b(office\s+)?(rd|road|street|st|ave|lane|junction|stop|stand|depot)\b/gi, " ").replace(/\s+/g, " ").trim();
+    if (withoutRd && withoutRd !== unpunct) variants.push(withoutRd);
 
-        distinctiveTokens.forEach((token) => {
-            const matchesName = nameTokens.some(
-                (nt) => nt === token || (nt.length >= 3 && token.length >= 3 && (nt.startsWith(token) || token.startsWith(nt)))
-            );
-            const matchesAcro = !matchesName && acronymMatchesNameBackend(token, nameTokens);
+    if (words.length >= 3) {
+        variants.push(words.slice(0, -1).join(" "));
+        variants.push(`${words[0]} ${words[words.length - 1]}`);
+    }
 
-            if (matchesName || matchesAcro) {
-                distinctiveNameMatchCount++;
-                if (matchesAcro) score += 400; // Extra boost for acronym match
-            } else {
-                const matchesAddress = allPlaceTokens.some(
-                    (pt) => pt === token || (pt.length >= 3 && token.length >= 3 && (pt.startsWith(token) || token.startsWith(pt)))
-                );
-                if (matchesAddress) distinctiveAddressMatchCount++;
+    const results = [];
+
+    // Stage 1: Parallel fast search
+    const fastPromises = [
+        searchWikidataBackend(clean),
+        (async () => {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const response = await fetch(buildPhotonUrl(clean, proximityPoint), { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data?.features)) {
+                        return data.features.map((f) => formatPhotonResult(f, proximityPoint)).filter(Boolean);
+                    }
+                }
+            } catch {
+                return [];
             }
-        });
-
-        if (distinctiveTokens.length > 0) {
-            const distinctiveRatio = distinctiveNameMatchCount / distinctiveTokens.length;
-
-            if (distinctiveRatio === 1.0) {
-                score += 550;
-            } else if (distinctiveRatio >= 0.5) {
-                score += 250;
-            } else if (distinctiveNameMatchCount === 0 && distinctiveAddressMatchCount === 0) {
-                score -= 700; // Zero identity tokens matched
-            } else if (distinctiveNameMatchCount === 0 && distinctiveAddressMatchCount > 0) {
-                score -= 300;
+            return [];
+        })(),
+        (async () => {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const response = await fetch(buildNominatimUrl(clean, proximityPoint), {
+                    headers: { "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)" },
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data)) {
+                        return data.map((item) => formatNominatimResult(item, proximityPoint)).filter(Boolean);
+                    }
+                }
+            } catch {
+                return [];
             }
+            return [];
+        })()
+    ];
 
-            score += distinctiveNameMatchCount * 80;
-            score += distinctiveAddressMatchCount * 25;
+    for (const v of Array.from(new Set(variants)).slice(1)) {
+        fastPromises.push((async () => {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const response = await fetch(buildPhotonUrl(v, proximityPoint), { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data?.features)) {
+                        return data.features.map((f) => formatPhotonResult(f, proximityPoint)).filter(Boolean);
+                    }
+                }
+            } catch {
+                return [];
+            }
+            return [];
+        })());
+    }
+
+    const responses = await Promise.allSettled(fastPromises);
+    for (const res of responses) {
+        if (res.status === "fulfilled" && Array.isArray(res.value)) {
+            results.push(...res.value);
         }
+    }
 
-        // 3. GENERIC CATEGORY TOKEN MATCHING
-        let categoryNameMatchCount = 0;
-        categoryTokens.forEach((token) => {
-            if (nameTokens.some((nt) => nt === token || (nt.length > 3 && token.length > 3 && (nt.startsWith(token) || token.startsWith(nt))))) {
-                categoryNameMatchCount++;
-            }
-        });
-
-        score += categoryNameMatchCount * 25;
-
-        // 4. FULL TOKEN COVERAGE BONUS
-        let totalNameMatchCount = 0;
-        allTokens.forEach((token) => {
-            if (nameTokens.some((nt) => nt === token || (nt.length > 3 && token.length > 3 && (nt.startsWith(token) || token.startsWith(nt))))) {
-                totalNameMatchCount++;
-            }
-        });
-
-        if (allTokens.length > 0 && totalNameMatchCount === allTokens.length) {
-            score += 200;
-        }
-
-        // 5. Category Intent
-        if (detectedIntent) {
-            if (placeType === detectedIntent) {
-                score += 90;
-            } else if (detectedIntent === "College" && (placeType === "Airport" || placeType === "City Area")) {
-                score -= 100;
+    // Stage 2: Fallback Nominatim queries on distinctive variants
+    if (results.length === 0 && variants.length > 1) {
+        const fallbackVariants = [...variants.slice(1)].reverse();
+        for (const v of fallbackVariants) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const response = await fetch(buildNominatimUrl(v, proximityPoint), {
+                    headers: { "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)" },
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data) && data.length > 0) {
+                        const formatted = data.map((item) => formatNominatimResult(item, proximityPoint)).filter(Boolean);
+                        if (formatted.length > 0) {
+                            results.push(...formatted);
+                            break;
+                        }
+                    }
+                }
+            } catch {
+                // continue
             }
         }
+    }
 
-        // 6. Source Boost
-        if (place.source === "Organization Knowledge Base" || place.source === "Saved Map Location") score += 40;
-        if (place.source === "LocationIQ") score += 20;
+    // Stage 3: Open-Meteo geocoding fallback for global cities
+    if (results.length === 0) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-        // 7. Soft Proximity
+            const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(clean)}&count=5&language=en&format=json`;
+            const response = await fetch(url, { headers: { Accept: "application/json" }, signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                const data = await response.json();
+                if (Array.isArray(data?.results)) {
+                    data.results.forEach((r) => {
+                        const lat = Number(r.latitude);
+                        const lon = Number(r.longitude);
+                        if (isValidCoordinate(lat, lon)) {
+                            results.push({
+                                name: r.name,
+                                displayName: [r.name, r.admin1, r.country].filter(Boolean).join(", "),
+                                address: [r.name, r.admin1, r.country].filter(Boolean).join(", "),
+                                latitude: lat,
+                                longitude: lon,
+                                placeId: `openmeteo-${r.id}`,
+                                type: "City Area",
+                                source: "Open-Meteo",
+                                importance: 0.6
+                            });
+                        }
+                    });
+                }
+            }
+        } catch {
+            // continue
+        }
+    }
+
+    if (results.length > 0) {
+        let validResults = results;
         if (proximityPoint && isValidCoordinate(proximityPoint.latitude, proximityPoint.longitude)) {
-            const dist = calculateDistanceKm(proximityPoint.latitude, proximityPoint.longitude, place.latitude, place.longitude);
-            score -= dist * 0.15;
+            const MAX_TRANSIT_RADIUS_KM = 65;
+            validResults = results
+                .map((r) => ({
+                    ...r,
+                    distanceKm: calculateDistanceKm(
+                        proximityPoint.latitude,
+                        proximityPoint.longitude,
+                        r.latitude,
+                        r.longitude
+                    )
+                }))
+                .filter((r) => r.distanceKm <= MAX_TRANSIT_RADIUS_KM);
+
+            validResults.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
         }
 
-        return { ...place, relevanceScore: score };
-    });
-
-    scored.sort((a, b) => b.relevanceScore - a.relevanceScore);
-
-    const unique = [];
-    const seen = new Set();
-
-    for (const location of scored) {
-        if (location.relevanceScore < -200) continue;
-        const key = `${normalizeTextBackend(location?.name)}|${Number(location?.latitude).toFixed(2)}|${Number(location?.longitude).toFixed(2)}`;
-
-        if (!seen.has(key)) {
-            seen.add(key);
-            unique.push(location);
+        if (validResults.length > 0) {
+            coordinateCache.set(cacheKey, validResults[0]);
+            return validResults;
         }
-        if (unique.length >= 10) break;
     }
 
-    return unique;
+    return [];
 };
 
 export const resolveLocation = async (query, proximityPoint = null) => {
-    const cleanQuery = normalize(query);
-    if (!cleanQuery) {
-        return { success: false, message: "Location query is required." };
-    }
-
-    const cacheKey = proximityPoint
-        ? `${cleanQuery.toLowerCase()}_${Number(proximityPoint.latitude).toFixed(2)}_${Number(proximityPoint.longitude).toFixed(2)}`
-        : cleanQuery.toLowerCase();
-
-    if (coordinateCache.has(cacheKey)) {
+    const results = await searchPlaces(query, proximityPoint);
+    if (results.length > 0) {
         return {
             success: true,
-            location: coordinateCache.get(cacheKey)
+            location: results[0]
         };
     }
-
-    const results = await searchPlaces(cleanQuery, proximityPoint);
-
-    if (!results.length) {
-        return { success: false, message: `Location "${cleanQuery}" could not be resolved on the map.` };
-    }
-
-    const best = results[0];
-    coordinateCache.set(cacheKey, best);
-
     return {
-        success: true,
-        location: best
+        success: false,
+        location: null,
+        message: "No matching location found."
     };
 };
 
 /*
 |--------------------------------------------------------------------------
-| GEOGRAPHIC STOP RESOLUTION WITH PROXIMITY SCOPING & FAST DB PRE-LOOKUP
+| STOP COORDINATE RESOLUTION (No Fake Coordinates - Pure Authoritative Sources)
 |--------------------------------------------------------------------------
-|
-| Resolves stopping areas dynamically scoped to the transit region of
-| the selected source/hub. Pre-loads existing saved stops and route locations
-| from the database to guarantee rapid resolution without excessive network calls.
-|
 */
 
 const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
     const resolved = [];
-    const FIRST_PASS_RADIUS_KM = 45;
     const MAX_TRANSIT_RADIUS_KM = 65;
 
-    // Extract city/region hint for contextual retry
-    const startingName = normalize(startingPoint?.name || "");
-    const startingAddress = normalize(startingPoint?.address || startingPoint?.displayName || "");
-    const cityHint = startingAddress.split(",")[0] || startingName.split(" ")[0] || "";
-
-    // Pre-fetch saved database points to accelerate stop resolution
     let dbLocations = [];
     try {
         const [stops, routes, mapLocs] = await Promise.all([
@@ -1251,31 +961,22 @@ const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
             }
         });
     } catch (dbErr) {
-        console.warn("DB pre-lookup warning:", dbErr.message);
+        console.warn("DB location pre-fetch warning:", dbErr.message);
     }
 
     for (const group of stoppingGroups) {
-        // 1. Direct coordinate from user record if valid and within transit range
+        // 1. Direct coordinate from user record if valid
         if (isValidCoordinate(group.latitude, group.longitude)) {
-            const distFromStart = calculateDistanceKm(
-                startingPoint.latitude,
-                startingPoint.longitude,
-                group.latitude,
-                group.longitude
-            );
-
-            if (distFromStart <= MAX_TRANSIT_RADIUS_KM) {
-                resolved.push({
-                    ...group,
-                    latitude: Number(group.latitude),
-                    longitude: Number(group.longitude),
-                    resolved: true
-                });
-                continue;
-            }
+            resolved.push({
+                ...group,
+                latitude: Number(group.latitude),
+                longitude: Number(group.longitude),
+                resolved: true
+            });
+            continue;
         }
 
-        const cacheKey = `${group.name.toLowerCase()}_${Number(startingPoint.latitude).toFixed(2)}_${Number(startingPoint.longitude).toFixed(2)}`;
+        const cacheKey = `${group.name.toLowerCase()}_${Number(startingPoint?.latitude || 0).toFixed(2)}_${Number(startingPoint?.longitude || 0).toFixed(2)}`;
         if (coordinateCache.has(cacheKey)) {
             const cached = coordinateCache.get(cacheKey);
             resolved.push({
@@ -1289,7 +990,7 @@ const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
             continue;
         }
 
-        // 2. Check pre-fetched DB locations (case-insensitive exact or substring match)
+        // 2. Check pre-fetched DB locations
         const normGroupName = normalizeTextBackend(group.name);
         const matchedDbLoc = dbLocations.find((loc) => {
             const normLocName = normalizeTextBackend(loc.name);
@@ -1297,44 +998,24 @@ const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
         });
 
         if (matchedDbLoc) {
-            const dist = calculateDistanceKm(startingPoint.latitude, startingPoint.longitude, matchedDbLoc.latitude, matchedDbLoc.longitude);
-            if (dist <= MAX_TRANSIT_RADIUS_KM) {
-                const stopObj = {
-                    ...group,
-                    latitude: matchedDbLoc.latitude,
-                    longitude: matchedDbLoc.longitude,
-                    displayName: matchedDbLoc.displayName,
-                    source: "Saved Location",
-                    resolved: true
-                };
-                coordinateCache.set(cacheKey, stopObj);
-                resolved.push(stopObj);
-                continue;
-            }
+            const stopObj = {
+                ...group,
+                latitude: matchedDbLoc.latitude,
+                longitude: matchedDbLoc.longitude,
+                displayName: matchedDbLoc.displayName,
+                source: "Saved Location",
+                resolved: true
+            };
+            coordinateCache.set(cacheKey, stopObj);
+            resolved.push(stopObj);
+            continue;
         }
 
-        // 3. Fast search with proximity bias
+        // 3. Online geocode search with proximity bias
         try {
-            let results = await searchPlaces(group.name, startingPoint);
-
-            let localCandidates = (results || []).filter((p) => {
-                if (!isValidCoordinate(p.latitude, p.longitude)) return false;
-                const dist = calculateDistanceKm(startingPoint.latitude, startingPoint.longitude, p.latitude, p.longitude);
-                return dist <= FIRST_PASS_RADIUS_KM;
-            });
-
-            if (localCandidates.length === 0 && cityHint) {
-                const contextualQuery = `${group.name}, ${cityHint}`;
-                const retryResults = await searchPlaces(contextualQuery, startingPoint);
-                localCandidates = (retryResults || []).filter((p) => {
-                    if (!isValidCoordinate(p.latitude, p.longitude)) return false;
-                    const dist = calculateDistanceKm(startingPoint.latitude, startingPoint.longitude, p.latitude, p.longitude);
-                    return dist <= MAX_TRANSIT_RADIUS_KM;
-                });
-            }
-
-            if (localCandidates.length > 0) {
-                const best = localCandidates[0];
+            const results = await searchPlaces(group.name, startingPoint);
+            if (results.length > 0) {
+                const best = results[0];
                 const resolvedStop = {
                     ...group,
                     latitude: Number(best.latitude),
@@ -1346,35 +1027,24 @@ const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
                 coordinateCache.set(cacheKey, resolvedStop);
                 resolved.push(resolvedStop);
             } else {
-                // Deterministic local synthetic coordinate within transit region
-                const nameHash = group.name.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                const angleRad = (nameHash % 360) * (Math.PI / 180);
-                const distKm = 3 + (nameHash % 14);
-
-                const degLat = distKm / 110.574;
-                const degLon = distKm / (111.320 * Math.cos(toRadians(startingPoint.latitude)));
-
-                const syntheticLat = Number((startingPoint.latitude + degLat * Math.sin(angleRad)).toFixed(6));
-                const syntheticLon = Number((startingPoint.longitude + degLon * Math.cos(angleRad)).toFixed(6));
-
-                const syntheticStop = {
+                // If not resolvable, DO NOT fabricate fake coordinates. Mark MISSING_STOP_COORDINATES.
+                resolved.push({
                     ...group,
-                    latitude: syntheticLat,
-                    longitude: syntheticLon,
-                    displayName: `${group.name} (Local Transit Area)`,
-                    source: "Transit Estimator",
-                    resolved: true
-                };
-
-                coordinateCache.set(cacheKey, syntheticStop);
-                resolved.push(syntheticStop);
+                    latitude: null,
+                    longitude: null,
+                    resolved: false,
+                    unallocatedReason: "MISSING_STOP_COORDINATES",
+                    diagnosticMessage: `Stop '${group.name}' coordinates could not be resolved within the transit catchment area.`
+                });
             }
         } catch {
             resolved.push({
                 ...group,
                 latitude: null,
                 longitude: null,
-                resolved: false
+                resolved: false,
+                unallocatedReason: "MISSING_STOP_COORDINATES",
+                diagnosticMessage: `Geocoding request failed for stop '${group.name}'.`
             });
         }
     }
@@ -1383,9 +1053,75 @@ const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
 };
 
 /*
-|---------------------------------------------------------------------| ROAD ROUTING SERVICE (OSRM / ROAD NETWORK)
+|--------------------------------------------------------------------------
+| ROAD ROUTING SERVICE (OSRM ONLINE NETWORK & SEGMENT CACHING)
 |--------------------------------------------------------------------------
 */
+
+const roadSegmentCache = new Map();
+
+export const getRoadSegmentCached = async (fromPt, toPt) => {
+    if (!isValidCoordinate(fromPt?.latitude, fromPt?.longitude) ||
+        !isValidCoordinate(toPt?.latitude, toPt?.longitude)) {
+        return null;
+    }
+
+    const key = `${Number(fromPt.longitude).toFixed(5)},${Number(fromPt.latitude).toFixed(5)}:${Number(toPt.longitude).toFixed(5)},${Number(toPt.latitude).toFixed(5)}`;
+    if (roadSegmentCache.has(key)) {
+        return roadSegmentCache.get(key);
+    }
+
+    const straightLineKm = calculateDistanceKm(fromPt.latitude, fromPt.longitude, toPt.latitude, toPt.longitude);
+    if (straightLineKm < 0.05) {
+        const res = { distanceKm: 0.05, durationMin: 0.5, isRoadVerified: true, straightLineKm };
+        roadSegmentCache.set(key, res);
+        return res;
+    }
+
+    const query = `${Number(fromPt.longitude).toFixed(6)},${Number(fromPt.latitude).toFixed(6)};${Number(toPt.longitude).toFixed(6)},${Number(toPt.latitude).toFixed(6)}`;
+    const baseUrl = process.env.ROUTING_BASE_URL || process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
+    const url = `${baseUrl}/route/v1/driving/${query}?overview=false&steps=false`;
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data?.code === "Ok" && Array.isArray(data?.routes) && data.routes.length > 0) {
+                const route = data.routes[0];
+                const distanceKm = Number((Number(route.distance || 0) / 1000).toFixed(2));
+                const durationMin = Number((Number(route.duration || 0) / 60).toFixed(1));
+
+                // Sanity check: road distance cannot be < 0.7x straight line or > 3.5x straight line + 15km
+                if (distanceKm >= straightLineKm * 0.7 && distanceKm <= straightLineKm * 3.5 + 15) {
+                    const res = {
+                        distanceKm,
+                        durationMin,
+                        isRoadVerified: true,
+                        straightLineKm: Number(straightLineKm.toFixed(2))
+                    };
+                    roadSegmentCache.set(key, res);
+                    return res;
+                }
+            }
+        }
+    } catch {
+        // network error or timeout
+    }
+
+    // Calibrated urban road estimate
+    const fallbackRes = {
+        distanceKm: Number((straightLineKm * 1.25).toFixed(2)),
+        durationMin: Number(((straightLineKm * 1.25) / 0.5).toFixed(1)),
+        isRoadVerified: false,
+        straightLineKm: Number(straightLineKm.toFixed(2))
+    };
+    roadSegmentCache.set(key, fallbackRes);
+    return fallbackRes;
+};
 
 export const getRoadRouteGeometry = async (points) => {
     const validPoints = points.filter((point) =>
@@ -1396,17 +1132,17 @@ export const getRoadRouteGeometry = async (points) => {
         return null;
     }
 
+    // Explicitly format as longitude,latitude for OSRM
     const query = validPoints
-        .map((p) => `${Number(p.longitude)},${Number(p.latitude)}`)
+        .map((p) => `${Number(p.longitude).toFixed(6)},${Number(p.latitude).toFixed(6)}`)
         .join(";");
 
-    const url =
-        `https://router.project-osrm.org/route/v1/driving/${query}` +
-        `?overview=full&geometries=geojson&steps=false`;
+    const baseUrl = process.env.ROUTING_BASE_URL || process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
+    const url = `${baseUrl}/route/v1/driving/${query}?overview=full&geometries=geojson&steps=false`;
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
 
         const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
@@ -1423,13 +1159,37 @@ export const getRoadRouteGeometry = async (points) => {
             ? route.geometry.coordinates
             : [];
 
+        const distanceMeters = Number(route.distance || 0);
+        const distanceKm = Number((distanceMeters / 1000).toFixed(2));
+        const durationSeconds = Number(route.duration || 0);
+
+        // Calculate straight-line baseline for sanity checking
+        let straightLineKm = 0;
+        for (let i = 0; i < validPoints.length - 1; i++) {
+            straightLineKm += calculateDistanceKm(
+                validPoints[i].latitude, validPoints[i].longitude,
+                validPoints[i + 1].latitude, validPoints[i + 1].longitude
+            );
+        }
+
+        // ANOMALY REJECTION:
+        if (
+            (straightLineKm < 50 && distanceKm > 150) ||
+            (distanceKm > straightLineKm * 4.0 + 30) ||
+            (distanceKm < straightLineKm * 0.7)
+        ) {
+            console.warn(`[OSRM Anomaly Detected] Rejected route distance: ${distanceKm}km for straight-line: ${straightLineKm.toFixed(2)}km`);
+            return null;
+        }
+
         return {
-            distanceMeters: Number(route.distance || 0),
-            distanceKm: Number((Number(route.distance || 0) / 1000).toFixed(2)),
-            durationSeconds: Number(route.duration || 0),
+            distanceMeters,
+            distanceKm,
+            durationSeconds,
+            straightLineKm: Number(straightLineKm.toFixed(2)),
             geometry: coordinates.map(([longitude, latitude]) => ({
-                latitude,
-                longitude
+                latitude: Number(latitude),
+                longitude: Number(longitude)
             }))
         };
     } catch {
@@ -1443,9 +1203,8 @@ export const getRoadRouteGeometry = async (points) => {
 |--------------------------------------------------------------------------
 */
 
-const CORRIDOR_BEARING_TOLERANCE_DEG = 40;
-const CORRIDOR_MAX_DIST_KM = 35;
-const MAX_CONSECUTIVE_LEG_KM = 22;
+const CORRIDOR_BEARING_TOLERANCE_DEG = 50;
+const CORRIDOR_MAX_DIST_KM = 50;
 
 const groupStopsIntoCorridors = (stops, anchorHub) => {
     const enriched = stops.map((stop) => ({
@@ -1460,7 +1219,6 @@ const groupStopsIntoCorridors = (stops, anchorHub) => {
         )
     }));
 
-    // Sort all stops by bearing then distance
     enriched.sort((a, b) => a.bearingFromStart - b.bearingFromStart || a.distanceFromStart - b.distanceFromStart);
 
     const corridors = [];
@@ -1498,193 +1256,49 @@ const groupStopsIntoCorridors = (stops, anchorHub) => {
 
 /*
 |--------------------------------------------------------------------------
-| CORE ROUTE-SEQUENCE ALGORITHM: "Nearest First, Then Continuous Progression"
+| 2-OPT ROUTE IMPROVEMENT (Fixed Endpoints & Road Distance Optimization)
 |--------------------------------------------------------------------------
-|
-| Dynamically calculates a practical continuous journey from the selected source:
-|  1. Start at the selected source location.
-|  2. Find the nearest eligible road-connected stopping area (Stop 1).
-|  3. From current stop, evaluate all unvisited candidates in the corridor.
-|  4. Choose the best next stop by scoring:
-|     - Consecutive leg distance
-|     - Outward directional progress (penalizes jumping backwards toward source)
-|     - Detour angle penalty (penalizes sharp turns >120°)
-|  5. Repeat until all assigned stops are covered.
-|  6. Apply 2-opt refinement with strict continuity guard (rejects any swap
-|     introducing backtracking or breaking continuous progression).
-|
 */
 
-export const sequenceStopsContinuous = (stops, anchorHub, tripMode = "OUTWARD", sourceHub = null, destinationHub = null) => {
-    if (!Array.isArray(stops) || stops.length === 0) return [];
-
-    // The starting origin hub for the route:
-    // OUTWARD starts from SOURCE
-    // INWARD starts from DESTINATION
-    const startHub = tripMode === "OUTWARD"
-        ? (sourceHub || anchorHub)
-        : (destinationHub || anchorHub);
-
-    if (stops.length === 1) {
-        const single = stops[0];
-        const legDist = calculateDistanceKm(startHub.latitude, startHub.longitude, single.latitude, single.longitude);
-        return [{
-            ...single,
-            order: 1,
-            legDistanceKm: Number(legDist.toFixed(2)),
-            selectionReason: `${single.name} selected as primary stop (+${legDist.toFixed(2)} km from ${startHub.name || (tripMode === "OUTWARD" ? "source" : "destination")}).`
-        }];
+export const apply2OptRoadOptimization = async (tour, isSourceFixed = true, isDestFixed = true) => {
+    if (!Array.isArray(tour) || tour.length <= 3) {
+        return tour;
     }
 
-    const unvisited = stops.map((s) => ({
-        ...s,
-        distFromStart: calculateDistanceKm(startHub.latitude, startHub.longitude, s.latitude, s.longitude),
-        bearingFromStart: calculateBearing(startHub.latitude, startHub.longitude, s.latitude, s.longitude)
-    }));
-
-    const orderedTour = [];
-
-    // Step 1: Initial Stop Selection
-    // For BOTH OUTWARD and INWARD:
-    // Select the NEAREST valid road-connected stopping area from the starting origin hub.
-    let initialIndex = 0;
-    let minDist = Infinity;
-    unvisited.forEach((s, idx) => {
-        if (s.distFromStart < minDist) {
-            minDist = s.distFromStart;
-            initialIndex = idx;
-        }
-    });
-
-    const initialStop = unvisited.splice(initialIndex, 1)[0];
-    const initialLegDist = calculateDistanceKm(startHub.latitude, startHub.longitude, initialStop.latitude, initialStop.longitude);
-
-    initialStop.selectionReason = `${initialStop.name} selected first: nearest road-connected stopping area (+${initialLegDist.toFixed(2)} km) from ${startHub.name || (tripMode === "OUTWARD" ? "selected source" : "selected destination")}.`;
-
-    orderedTour.push(initialStop);
-
-    // Step 2: Progressive Continuous Stop Selection
-    let currentStop = initialStop;
-    let prevPoint = startHub;
-
-    while (unvisited.length > 0) {
-        let bestCandidateIdx = -1;
-        let lowestCandidateScore = Infinity;
-        let bestLegDist = 0;
-
-        for (let i = 0; i < unvisited.length; i++) {
-            const candidate = unvisited[i];
-            const legDist = calculateDistanceKm(currentStop.latitude, currentStop.longitude, candidate.latitude, candidate.longitude);
-
-            let score = legDist;
-
-            // Continuous directional progression: penalize jumping backward toward the start origin
-            const distRegress = currentStop.distFromStart - candidate.distFromStart;
-            if (distRegress > 1.0) {
-                score += distRegress * 3.0; // Backtracking penalty
-            }
-
-            // Penalize sharp U-turn deviations (>120°) from the previous segment
-            if (prevPoint) {
-                const bearing1 = calculateBearing(prevPoint.latitude, prevPoint.longitude, currentStop.latitude, currentStop.longitude);
-                const bearing2 = calculateBearing(currentStop.latitude, currentStop.longitude, candidate.latitude, candidate.longitude);
-                let turnAngle = Math.abs(bearing2 - bearing1);
-                if (turnAngle > 180) turnAngle = 360 - turnAngle;
-                if (turnAngle > 120) {
-                    score += (turnAngle / 180) * 4.0;
-                }
-            }
-
-            if (score < lowestCandidateScore) {
-                lowestCandidateScore = score;
-                bestCandidateIdx = i;
-                bestLegDist = legDist;
-            }
-        }
-
-        if (bestCandidateIdx !== -1) {
-            const chosen = unvisited.splice(bestCandidateIdx, 1)[0];
-            chosen.selectionReason = `${chosen.name} selected next: continuous road progression (+${bestLegDist.toFixed(2)} km) along corridor.`;
-            orderedTour.push(chosen);
-            prevPoint = currentStop;
-            currentStop = chosen;
-        } else {
-            const fallback = unvisited.shift();
-            orderedTour.push(fallback);
-            currentStop = fallback;
-        }
-    }
-
-    // Step 3: 2-Opt Optimization preserving the initial nearest stop and continuous directional flow
-    const optimizedTour = optimizeContinuousStopOrder2Opt(orderedTour, startHub, tripMode);
-
-    return optimizedTour;
-};
-
-// 2-Opt Optimizer with Directional Progress & Backtracking Penalties
-export const optimizeContinuousStopOrder2Opt = (stops, startHub, tripMode = "OUTWARD") => {
-    if (!Array.isArray(stops) || stops.length <= 2) return [...(stops || [])];
-
-    let currentTour = [...stops];
-
-    const evaluateTourCost = (tour) => {
-        let totalCost = 0;
-        for (let i = 0; i < tour.length; i++) {
-            const curr = tour[i];
-            const next = i < tour.length - 1 ? tour[i + 1] : null;
-
-            if (i === 0) {
-                totalCost += calculateDistanceKm(startHub.latitude, startHub.longitude, curr.latitude, curr.longitude);
-            }
-
-            if (next) {
-                const legDist = calculateDistanceKm(curr.latitude, curr.longitude, next.latitude, next.longitude);
-                totalCost += legDist;
-
-                const currDistFromStart = calculateDistanceKm(startHub.latitude, startHub.longitude, curr.latitude, curr.longitude);
-                const nextDistFromStart = calculateDistanceKm(startHub.latitude, startHub.longitude, next.latitude, next.longitude);
-                const regress = currDistFromStart - nextDistFromStart;
-                if (regress > 1.2) {
-                    totalCost += regress * 3.0; // Backtracking penalty
-                }
-            }
-        }
-        return totalCost;
-    };
-
-    let bestCost = evaluateTourCost(currentTour);
     let improved = true;
-    let iteration = 0;
-    const MAX_2OPT_ITERATIONS = 40;
+    let iterations = 0;
+    const maxIterations = 15;
+    let currentTour = [...tour];
 
-    while (improved && iteration < MAX_2OPT_ITERATIONS) {
+    const startIndex = isSourceFixed ? 1 : 0;
+    const endIndex = isDestFixed ? currentTour.length - 2 : currentTour.length - 1;
+
+    while (improved && iterations < maxIterations) {
         improved = false;
-        iteration++;
+        iterations++;
 
-        // Preserve first stop (ensure nearest stop remains initial stop)
-        for (let i = 1; i < currentTour.length - 1; i++) {
-            for (let j = i + 1; j < currentTour.length; j++) {
-                const candidateTour = [
-                    ...currentTour.slice(0, i),
-                    ...currentTour.slice(i, j + 1).reverse(),
-                    ...currentTour.slice(j + 1)
-                ];
+        for (let i = startIndex; i < endIndex; i++) {
+            for (let j = i + 1; j <= endIndex; j++) {
+                const prevI = currentTour[i - 1];
+                const currI = currentTour[i];
+                const currJ = currentTour[j];
+                const nextJ = currentTour[j + 1];
 
-                // Continuity guard: no leg > MAX_CONSECUTIVE_LEG_KM
-                let hasBrokenLeg = false;
-                for (let k = 0; k < candidateTour.length - 1; k++) {
-                    const d = calculateDistanceKm(candidateTour[k].latitude, candidateTour[k].longitude, candidateTour[k + 1].latitude, candidateTour[k + 1].longitude);
-                    if (d > MAX_CONSECUTIVE_LEG_KM) {
-                        hasBrokenLeg = true;
-                        break;
-                    }
-                }
-                if (hasBrokenLeg) continue;
+                if (!prevI || !currI || !currJ || !nextJ) continue;
 
-                const candidateCost = evaluateTourCost(candidateTour);
-                if (candidateCost < bestCost - 0.08) {
-                    bestCost = candidateCost;
-                    currentTour = candidateTour;
+                // Current cost of the two breaking segments
+                const d1 = await getRoadSegmentCached(prevI, currI);
+                const d2 = await getRoadSegmentCached(currJ, nextJ);
+                const currentCost = (d1?.distanceKm || 0) + (d2?.distanceKm || 0);
+
+                // Proposed cost if sub-tour i..j is reversed
+                const r1 = await getRoadSegmentCached(prevI, currJ);
+                const r2 = await getRoadSegmentCached(currI, nextJ);
+                const proposedCost = (r1?.distanceKm || 0) + (r2?.distanceKm || 0);
+
+                if (proposedCost < currentCost - 0.15) {
+                    const reversedSubTour = currentTour.slice(i, j + 1).reverse();
+                    currentTour.splice(i, j - i + 1, ...reversedSubTour);
                     improved = true;
                     break;
                 }
@@ -1696,42 +1310,589 @@ export const optimizeContinuousStopOrder2Opt = (stops, startHub, tripMode = "OUT
     return currentTour;
 };
 
-// Backward-compatible alias
-const optimizeContinuousStopOrder = sequenceStopsContinuous;
+/*
+|--------------------------------------------------------------------------
+| CONTINUOUS STOP SEQUENCING (Nearest-from-Current & Road-Optimized)
+|--------------------------------------------------------------------------
+*/
+
+export const sequenceStopsContinuous = async (
+    stops,
+    anchorHub,
+    tripMode = "TO_DESTINATION",
+    sourceHub = null,
+    destinationHub = null
+) => {
+    if (!Array.isArray(stops) || stops.length === 0) return [];
+
+    const isToDestination = tripMode === "TO_DESTINATION" || tripMode === "INWARD";
+    const refHub = isToDestination
+        ? (destinationHub || anchorHub)
+        : (sourceHub || anchorHub);
+
+    if (stops.length === 1) {
+        const single = stops[0];
+        const seg = refHub ? await getRoadSegmentCached(refHub, single) : null;
+        const legDist = seg?.distanceKm ?? Number(calculateDistanceKm(refHub.latitude, refHub.longitude, single.latitude, single.longitude).toFixed(2));
+        const legDur = seg?.durationMin ?? Number((legDist / 0.5).toFixed(1));
+        return [{
+            ...single,
+            order: 1,
+            legDistanceKm: legDist,
+            legDurationMin: legDur,
+            selectionReason: `${single.name} primary stop (+${legDist} km road distance).`
+        }];
+    }
+
+    const unvisited = stops.map((s) => ({
+        ...s,
+        distFromHub: calculateDistanceKm(refHub.latitude, refHub.longitude, s.latitude, s.longitude),
+        bearingFromHub: calculateBearing(refHub.latitude, refHub.longitude, s.latitude, s.longitude)
+    }));
+
+    const orderedTour = [];
+
+    // Phase 1: Determine initial seed stop
+    let initialIndex = 0;
+    if (isToDestination) {
+        // Start at outermost stop furthest from destination
+        let maxDist = -1;
+        unvisited.forEach((s, idx) => {
+            if (s.distFromHub > maxDist) {
+                maxDist = s.distFromHub;
+                initialIndex = idx;
+            }
+        });
+    } else {
+        // Start at nearest stop to departure source
+        let minDist = Infinity;
+        unvisited.forEach((s, idx) => {
+            if (s.distFromHub < minDist) {
+                minDist = s.distFromHub;
+                initialIndex = idx;
+            }
+        });
+    }
+
+    const initialStop = unvisited.splice(initialIndex, 1)[0];
+    const initialSeg = refHub ? await getRoadSegmentCached(refHub, initialStop) : null;
+    const initialLegDist = initialSeg?.distanceKm ?? Number(initialStop.distFromHub.toFixed(2));
+    const initialLegDur = initialSeg?.durationMin ?? Number((initialLegDist / 0.5).toFixed(1));
+
+    initialStop.legDistanceKm = initialLegDist;
+    initialStop.legDurationMin = initialLegDur;
+    initialStop.selectionReason = isToDestination
+        ? `${initialStop.name} selected as outer origin stop (+${initialLegDist} km to ${refHub.name || "Destination"}).`
+        : `${initialStop.name} selected as first departure stop (+${initialLegDist} km from ${refHub.name || "Source"}).`;
+    orderedTour.push(initialStop);
+
+    let currentPoint = initialStop;
+
+    // Phase 2: Nearest-from-Current stop selection (Current Point -> Next Candidate)
+    while (unvisited.length > 0) {
+        // Pre-filter top candidates by straight-line distance from CURRENT stop
+        const candidatesWithDist = unvisited.map((cand, idx) => ({
+            cand,
+            originalIdx: idx,
+            straightLineKm: calculateDistanceKm(currentPoint.latitude, currentPoint.longitude, cand.latitude, cand.longitude)
+        }));
+
+        candidatesWithDist.sort((a, b) => a.straightLineKm - b.straightLineKm);
+        const topCandidates = candidatesWithDist.slice(0, Math.min(8, candidatesWithDist.length));
+
+        let bestCandidateEntry = null;
+        let lowestScore = Infinity;
+
+        for (const item of topCandidates) {
+            const cand = item.cand;
+            const seg = await getRoadSegmentCached(currentPoint, cand);
+            const roadKm = seg?.distanceKm ?? (item.straightLineKm * 1.25);
+            const roadDur = seg?.durationMin ?? (roadKm / 0.5);
+
+            // Primary: Road Distance, Secondary: Road Duration
+            let score = roadKm + 0.1 * roadDur;
+
+            // Tertiary: Directional continuity & backtracking penalty
+            if (refHub) {
+                const currentToHub = calculateDistanceKm(currentPoint.latitude, currentPoint.longitude, refHub.latitude, refHub.longitude);
+                const candToHub = calculateDistanceKm(cand.latitude, cand.longitude, refHub.latitude, refHub.longitude);
+
+                if (isToDestination) {
+                    // Inward: progress towards destination (distance to hub should decrease)
+                    const regress = candToHub - currentToHub;
+                    if (regress > 1.0) {
+                        score += regress * 1.5;
+                    }
+                } else {
+                    // Outward: progress outward from source (distance from hub should increase or stay along corridor)
+                    const regress = currentToHub - candToHub;
+                    if (regress > 2.0) {
+                        score += regress * 1.0;
+                    }
+                }
+            }
+
+            if (score < lowestScore) {
+                lowestScore = score;
+                bestCandidateEntry = {
+                    cand,
+                    originalIdx: item.originalIdx,
+                    roadKm: Number(roadKm.toFixed(2)),
+                    roadDur: Number(roadDur.toFixed(1))
+                };
+            }
+        }
+
+        if (!bestCandidateEntry) {
+            bestCandidateEntry = {
+                cand: unvisited[0],
+                originalIdx: 0,
+                roadKm: 1.0,
+                roadDur: 2.0
+            };
+        }
+
+        const nextStop = unvisited.splice(bestCandidateEntry.originalIdx, 1)[0];
+        nextStop.legDistanceKm = bestCandidateEntry.roadKm;
+        nextStop.legDurationMin = bestCandidateEntry.roadDur;
+        nextStop.selectionReason = `${nextStop.name} selected: nearest reachable stop from ${currentPoint.name} (+${bestCandidateEntry.roadKm} km road distance, ~${bestCandidateEntry.roadDur}m).`;
+
+        orderedTour.push(nextStop);
+        currentPoint = nextStop;
+    }
+
+    // Phase 3: Controlled 2-Opt Improvement with Fixed Endpoints
+    let fullTourFor2Opt = [];
+    if (!isToDestination && (sourceHub || anchorHub)) {
+        fullTourFor2Opt.push(sourceHub || anchorHub);
+    }
+    fullTourFor2Opt.push(...orderedTour);
+    if (isToDestination && (destinationHub || anchorHub)) {
+        fullTourFor2Opt.push(destinationHub || anchorHub);
+    }
+
+    const isStartFixed = !isToDestination;
+    const isEndFixed = isToDestination;
+
+    const optimizedTour = await apply2OptRoadOptimization(fullTourFor2Opt, isStartFixed, isEndFixed);
+
+    // Extract intermediate stops
+    const finalStops = optimizedTour.filter((pt) =>
+        pt !== sourceHub && pt !== destinationHub && pt !== anchorHub
+    );
+
+    // Recalculate segment metrics for final order
+    let prev = (!isToDestination && (sourceHub || anchorHub)) ? (sourceHub || anchorHub) : null;
+    for (let idx = 0; idx < finalStops.length; idx++) {
+        const st = finalStops[idx];
+        if (prev) {
+            const seg = await getRoadSegmentCached(prev, st);
+            st.legDistanceKm = seg?.distanceKm ?? Number((calculateDistanceKm(prev.latitude, prev.longitude, st.latitude, st.longitude) * 1.25).toFixed(2));
+            st.legDurationMin = seg?.durationMin ?? Number((st.legDistanceKm / 0.5).toFixed(1));
+            st.selectionReason = `Selected: continuous road progression from ${prev.name} (+${st.legDistanceKm} km road distance, ~${st.legDurationMin}m).`;
+        }
+        st.order = idx + 1;
+        prev = st;
+    }
+
+    return finalStops;
+};
 
 /*
 |--------------------------------------------------------------------------
-| ROUTE CONSOLIDATION ENGINE
+| SECTOR NAMING
 |--------------------------------------------------------------------------
-|
-| Merges low-utilization routes (<50% utilization or <=25 passengers) into compatible
-| adjacent routes when capacity and geographic continuity permit.
-|
-| IMPORTANT RULE: If a route is consolidated, the merged route is strictly
-| removed/released from the active routes list. Final routes are cleanly re-indexed
-| (R-01, R-02, ...) and consolidation logs use the final stable route codes.
-|
 */
 
-export const consolidateLowUtilizationRoutes = ({
+const getSectorName = (bearing) => {
+    if (bearing >= 337.5 || bearing < 22.5) return "North Corridor";
+    if (bearing >= 22.5 && bearing < 67.5) return "North-East Corridor";
+    if (bearing >= 67.5 && bearing < 112.5) return "East Corridor";
+    if (bearing >= 112.5 && bearing < 157.5) return "South-East Corridor";
+    if (bearing >= 157.5 && bearing < 202.5) return "South Corridor";
+    if (bearing >= 202.5 && bearing < 247.5) return "South-West Corridor";
+    if (bearing >= 247.5 && bearing < 292.5) return "West Corridor";
+    return "North-West Corridor";
+};
+
+/*
+|--------------------------------------------------------------------------
+| BUS ALLOCATION & STOP DEMAND SPLITTING (100% Mathematical Allocation)
+|--------------------------------------------------------------------------
+*/
+
+const allocateInstitutionalBuses = async ({
+    resolvedStops,
+    availableVehicles,
+    sourceHub,
+    destinationHub,
+    tripMode = "TO_DESTINATION"
+}) => {
+    const sortedVehicles = [...availableVehicles]
+        .filter((v) => getVehicleCapacity(v) > 0)
+        .sort((a, b) => getVehicleCapacity(b) - getVehicleCapacity(a));
+
+    if (sortedVehicles.length === 0) {
+        return { buses: [], unassignedStops: resolvedStops, consolidationLogs: [], consolidationAudit: [] };
+    }
+
+    const isToDestination = tripMode === "TO_DESTINATION" || tripMode === "INWARD";
+    const anchorHub = isToDestination ? (destinationHub || sourceHub) : (sourceHub || destinationHub);
+
+    // Group stops into geographic corridor clusters
+    const corridors = groupStopsIntoCorridors(resolvedStops, anchorHub);
+
+    // Mutable stop state tracking remaining unassigned passengers
+    const allMutableStops = new Map();
+    resolvedStops.forEach((s) => {
+        const bearingFromStart = calculateBearing(
+            anchorHub.latitude, anchorHub.longitude,
+            s.latitude, s.longitude
+        );
+        const distanceFromStart = calculateDistanceKm(
+            anchorHub.latitude, anchorHub.longitude,
+            s.latitude, s.longitude
+        );
+        const userIdsList = Array.isArray(s.users)
+            ? s.users.map((u) => String(u?._id || u?.id || u?.userId || u))
+            : (Array.isArray(s.userIds) ? [...s.userIds] : []);
+
+        const initialDemand = Number(s.userCount ?? s.users?.length ?? 0);
+
+        allMutableStops.set(s.name, {
+            ...s,
+            bearingFromStart,
+            distanceFromStart,
+            remainingUsers: initialDemand,
+            remainingUserIds: [...userIdsList]
+        });
+    });
+
+    const rawBuses = [];
+    let vehicleIdx = 0;
+
+    // PASS 1: Allocate vehicles per corridor
+    for (const corridor of corridors) {
+        const orderedCorridor = await sequenceStopsContinuous(corridor, anchorHub, tripMode, sourceHub, destinationHub);
+
+        while (vehicleIdx < sortedVehicles.length) {
+            const mutableCorridorStops = orderedCorridor.map((s) =>
+                allMutableStops.get(s.name) || { ...s, remainingUsers: 0, remainingUserIds: [] }
+            );
+
+            const corridorRemainingDemand = mutableCorridorStops.reduce((sum, s) => sum + s.remainingUsers, 0);
+            if (corridorRemainingDemand <= 0) break;
+
+            const vehicle = sortedVehicles[vehicleIdx];
+            const capacity = getVehicleCapacity(vehicle);
+            const vehicleName = getVehicleName(vehicle, vehicleIdx);
+
+            let assignedUsers = 0;
+            const currentBusStops = [];
+
+            for (const stopData of mutableCorridorStops) {
+                if (assignedUsers >= capacity) break;
+                if (stopData.remainingUsers <= 0) continue;
+
+                const seatsLeft = capacity - assignedUsers;
+                const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
+                const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
+
+                stopData.remainingUsers -= boardingCount;
+                assignedUsers += boardingCount;
+
+                currentBusStops.push({
+                    ...stopData,
+                    userCount: boardingCount,
+                    userIds: boardedIds
+                });
+            }
+
+            if (currentBusStops.length === 0 || assignedUsers === 0) {
+                break;
+            }
+
+            // Calculate stop order, legs, and cumulative/remaining passenger metrics
+            let cumulativePassengers = 0;
+            let passengersOnBus = assignedUsers;
+
+            const stopsWithPassengers = currentBusStops.map((s, idx) => {
+                const prevPt = idx === 0 ? null : currentBusStops[idx - 1];
+                let consecutiveLegDist = s.legDistanceKm ?? (prevPt
+                    ? calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude)
+                    : 0);
+                if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
+
+                if (!isToDestination) {
+                    // Outward: Passengers alighting at stops
+                    const dropped = s.userCount;
+                    passengersOnBus = Math.max(0, passengersOnBus - dropped);
+                    return {
+                        ...s,
+                        order: idx + 1,
+                        legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                        passengersDropped: dropped,
+                        passengersRemaining: passengersOnBus,
+                        userIds: s.userIds || [],
+                        resolved: true
+                    };
+                } else {
+                    // To Destination: Passengers boarding at residential stops
+                    cumulativePassengers += s.userCount;
+                    return {
+                        ...s,
+                        order: idx + 1,
+                        legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                        cumulativePassengers,
+                        standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
+                        userIds: s.userIds || [],
+                        resolved: true
+                    };
+                }
+            });
+
+            let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
+            if (isToDestination && destinationHub && stopsWithPassengers.length > 0) {
+                const last = stopsWithPassengers[stopsWithPassengers.length - 1];
+                totalKm += calculateDistanceKm(
+                    last.latitude, last.longitude,
+                    destinationHub.latitude, destinationHub.longitude
+                );
+            } else if (!isToDestination && sourceHub && stopsWithPassengers.length > 0) {
+                const first = stopsWithPassengers[0];
+                totalKm += calculateDistanceKm(
+                    sourceHub.latitude, sourceHub.longitude,
+                    first.latitude, first.longitude
+                );
+            }
+
+            const avgBearing =
+                stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
+                stopsWithPassengers.length;
+            const sectorName = getSectorName(avgBearing);
+
+            const routeNumber = rawBuses.length + 1;
+            const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
+            const lineType = isToDestination ? "Transit Line" : "Drop-off Line";
+
+            const firstPointName = isToDestination
+                ? stopsWithPassengers[0]?.name || "Outer Stop"
+                : (sourceHub?.name || anchorHub?.name || "Departure Hub");
+            const lastPointName = isToDestination
+                ? (destinationHub?.name || anchorHub?.name || "Destination Hub")
+                : stopsWithPassengers[stopsWithPassengers.length - 1]?.name || "Terminus";
+
+            rawBuses.push({
+                routeNumber,
+                routeCode,
+                routeName: `${routeCode}: ${firstPointName} to ${lastPointName} (${sectorName} ${lineType})`,
+                sectorName,
+                tripMode,
+                vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
+                vehicleName,
+                capacity,
+                assignedUsers,
+                remainingSeats: Math.max(0, capacity - assignedUsers),
+                standbyBufferSeats: Math.max(0, capacity - assignedUsers),
+                stops: stopsWithPassengers,
+                sourceHub: sourceHub || null,
+                destinationHub: destinationHub || null,
+                routeDistanceKm: Number(totalKm.toFixed(2)),
+                isContinuous: true,
+                isRoadVerified: false,
+                roadRouteStatus: "Road network routing pending",
+                users: stopsWithPassengers.flatMap((s) => s.userIds || [])
+            });
+
+            vehicleIdx++;
+        }
+    }
+
+    // PASS 2: Universal sweep for any remaining unassigned users across all corridors
+    while (vehicleIdx < sortedVehicles.length) {
+        const remainingStopList = [];
+        allMutableStops.forEach((stop) => {
+            if (stop.remainingUsers > 0) {
+                remainingStopList.push(stop);
+            }
+        });
+
+        if (remainingStopList.length === 0) break;
+
+        const orderedRemaining = await sequenceStopsContinuous(remainingStopList, anchorHub, tripMode, sourceHub, destinationHub);
+        const vehicle = sortedVehicles[vehicleIdx];
+        const capacity = getVehicleCapacity(vehicle);
+        const vehicleName = getVehicleName(vehicle, vehicleIdx);
+
+        let assignedUsers = 0;
+        const currentBusStops = [];
+
+        for (const stopData of orderedRemaining) {
+            if (assignedUsers >= capacity) break;
+            if (stopData.remainingUsers <= 0) continue;
+
+            const seatsLeft = capacity - assignedUsers;
+            const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
+            const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
+
+            stopData.remainingUsers -= boardingCount;
+            assignedUsers += boardingCount;
+
+            currentBusStops.push({
+                ...stopData,
+                userCount: boardingCount,
+                userIds: boardedIds
+            });
+        }
+
+        if (currentBusStops.length === 0 || assignedUsers === 0) {
+            break;
+        }
+
+        let cumulativePassengers = 0;
+        let passengersOnBus = assignedUsers;
+
+        const stopsWithPassengers = currentBusStops.map((s, idx) => {
+            const prevPt = idx === 0 ? null : currentBusStops[idx - 1];
+            let consecutiveLegDist = s.legDistanceKm ?? (prevPt
+                ? calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude)
+                : 0);
+            if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
+
+            if (!isToDestination) {
+                const dropped = s.userCount;
+                passengersOnBus = Math.max(0, passengersOnBus - dropped);
+                return {
+                    ...s,
+                    order: idx + 1,
+                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                    passengersDropped: dropped,
+                    passengersRemaining: passengersOnBus,
+                    userIds: s.userIds || [],
+                    resolved: true
+                };
+            } else {
+                cumulativePassengers += s.userCount;
+                return {
+                    ...s,
+                    order: idx + 1,
+                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
+                    cumulativePassengers,
+                    standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
+                    userIds: s.userIds || [],
+                    resolved: true
+                };
+            }
+        });
+
+        let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
+        if (isToDestination && destinationHub && stopsWithPassengers.length > 0) {
+            const last = stopsWithPassengers[stopsWithPassengers.length - 1];
+            totalKm += calculateDistanceKm(
+                last.latitude, last.longitude,
+                destinationHub.latitude, destinationHub.longitude
+            );
+        } else if (!isToDestination && sourceHub && stopsWithPassengers.length > 0) {
+            const first = stopsWithPassengers[0];
+            totalKm += calculateDistanceKm(
+                sourceHub.latitude, sourceHub.longitude,
+                first.latitude, first.longitude
+            );
+        }
+
+        const avgBearing =
+            stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
+            stopsWithPassengers.length;
+        const sectorName = getSectorName(avgBearing);
+
+        const routeNumber = rawBuses.length + 1;
+        const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
+        const lineType = isToDestination ? "Transit Line" : "Drop-off Line";
+
+        const firstPointName = isToDestination
+            ? stopsWithPassengers[0]?.name || "Outer Stop"
+            : (sourceHub?.name || anchorHub?.name || "Departure Hub");
+        const lastPointName = isToDestination
+            ? (destinationHub?.name || anchorHub?.name || "Destination Hub")
+            : stopsWithPassengers[stopsWithPassengers.length - 1]?.name || "Terminus";
+
+        rawBuses.push({
+            routeNumber,
+            routeCode,
+            routeName: `${routeCode}: ${firstPointName} to ${lastPointName} (${sectorName} ${lineType})`,
+            sectorName,
+            tripMode,
+            vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
+            vehicleName,
+            capacity,
+            assignedUsers,
+            remainingSeats: Math.max(0, capacity - assignedUsers),
+            standbyBufferSeats: Math.max(0, capacity - assignedUsers),
+            stops: stopsWithPassengers,
+            sourceHub: sourceHub || null,
+            destinationHub: destinationHub || null,
+            routeDistanceKm: Number(totalKm.toFixed(2)),
+            isContinuous: true,
+            isRoadVerified: false,
+            roadRouteStatus: "Road network routing pending",
+            users: stopsWithPassengers.flatMap((s) => s.userIds || [])
+        });
+
+        vehicleIdx++;
+    }
+
+    // Apply route consolidation
+    const { buses, consolidationLogs, consolidationAudit } = await consolidateLowUtilizationRoutes({
+        initialBuses: rawBuses,
+        availableVehicles,
+        anchorHub,
+        tripMode,
+        sourceHub,
+        destinationHub
+    });
+
+    const unassignedStops = [];
+    allMutableStops.forEach((stop) => {
+        if (stop.remainingUsers > 0) {
+            unassignedStops.push({
+                name: stop.name,
+                userCount: stop.remainingUsers,
+                latitude: stop.latitude,
+                longitude: stop.longitude
+            });
+        }
+    });
+
+    return { buses, unassignedStops, consolidationLogs, consolidationAudit };
+};
+
+/*
+|--------------------------------------------------------------------------
+| ROUTE CONSOLIDATION & AUDIT LOGGING
+|--------------------------------------------------------------------------
+*/
+
+export const consolidateLowUtilizationRoutes = async ({
     initialBuses,
     availableVehicles,
     anchorHub,
-    tripMode = "OUTWARD",
+    tripMode = "TO_DESTINATION",
     sourceHub = null,
     destinationHub = null
 }) => {
     if (!Array.isArray(initialBuses) || initialBuses.length <= 1) {
-        return { buses: initialBuses || [], consolidationLogs: [] };
+        return { buses: initialBuses || [], consolidationLogs: [], consolidationAudit: [] };
     }
 
+    const isToDestination = tripMode === "TO_DESTINATION" || tripMode === "INWARD";
     let activeBuses = initialBuses.map((b) => ({ ...b }));
-    const MIN_POST_MERGE_UTILIZATION = 0.50;
-    const MAX_DISTANCE_DELTA_KM = 12.0;
-    const MAX_DISTANCE_DELTA_RATIO = 1.35;
+    const MIN_POST_MERGE_UTILIZATION = 0.45;
+    const MAX_DISTANCE_DELTA_KM = 20.0;
 
     let consolidationChanged = true;
     let pass = 0;
+    const consolidationLogs = [];
+    const consolidationAudit = [];
 
     while (consolidationChanged && pass < 5 && activeBuses.length > 1) {
         consolidationChanged = false;
@@ -1741,7 +1902,7 @@ export const consolidateLowUtilizationRoutes = ({
         for (let i = 0; i < activeBuses.length; i++) {
             const bus = activeBuses[i];
             const util = bus.capacity > 0 ? (bus.assignedUsers / bus.capacity) : 0;
-            if (util < 0.50 || bus.assignedUsers <= 25) {
+            if (util < 0.45 || bus.assignedUsers <= 20) {
                 lowUtilIndices.push(i);
             }
         }
@@ -1763,28 +1924,12 @@ export const consolidateLowUtilizationRoutes = ({
                 // Guard 1: seat capacity
                 if (targetBus.remainingSeats < lowBus.assignedUsers) continue;
 
-                // Guard 2: post-merge utilization must reach minimum threshold
+                // Guard 2: post-merge utilization
                 const mergedUsers = targetBus.assignedUsers + lowBus.assignedUsers;
                 const postMergeUtil = mergedUsers / targetBus.capacity;
                 if (postMergeUtil < MIN_POST_MERGE_UTILIZATION) continue;
 
-                // Guard 3: geographic corridor compatibility
-                const lowBearing = lowBus.stops.reduce((s, st) => s + (st.bearingFromStart || 0), 0) / Math.max(1, lowBus.stops.length);
-                const targetBearing = targetBus.stops.reduce((s, st) => s + (st.bearingFromStart || 0), 0) / Math.max(1, targetBus.stops.length);
-                let bearingDiff = Math.abs(lowBearing - targetBearing);
-                if (bearingDiff > 180) bearingDiff = 360 - bearingDiff;
-
-                let minInterStopDist = Infinity;
-                for (const s1 of lowBus.stops) {
-                    for (const s2 of targetBus.stops) {
-                        const d = calculateDistanceKm(s1.latitude, s1.longitude, s2.latitude, s2.longitude);
-                        if (d < minInterStopDist) minInterStopDist = d;
-                    }
-                }
-
-                if (bearingDiff > 55 && minInterStopDist > 15) continue;
-
-                // Guard 4: combine stops and re-sequence with continuous progression
+                // Combine stops and re-sequence
                 const combinedStopsMap = new Map();
                 [...targetBus.stops, ...lowBus.stops].forEach((st) => {
                     const key = st.name.toLowerCase().trim();
@@ -1798,26 +1943,17 @@ export const consolidateLowUtilizationRoutes = ({
                 });
 
                 const rawCombinedStops = Array.from(combinedStopsMap.values());
-                const candidateMergedStops = sequenceStopsContinuous(rawCombinedStops, anchorHub, tripMode, sourceHub, destinationHub);
+                const candidateMergedStops = await sequenceStopsContinuous(rawCombinedStops, anchorHub, tripMode, sourceHub, destinationHub);
 
-                let maxLegKm = 0;
                 let candidateTotalKm = 0;
-                let lastPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
-
-                for (const st of candidateMergedStops) {
-                    const leg = calculateDistanceKm(lastPt.latitude, lastPt.longitude, st.latitude, st.longitude);
-                    if (leg > maxLegKm) maxLegKm = leg;
+                for (let idx = 0; idx < candidateMergedStops.length; idx++) {
+                    const prevP = idx === 0 ? null : candidateMergedStops[idx - 1];
+                    const leg = candidateMergedStops[idx].legDistanceKm ?? (prevP ? calculateDistanceKm(prevP.latitude, prevP.longitude, candidateMergedStops[idx].latitude, candidateMergedStops[idx].longitude) : 0);
                     candidateTotalKm += leg;
-                    lastPt = st;
                 }
 
-                if (maxLegKm > MAX_CONSECUTIVE_LEG_KM) continue;
-
                 const distDelta = candidateTotalKm - targetBus.routeDistanceKm;
-                const distDeltaRatio = targetBus.routeDistanceKm > 0
-                    ? candidateTotalKm / targetBus.routeDistanceKm
-                    : 1;
-                if (distDelta > MAX_DISTANCE_DELTA_KM || distDeltaRatio > MAX_DISTANCE_DELTA_RATIO) continue;
+                if (distDelta > MAX_DISTANCE_DELTA_KM) continue;
 
                 if (distDelta < lowestMergedDistanceDelta) {
                     lowestMergedDistanceDelta = distDelta;
@@ -1833,14 +1969,13 @@ export const consolidateLowUtilizationRoutes = ({
 
                 let cumUsers = 0;
                 let remainingOnBus = mergedUsers;
-                const startPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
 
                 const finalMergedStops = bestMergedStops.map((s, idx) => {
-                    const prevP = idx === 0 ? startPoint : bestMergedStops[idx - 1];
-                    let legDist = calculateDistanceKm(prevP.latitude, prevP.longitude, s.latitude, s.longitude);
+                    const prevP = idx === 0 ? null : bestMergedStops[idx - 1];
+                    let legDist = s.legDistanceKm ?? (prevP ? calculateDistanceKm(prevP.latitude, prevP.longitude, s.latitude, s.longitude) : 0);
                     if (legDist < 0.05 && idx > 0) legDist = 0.05;
 
-                    if (tripMode === "OUTWARD") {
+                    if (!isToDestination) {
                         const dropped = s.userCount || 0;
                         remainingOnBus = Math.max(0, remainingOnBus - dropped);
                         return {
@@ -1865,10 +2000,32 @@ export const consolidateLowUtilizationRoutes = ({
                 });
 
                 let newRouteDistKm = finalMergedStops.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
-                if (tripMode === "INWARD" && destinationHub && finalMergedStops.length > 0) {
+                if (isToDestination && destinationHub && finalMergedStops.length > 0) {
                     const lastSt = finalMergedStops[finalMergedStops.length - 1];
                     newRouteDistKm += calculateDistanceKm(lastSt.latitude, lastSt.longitude, destinationHub.latitude, destinationHub.longitude);
+                } else if (!isToDestination && sourceHub && finalMergedStops.length > 0) {
+                    const firstSt = finalMergedStops[0];
+                    newRouteDistKm += calculateDistanceKm(sourceHub.latitude, sourceHub.longitude, firstSt.latitude, firstSt.longitude);
                 }
+
+                // Record structured audit trail
+                const auditRecord = {
+                    sourceRoute: lowBus.routeCode,
+                    sourceVehicle: lowBus.vehicleName,
+                    passengersMoved: lowBus.assignedUsers,
+                    stopsAffected: lowBus.stops.map((s) => s.name),
+                    destinationRoute: targetBus.routeCode,
+                    destinationVehicle: targetBus.vehicleName,
+                    reason: `AI Optimizer consolidated ${lowBus.assignedUsers} passengers from released vehicle (${lowBus.vehicleName}) into ${targetBus.vehicleName}`,
+                    beforeCapacity: oldTargetUsers,
+                    afterCapacity: mergedUsers
+                };
+                consolidationAudit.push(auditRecord);
+
+                const postUtil = Math.round((mergedUsers / targetBus.capacity) * 100);
+                consolidationLogs.push(
+                    `AI Optimizer consolidated ${lowBus.assignedUsers} passengers from released vehicle (${lowBus.vehicleName}) into Route ${targetBus.routeCode} (${targetBus.vehicleName}), elevating seat utilization to ${postUtil}%.`
+                );
 
                 targetBus.stops = finalMergedStops;
                 targetBus.assignedUsers = mergedUsers;
@@ -1883,7 +2040,6 @@ export const consolidateLowUtilizationRoutes = ({
                 ];
                 targetBus.consolidatedPassengers = (targetBus.consolidatedPassengers || 0) + lowBus.assignedUsers;
 
-                // Strictly remove the merged bus from active routes
                 activeBuses = activeBuses.filter((_, idx) => idx !== lowIdx);
                 consolidationChanged = true;
                 break;
@@ -1891,411 +2047,33 @@ export const consolidateLowUtilizationRoutes = ({
         }
     }
 
-    const consolidationLogs = [];
-
-    // Re-number remaining active routes cleanly and stably (R-01, R-02, ...)
+    // Re-index remaining routes stably (R-01, R-02, ...)
     activeBuses = activeBuses.map((bus, idx) => {
         const routeNumber = idx + 1;
         const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-        const firstPt = tripMode === "OUTWARD"
-            ? (sourceHub?.name || "Departure Hub")
-            : (destinationHub?.name || "Departure Hub");
-        const lastPt = tripMode === "OUTWARD"
-            ? (bus.stops[bus.stops.length - 1]?.name || destinationHub?.name || "Terminus")
-            : (bus.stops[bus.stops.length - 1]?.name || sourceHub?.name || "Terminus");
-        const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
+        const lineType = isToDestination ? "Transit Line" : "Drop-off Line";
 
-        if (bus.isConsolidated && Array.isArray(bus.absorbedVehicles) && bus.absorbedVehicles.length > 0) {
-            const absorbedList = bus.absorbedVehicles.join(", ");
-            const util = Math.round((bus.assignedUsers / bus.capacity) * 100);
-            bus.consolidationNote = `Consolidated ${bus.consolidatedPassengers} passengers from released vehicle (${absorbedList}) into ${bus.vehicleName}. Seat utilization elevated to ${util}%.`;
-            consolidationLogs.push(
-                `AI Optimizer consolidated ${bus.consolidatedPassengers} passengers from released vehicle (${absorbedList}) into Route ${routeCode} (${bus.vehicleName}), elevating seat utilization to ${util}% and freeing surplus fleet vehicles.`
-            );
-        }
+        const firstPointName = isToDestination
+            ? bus.stops[0]?.name || "Outer Stop"
+            : (sourceHub?.name || anchorHub?.name || "Departure Hub");
+        const lastPointName = isToDestination
+            ? (destinationHub?.name || anchorHub?.name || "Destination Hub")
+            : (bus.stops[bus.stops.length - 1]?.name || "Terminus");
 
         return {
             ...bus,
             routeNumber,
             routeCode,
-            routeName: `${routeCode}: ${firstPt} to ${lastPt} (${bus.sectorName} ${lineType})`
+            routeName: `${routeCode}: ${firstPointName} to ${lastPointName} (${bus.sectorName} ${lineType})`
         };
     });
 
-    return { buses: activeBuses, consolidationLogs };
-};
-
-// Sector name derived from the average bearing of the route's stops from the anchor hub
-const getSectorName = (bearing, startingPointName = "Campus") => {
-    if (bearing >= 337.5 || bearing < 22.5) return "North Corridor Line";
-    if (bearing >= 22.5 && bearing < 67.5) return "North-East Expressway Line";
-    if (bearing >= 67.5 && bearing < 112.5) return "East Arterial Line";
-    if (bearing >= 112.5 && bearing < 157.5) return "South-East Highway Line";
-    if (bearing >= 157.5 && bearing < 202.5) return "South Main Corridor";
-    if (bearing >= 202.5 && bearing < 247.5) return "South-West Line";
-    if (bearing >= 247.5 && bearing < 292.5) return "West Transit Line";
-    return "North-West Radial Line";
+    return { buses: activeBuses, consolidationLogs, consolidationAudit };
 };
 
 /*
 |--------------------------------------------------------------------------
-| BUS ALLOCATION & CORRIDOR ROUTE COMPOSITION
-|--------------------------------------------------------------------------
-*/
-
-const allocateInstitutionalBuses = ({
-    resolvedStops,
-    availableVehicles,
-    sourceHub,
-    destinationHub,
-    tripMode = "OUTWARD"
-}) => {
-    const sortedVehicles = [...availableVehicles]
-        .filter((v) => getVehicleCapacity(v) > 0)
-        .sort((a, b) => getVehicleCapacity(b) - getVehicleCapacity(a));
-
-    if (sortedVehicles.length === 0) {
-        return { buses: [], unassignedStops: resolvedStops, consolidationLogs: [] };
-    }
-
-    const anchorHub = tripMode === "OUTWARD" ? (sourceHub || destinationHub) : (destinationHub || sourceHub);
-
-    // Step 1: Group stops into geographic corridor clusters
-    const corridors = groupStopsIntoCorridors(resolvedStops, anchorHub);
-
-    // Step 2: Mutable stop state tracking remaining unassigned passengers
-    const allMutableStops = new Map();
-    resolvedStops.forEach((s) => {
-        const bearingFromStart = calculateBearing(
-            anchorHub.latitude, anchorHub.longitude,
-            s.latitude, s.longitude
-        );
-        const distanceFromStart = calculateDistanceKm(
-            anchorHub.latitude, anchorHub.longitude,
-            s.latitude, s.longitude
-        );
-        const userIdsList = Array.isArray(s.users)
-            ? s.users.map((u) => String(u?._id || u?.id || u))
-            : (Array.isArray(s.userIds) ? [...s.userIds] : []);
-
-        allMutableStops.set(s.name, {
-            ...s,
-            bearingFromStart,
-            distanceFromStart,
-            remainingUsers: s.users?.length || s.userCount || 0,
-            remainingUserIds: userIdsList
-        });
-    });
-
-    const rawBuses = [];
-    let vehicleIdx = 0;
-
-    // Step 3: Allocate vehicles per corridor until demand is fulfilled or fleet exhausted
-    corridors.forEach((corridor) => {
-        const orderedCorridor = sequenceStopsContinuous(corridor, anchorHub, tripMode, sourceHub, destinationHub);
-
-        // Keep allocating buses to this corridor while unserved passengers remain and vehicles are available
-        while (vehicleIdx < sortedVehicles.length) {
-            const mutableCorridorStops = orderedCorridor.map((s) =>
-                allMutableStops.get(s.name) || { ...s, remainingUsers: 0, remainingUserIds: [] }
-            );
-
-            const corridorRemainingDemand = mutableCorridorStops.reduce((sum, s) => sum + s.remainingUsers, 0);
-            if (corridorRemainingDemand <= 0) break;
-
-            const vehicle = sortedVehicles[vehicleIdx];
-            const capacity = getVehicleCapacity(vehicle);
-            const vehicleName = getVehicleName(vehicle, vehicleIdx);
-
-            let assignedUsers = 0;
-            const currentBusStops = [];
-            let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
-
-            for (const stopData of mutableCorridorStops) {
-                if (assignedUsers >= capacity) break;
-                if (stopData.remainingUsers <= 0) continue;
-
-                let legKm = calculateDistanceKm(
-                    lastPoint.latitude, lastPoint.longitude,
-                    stopData.latitude, stopData.longitude
-                );
-                if (legKm < 0.05 && currentBusStops.length > 0) legKm = 0.05;
-
-                if (currentBusStops.length > 0 && legKm > MAX_CONSECUTIVE_LEG_KM) continue;
-
-                const seatsLeft = capacity - assignedUsers;
-                const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
-                const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
-
-                stopData.remainingUsers -= boardingCount;
-                assignedUsers += boardingCount;
-                lastPoint = stopData;
-
-                currentBusStops.push({
-                    ...stopData,
-                    userCount: boardingCount,
-                    userIds: boardedIds,
-                    legDistanceKm: Number(legKm.toFixed(2))
-                });
-            }
-
-            if (currentBusStops.length === 0 || assignedUsers === 0) {
-                // If this vehicle could not take anyone in this corridor, advance to try next or sweep
-                break;
-            }
-
-            let cumulativePassengers = 0;
-            let passengersOnBus = assignedUsers;
-            const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
-
-            const stopsWithPassengers = currentBusStops.map((s, idx) => {
-                const prevPt = idx === 0 ? startPt : currentBusStops[idx - 1];
-                let consecutiveLegDist = calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude);
-                if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
-
-                if (tripMode === "OUTWARD") {
-                    const dropped = s.userCount;
-                    passengersOnBus = Math.max(0, passengersOnBus - dropped);
-                    return {
-                        ...s,
-                        order: idx + 1,
-                        legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                        passengersDropped: dropped,
-                        passengersRemaining: passengersOnBus,
-                        userIds: s.userIds || [],
-                        resolved: true,
-                        selectionReason: idx === 0
-                            ? `${s.name} selected first: nearest road-connected stopping area (+${consecutiveLegDist.toFixed(2)} km) from ${startPt.name || "selected source"}.`
-                            : `${s.name} selected next: continuous progression (+${consecutiveLegDist.toFixed(2)} km) along corridor.`
-                    };
-                } else {
-                    cumulativePassengers += s.userCount;
-                    return {
-                        ...s,
-                        order: idx + 1,
-                        legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                        cumulativePassengers,
-                        standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
-                        userIds: s.userIds || [],
-                        resolved: true,
-                        selectionReason: idx === 0
-                            ? `${s.name} selected first: nearest road-connected stopping area (+${consecutiveLegDist.toFixed(2)} km) from ${startPt.name || "selected destination"}.`
-                            : `${s.name} selected next: continuous progression (+${consecutiveLegDist.toFixed(2)} km) along corridor.`
-                    };
-                }
-            });
-
-            let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
-            if (tripMode === "INWARD" && destinationHub && stopsWithPassengers.length > 0) {
-                const last = stopsWithPassengers[stopsWithPassengers.length - 1];
-                totalKm += calculateDistanceKm(
-                    last.latitude, last.longitude,
-                    destinationHub.latitude, destinationHub.longitude
-                );
-            }
-
-            const avgBearing =
-                stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
-                stopsWithPassengers.length;
-            const sectorName = getSectorName(avgBearing, anchorHub.name);
-
-            const routeNumber = rawBuses.length + 1;
-            const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-            const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || startPt.name || "Departure Hub") : (destinationHub?.name || startPt.name || "Departure Hub");
-            const lastPt = tripMode === "OUTWARD"
-                ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
-                : (destinationHub?.name || anchorHub.name);
-            const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
-            const allContinuous = stopsWithPassengers.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM);
-
-            rawBuses.push({
-                routeNumber,
-                routeCode,
-                routeName: `${routeCode}: ${firstPt} to ${lastPt} (${sectorName} ${lineType})`,
-                sectorName,
-                tripMode,
-                vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
-                vehicleName,
-                capacity,
-                assignedUsers,
-                remainingSeats: Math.max(0, capacity - assignedUsers),
-                standbyBufferSeats: Math.max(0, capacity - assignedUsers),
-                stops: stopsWithPassengers,
-                sourceHub: sourceHub || null,
-                destinationHub: destinationHub || null,
-                routeDistanceKm: Number(totalKm.toFixed(2)),
-                isContinuous: allContinuous,
-                roadRouteStatus: allContinuous ? "Road Optimized (Continuous)" : "Routing with extended legs",
-                users: stopsWithPassengers.flatMap((s) => s.userIds || [])
-            });
-
-            vehicleIdx++;
-        }
-    });
-
-    // Step 4: Fallback sweep for any remaining unassigned users across all stops
-    while (vehicleIdx < sortedVehicles.length) {
-        const remainingStopList = [];
-        allMutableStops.forEach((stop) => {
-            if (stop.remainingUsers > 0) {
-                remainingStopList.push(stop);
-            }
-        });
-
-        if (remainingStopList.length === 0) break;
-
-        const orderedRemaining = sequenceStopsContinuous(remainingStopList, anchorHub, tripMode, sourceHub, destinationHub);
-        const vehicle = sortedVehicles[vehicleIdx];
-        const capacity = getVehicleCapacity(vehicle);
-        const vehicleName = getVehicleName(vehicle, vehicleIdx);
-
-        let assignedUsers = 0;
-        const currentBusStops = [];
-        let lastPoint = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
-
-        for (const stopData of orderedRemaining) {
-            if (assignedUsers >= capacity) break;
-            if (stopData.remainingUsers <= 0) continue;
-
-            let legKm = calculateDistanceKm(
-                lastPoint.latitude, lastPoint.longitude,
-                stopData.latitude, stopData.longitude
-            );
-            if (legKm < 0.05 && currentBusStops.length > 0) legKm = 0.05;
-
-            const seatsLeft = capacity - assignedUsers;
-            const boardingCount = Math.min(stopData.remainingUsers, seatsLeft);
-            const boardedIds = stopData.remainingUserIds ? stopData.remainingUserIds.splice(0, boardingCount) : [];
-
-            stopData.remainingUsers -= boardingCount;
-            assignedUsers += boardingCount;
-            lastPoint = stopData;
-
-            currentBusStops.push({
-                ...stopData,
-                userCount: boardingCount,
-                userIds: boardedIds,
-                legDistanceKm: Number(legKm.toFixed(2))
-            });
-        }
-
-        if (currentBusStops.length === 0 || assignedUsers === 0) {
-            vehicleIdx++;
-            continue;
-        }
-
-        let cumulativePassengers = 0;
-        let passengersOnBus = assignedUsers;
-        const startPt = tripMode === "OUTWARD" ? (sourceHub || anchorHub) : (destinationHub || anchorHub);
-
-        const stopsWithPassengers = currentBusStops.map((s, idx) => {
-            const prevPt = idx === 0 ? startPt : currentBusStops[idx - 1];
-            let consecutiveLegDist = calculateDistanceKm(prevPt.latitude, prevPt.longitude, s.latitude, s.longitude);
-            if (consecutiveLegDist < 0.05 && idx > 0) consecutiveLegDist = 0.05;
-
-            if (tripMode === "OUTWARD") {
-                const dropped = s.userCount;
-                passengersOnBus = Math.max(0, passengersOnBus - dropped);
-                return {
-                    ...s,
-                    order: idx + 1,
-                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                    passengersDropped: dropped,
-                    passengersRemaining: passengersOnBus,
-                    userIds: s.userIds || [],
-                    resolved: true,
-                    selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
-                };
-            } else {
-                cumulativePassengers += s.userCount;
-                return {
-                    ...s,
-                    order: idx + 1,
-                    legDistanceKm: Number(consecutiveLegDist.toFixed(2)),
-                    cumulativePassengers,
-                    standbySeatsAtStop: Math.max(0, capacity - cumulativePassengers),
-                    userIds: s.userIds || [],
-                    resolved: true,
-                    selectionReason: `${s.name} selected: continuous route progression (+${consecutiveLegDist.toFixed(2)} km).`
-                };
-            }
-        });
-
-        let totalKm = stopsWithPassengers.reduce((sum, s) => sum + (s.legDistanceKm || 0), 0);
-        if (tripMode === "INWARD" && destinationHub && stopsWithPassengers.length > 0) {
-            const last = stopsWithPassengers[stopsWithPassengers.length - 1];
-            totalKm += calculateDistanceKm(
-                last.latitude, last.longitude,
-                destinationHub.latitude, destinationHub.longitude
-            );
-        }
-
-        const avgBearing =
-            stopsWithPassengers.reduce((sum, s) => sum + (s.bearingFromStart || 0), 0) /
-            stopsWithPassengers.length;
-        const sectorName = getSectorName(avgBearing, anchorHub.name);
-
-        const routeNumber = rawBuses.length + 1;
-        const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-        const firstPt = tripMode === "OUTWARD" ? (sourceHub?.name || startPt.name || "Departure Hub") : (destinationHub?.name || startPt.name || "Departure Hub");
-        const lastPt = tripMode === "OUTWARD"
-            ? stopsWithPassengers[stopsWithPassengers.length - 1]?.name
-            : (destinationHub?.name || anchorHub.name);
-        const lineType = tripMode === "OUTWARD" ? "Drop-off Line" : "Transit Line";
-        const allContinuous = stopsWithPassengers.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM);
-
-        rawBuses.push({
-            routeNumber,
-            routeCode,
-            routeName: `${routeCode}: ${firstPt} to ${lastPt} (${sectorName} ${lineType})`,
-            sectorName,
-            tripMode,
-            vehicleId: vehicle._id ? String(vehicle._id) : `bus-${vehicleIdx + 1}`,
-            vehicleName,
-            capacity,
-            assignedUsers,
-            remainingSeats: Math.max(0, capacity - assignedUsers),
-            standbyBufferSeats: Math.max(0, capacity - assignedUsers),
-            stops: stopsWithPassengers,
-            sourceHub: sourceHub || null,
-            destinationHub: destinationHub || null,
-            routeDistanceKm: Number(totalKm.toFixed(2)),
-            isContinuous: allContinuous,
-            roadRouteStatus: allContinuous ? "Road Optimized (Continuous)" : "Routing with extended legs",
-            users: stopsWithPassengers.flatMap((s) => s.userIds || [])
-        });
-
-        vehicleIdx++;
-    }
-
-    // Step 5: Active Route Consolidation (Removes merged routes cleanly)
-    const { buses, consolidationLogs } = consolidateLowUtilizationRoutes({
-        initialBuses: rawBuses,
-        availableVehicles,
-        anchorHub,
-        tripMode,
-        sourceHub,
-        destinationHub
-    });
-
-    const unassignedStops = [];
-    allMutableStops.forEach((stop) => {
-        if (stop.remainingUsers > 0) {
-            unassignedStops.push({
-                name: stop.name,
-                userCount: stop.remainingUsers,
-                latitude: stop.latitude,
-                longitude: stop.longitude
-            });
-        }
-    });
-
-    return { buses, unassignedStops, consolidationLogs };
-};
-
-/*
-|--------------------------------------------------------------------------
-| MULTI-CRITERIA FINAL PLAN VALIDATION & CERTIFICATION ENGINE
+| PLAN VALIDATION & CERTIFICATION ENGINE
 |--------------------------------------------------------------------------
 */
 
@@ -2304,12 +2082,8 @@ export const validateAndCertifyAIPlan = ({
     totalComingUsers,
     availableVehicles,
     totalAvailableCapacity,
-    resolvedStops,
-    anchorHub,
-    tripMode
+    resolvedStops
 }) => {
-    const DETOUR_RATIO_THRESHOLD = 2.2;
-
     const assignedPassengerIds = new Set();
     let duplicatePassengerFound = false;
     let totalAssignedUsers = 0;
@@ -2325,56 +2099,27 @@ export const validateAndCertifyAIPlan = ({
         });
     });
 
+    const allRoadVerified = buses.length > 0 && buses.every((b) => b.isRoadVerified === true);
+
     const checks = {
         allPassengersAssigned: totalAssignedUsers === totalComingUsers,
         noPassengerDuplicated: !duplicatePassengerFound,
         noPassengerUnallocated: totalAssignedUsers === totalComingUsers,
         vehiclesExist: buses.every((b) => b.vehicleId),
-        vehiclesAvailableInSchedule: true,
         capacitiesNotExceeded: buses.every((b) => b.assignedUsers <= b.capacity),
-        consecutiveLegsContinuous: buses.every((b) =>
-            b.stops.every((s) => (s.legDistanceKm || 0) <= MAX_CONSECUTIVE_LEG_KM)
-        ),
         roadRouteConnectivityValid: buses.every((b) => Array.isArray(b.stops) && b.stops.length > 0),
         routeDistancesValid: buses.every((b) => b.routeDistanceKm > 0),
-        routeDirectionContinuous: true,
-        excessiveBacktrackingAvoided: true,
-        detourRatioAcceptable: buses.every((b) =>
-            b.detourRatio === null || b.detourRatio === undefined || b.detourRatio <= DETOUR_RATIO_THRESHOLD
-        ),
-        lowUtilizationRoutesEvaluated: true
+        roadNetworkVerified: allRoadVerified
     };
 
     const allPassed = Object.values(checks).every(Boolean);
 
-    buses.forEach((bus) => {
-        const hasBrokenLeg = bus.stops.some((s) => (s.legDistanceKm || 0) > MAX_CONSECUTIVE_LEG_KM);
-        const isRealDetour = bus.isDetour === true;
-        const isUtilLow = bus.capacity > 0 && (bus.assignedUsers / bus.capacity) < 0.50;
-
-        if (hasBrokenLeg) {
-            bus.roadRouteStatus = "Routing with extended legs";
-            bus.isContinuous = false;
-            bus.isCertified = false;
-        } else if (isRealDetour) {
-            bus.isContinuous = false;
-            bus.isCertified = false;
-        } else {
-            bus.roadRouteStatus = "Road Optimized (Continuous)";
-            bus.isContinuous = true;
-            bus.isCertified = true;
-        }
-
-        if (isUtilLow && !bus.isConsolidated) {
-            bus.lowUtilizationNote = `Standalone line (${bus.assignedUsers}/${bus.capacity} seats). Retained as dedicated route — adjacent routes have no remaining capacity or are in separate geographic corridors.`;
-        }
-    });
-
     return {
         isCertified: allPassed,
-        status: allPassed ? "Road Optimized (Continuous)" : "Optimization Complete",
+        status: allRoadVerified
+            ? (allPassed ? "Road Optimized (Continuous)" : "Optimization Complete")
+            : "Road network routing unavailable.",
         checks,
-        detourThreshold: DETOUR_RATIO_THRESHOLD,
         certifiedAt: new Date().toISOString()
     };
 };
@@ -2388,16 +2133,20 @@ export const validateAndCertifyAIPlan = ({
 export const buildAIPlan = async ({
     sourceHub,
     destinationHub,
-    tripMode = "OUTWARD",
+    tripMode = "TO_DESTINATION",
     resolvedStops,
     availableVehicles,
+    rawVehicles = [],
     totalComingUsers,
     allUsersCount
 }) => {
-    const effectiveTripMode = tripMode === "SOURCE_TO_DESTINATION" ? "OUTWARD" : tripMode;
-    const anchorHub = effectiveTripMode === "OUTWARD" ? (sourceHub || destinationHub) : (destinationHub || sourceHub);
+    const effectiveTripMode = (tripMode === "OUTWARD" || tripMode === "FROM_SOURCE")
+        ? "FROM_SOURCE"
+        : "TO_DESTINATION";
+    const isToDestination = effectiveTripMode === "TO_DESTINATION";
+    const anchorHub = isToDestination ? (destinationHub || sourceHub) : (sourceHub || destinationHub);
 
-    const { buses, unassignedStops, consolidationLogs } = allocateInstitutionalBuses({
+    const { buses, unassignedStops, consolidationLogs, consolidationAudit } = await allocateInstitutionalBuses({
         resolvedStops,
         availableVehicles,
         sourceHub,
@@ -2405,36 +2154,55 @@ export const buildAIPlan = async ({
         tripMode: effectiveTripMode
     });
 
+    const physicalFleetCapacity = rawVehicles.reduce(
+        (sum, v) => sum + getVehicleCapacity(v),
+        0
+    );
+
     const totalAvailableCapacity = availableVehicles.reduce(
         (sum, v) => sum + getVehicleCapacity(v),
         0
     );
 
-    // Recalculate ALL passenger metrics strictly from the FINAL active buses array
+    // Recalculate all totals strictly from the FINAL active buses array
     const assignedUsers = buses.reduce((sum, b) => sum + b.assignedUsers, 0);
     const unassignedUsers = Math.max(0, totalComingUsers - assignedUsers);
     const allocatedSeats = buses.reduce((sum, b) => sum + b.capacity, 0);
 
-    // Rule 3: Seat utilization = assigned passengers / total seats of FINAL allocated vehicles * 100
-    const utilization = allocatedSeats > 0
+    // Separate 3 distinct utilization calculations
+    const physicalFleetUtilization = physicalFleetCapacity > 0
+        ? Number(((assignedUsers / physicalFleetCapacity) * 100).toFixed(2))
+        : 0;
+
+    const routeAllocationUtilization = allocatedSeats > 0
         ? Number(((assignedUsers / allocatedSeats) * 100).toFixed(2))
         : 0;
 
-    const fleetUtilization = totalAvailableCapacity > 0
-        ? Number(((assignedUsers / totalAvailableCapacity) * 100).toFixed(2))
+    const fleetVehicleUtilization = availableVehicles.length > 0
+        ? Number(((buses.length / availableVehicles.length) * 100).toFixed(2))
         : 0;
 
-    const capacityShortage = totalAvailableCapacity < totalComingUsers;
-    const algorithmGap = !capacityShortage && unassignedUsers > 0;
+    // Reason code classification for unallocated users
+    let unallocatedReason = null;
+    if (unassignedUsers > 0) {
+        if (totalComingUsers > physicalFleetCapacity) {
+            unallocatedReason = "VEHICLE_CAPACITY";
+        } else if (totalComingUsers > totalAvailableCapacity) {
+            unallocatedReason = "SCHEDULE_CAPACITY";
+        } else if (unassignedStops.some((s) => !isValidCoordinate(s.latitude, s.longitude))) {
+            unallocatedReason = "MISSING_STOP_COORDINATES";
+        } else {
+            unallocatedReason = "CORRIDOR_CAPACITY";
+        }
+    }
 
-    // OSRM Geometry Enrichment & Road Route Verification
-    const DETOUR_RATIO_THRESHOLD = 2.2;
+    const capacityShortage = totalAvailableCapacity < totalComingUsers && unassignedUsers > 0;
 
+    // Online OSRM Road Verification
     await Promise.all(buses.map(async (bus) => {
-        const startPoint = effectiveTripMode === "OUTWARD" ? (sourceHub || anchorHub) : anchorHub;
-        const routeWaypoints = effectiveTripMode === "OUTWARD"
-            ? [startPoint, ...bus.stops]
-            : [...bus.stops, ...(destinationHub ? [destinationHub] : [anchorHub])];
+        const routeWaypoints = isToDestination
+            ? [...bus.stops, ...(destinationHub ? [destinationHub] : [anchorHub])]
+            : [sourceHub || anchorHub, ...bus.stops];
 
         let straightLineBaselineKm = 0;
         for (let i = 0; i < routeWaypoints.length - 1; i++) {
@@ -2445,35 +2213,21 @@ export const buildAIPlan = async ({
         }
 
         const roadRoute = await getRoadRouteGeometry(routeWaypoints);
-        const hasBrokenLeg = bus.stops.some((s) => (s.legDistanceKm || 0) > MAX_CONSECUTIVE_LEG_KM);
 
         if (roadRoute) {
+            bus.isRoadVerified = true;
+            bus.roadRouteStatus = "Road Optimized (Continuous)";
             bus.roadGeometry = roadRoute.geometry;
             bus.routeDistanceMeters = roadRoute.distanceMeters;
+            bus.routeDistanceKm = roadRoute.distanceKm;
             bus.routeDurationSeconds = roadRoute.durationSeconds;
-
-            const detourRatio = straightLineBaselineKm > 0
-                ? Number((roadRoute.distanceKm / straightLineBaselineKm).toFixed(2))
-                : 1.0;
-            bus.detourRatio = detourRatio;
             bus.straightLineBaselineKm = Number(straightLineBaselineKm.toFixed(2));
-            bus.detourThreshold = DETOUR_RATIO_THRESHOLD;
-
-            if (hasBrokenLeg) {
-                bus.roadRouteStatus = "Routing with extended legs";
-                bus.isContinuous = false;
-            } else if (detourRatio > DETOUR_RATIO_THRESHOLD) {
-                bus.roadRouteStatus = `Detour Alert (ratio ${detourRatio}×)`;
-                bus.isContinuous = false;
-                bus.isDetour = true;
-            } else {
-                bus.roadRouteStatus = "Road Optimized (Continuous)";
-                bus.isContinuous = true;
-                bus.isDetour = false;
-            }
         } else {
+            bus.isRoadVerified = false;
+            bus.roadRouteStatus = "Road network routing unavailable.";
             bus.roadGeometry = [];
-            bus.detourRatio = null;
+            bus.routeDistanceKm = Number((straightLineBaselineKm * 1.25).toFixed(2));
+            bus.straightLineBaselineKm = Number(straightLineBaselineKm.toFixed(2));
         }
     }));
 
@@ -2483,47 +2237,64 @@ export const buildAIPlan = async ({
         totalComingUsers,
         availableVehicles,
         totalAvailableCapacity,
-        resolvedStops,
-        anchorHub,
-        tripMode: effectiveTripMode
+        resolvedStops
     });
 
     const recommendations = [...(consolidationLogs || [])];
     const warnings = [];
 
-    if (capacityShortage) {
-        warnings.push(
-            `Passenger demand exceeds available fleet capacity: ${totalComingUsers} coming users vs ${totalAvailableCapacity} total available seats.`
-        );
-    }
-
-    if (algorithmGap) {
-        warnings.push(
-            `${unassignedUsers} students could not be routed within current vehicle constraints.`
-        );
-    }
-
-    buses.forEach((bus) => {
-        const busUtil = bus.capacity > 0 ? Math.round((bus.assignedUsers / bus.capacity) * 100) : 0;
-        if (busUtil < 50 && bus.standbyBufferSeats > 10 && !bus.isConsolidated) {
-            recommendations.push(
-                `Route ${bus.routeCode} (${bus.vehicleName}) has ${bus.standbyBufferSeats} standby seats (${busUtil}% utilization). Retained because adjacent routes have reached full capacity.`
+    if (unassignedUsers > 0) {
+        if (unallocatedReason === "VEHICLE_CAPACITY") {
+            warnings.push(
+                `Demand (${totalComingUsers}) exceeds total physical fleet capacity (${physicalFleetCapacity} seats). ${unassignedUsers} users unallocated due to vehicle capacity limits.`
             );
+        } else if (unallocatedReason === "SCHEDULE_CAPACITY") {
+            warnings.push(
+                `Schedule capacity restriction: ${unassignedUsers} users unallocated. Available scheduled capacity is ${totalAvailableCapacity} seats.`
+            );
+        } else if (unallocatedReason === "CORRIDOR_CAPACITY") {
+            warnings.push(
+                `${unassignedUsers} passengers could not be assigned to available routes due to corridor capacity constraints.`
+            );
+        }
+    }
+
+    // Stop counting metrics
+    const stopVisitCounts = new Map();
+    buses.forEach((b) => {
+        (b.stops || []).forEach((st) => {
+            const k = st.name.toLowerCase().trim();
+            stopVisitCounts.set(k, (stopVisitCounts.get(k) || 0) + 1);
+        });
+    });
+
+    let sharedStopCount = 0;
+    let splitStopCount = 0;
+
+    stopVisitCounts.forEach((visits) => {
+        if (visits > 1) sharedStopCount++;
+    });
+
+    resolvedStops.forEach((st) => {
+        const k = st.name.toLowerCase().trim();
+        const visits = stopVisitCounts.get(k) || 0;
+        const initialCount = st.users?.length || st.userCount || 0;
+        if (visits > 1 && initialCount > 0) {
+            splitStopCount++;
         }
     });
 
-    const totalRouteStopVisits = buses.reduce((sum, b) => sum + (Array.isArray(b.stops) ? b.stops.length : 0), 0);
-    const uniqueStoppingAreas = resolvedStops.length;
-    const sharedCorridorStopVisits = Math.max(0, totalRouteStopVisits - uniqueStoppingAreas);
+    const uniqueStopCount = resolvedStops.filter((s) => (s.users?.length || s.userCount || 0) > 0).length;
+    const routeStopVisitCount = buses.reduce((sum, b) => sum + (Array.isArray(b.stops) ? b.stops.length : 0), 0);
     const totalRouteDistance = Number(buses.reduce((sum, b) => sum + (b.routeDistanceKm || 0), 0).toFixed(2));
 
     let stopCountExplanation = "";
-    if (uniqueStoppingAreas === totalRouteStopVisits) {
-        stopCountExplanation = `All ${uniqueStoppingAreas} unique geographic stopping areas are covered with exactly 1 route stop visit each.`;
-    } else if (totalRouteStopVisits > uniqueStoppingAreas) {
-        stopCountExplanation = `${uniqueStoppingAreas} unique geographic stopping areas generated ${totalRouteStopVisits} route stop visits across ${buses.length} active routes (${sharedCorridorStopVisits} high-demand stops served by multiple buses on shared corridors).`;
+    if (uniqueStopCount === routeStopVisitCount) {
+        stopCountExplanation = `All ${uniqueStopCount} unique stopping areas are covered with exactly 1 route stop visit each.`;
+    } else if (routeStopVisitCount >= uniqueStopCount) {
+        stopCountExplanation = `${uniqueStopCount} unique stopping areas covered across ${routeStopVisitCount} route stop visits across ${buses.length} active routes (${sharedStopCount} shared/split stop${sharedStopCount === 1 ? '' : 's'}).`;
     } else {
-        stopCountExplanation = `${uniqueStoppingAreas} stopping areas were consolidated into ${totalRouteStopVisits} continuous route stop points due to co-located residential pickup hubs.`;
+        stopCountExplanation = `${uniqueStopCount} stopping areas covered across ${routeStopVisitCount} route stop points.`;
     }
 
     return {
@@ -2532,7 +2303,7 @@ export const buildAIPlan = async ({
         title: "AI Recommended Continuous Route Plan",
         name: "AI Recommended Continuous Route Plan",
         description:
-            "Independently generated continuous bus routes based on confirmed Coming users, user stopping areas, road routing geometry, 2-opt continuous progression, route consolidation, and vehicle capacities.",
+            "AI-optimized continuous bus routes based on confirmed Coming users, user stopping areas, OSRM road validation, continuous progression, route consolidation, and vehicle capacities.",
         tripMode: effectiveTripMode,
         sourceHub,
         destinationHub,
@@ -2545,14 +2316,18 @@ export const buildAIPlan = async ({
         assignedUsers,
         allocatedUsers: assignedUsers,
         unassignedUsers,
+        unallocatedReason,
         duplicateUsers: 0,
+        physicalFleetCapacity,
         totalCapacity: allocatedSeats,
         allocatedSeats,
         availableTotalCapacity: totalAvailableCapacity,
         totalAvailableFleetSeats: totalAvailableCapacity,
-        utilization,
-        fleetUtilization,
-        utilizationNote: `${assignedUsers} assigned / ${allocatedSeats} allocated seats × 100 = ${utilization}% (Fleet utilization: ${fleetUtilization}%)`,
+        utilization: routeAllocationUtilization,
+        physicalFleetUtilization,
+        routeAllocationUtilization,
+        fleetVehicleUtilization,
+        utilizationNote: `Route allocation: ${routeAllocationUtilization}% (${assignedUsers}/${allocatedSeats} seats) • Fleet capacity: ${physicalFleetUtilization}% (${assignedUsers}/${physicalFleetCapacity} seats) • Vehicle utilization: ${fleetVehicleUtilization}% (${buses.length}/${availableVehicles.length} vehicles)`,
         totalRouteDistance,
         vehicleCount: buses.length,
         availableVehicleCount: availableVehicles.length,
@@ -2560,6 +2335,7 @@ export const buildAIPlan = async ({
         capacityShortage,
         warnings,
         recommendationsList: recommendations,
+        consolidationAudit,
         overlapAlerts: [],
         allStopsAllocated: unassignedUsers === 0,
         unassignedStops: unassignedStops.map((s) => ({
@@ -2568,146 +2344,91 @@ export const buildAIPlan = async ({
             latitude: s.latitude,
             longitude: s.longitude
         })),
-        uniqueStoppingAreas,
-        totalRouteStopVisits,
-        sharedCorridorStopVisits,
+        uniqueStoppingAreas: uniqueStopCount,
+        uniqueStopCount,
+        routeStopVisitCount,
+        sharedStopCount,
+        splitStopCount,
+        totalRouteStopVisits: routeStopVisitCount,
         stopCountExplanation,
         certification,
-        detourThreshold: 2.2,
         createdAt: new Date().toISOString()
     };
 };
 
 /*
 |--------------------------------------------------------------------------
-| ADMIN MANUAL PLAN (SEPARATE FROM AI GENERATION)
+| ADMIN MANUAL PLAN (FROM STORED ROUTES)
 |--------------------------------------------------------------------------
 */
-
-const normalizeManualRoute = (route, index, vehicles) => {
-    const assignedId = String(route?.assignedVehicle?._id || route?.assignedVehicle || "");
-    const vehicle = vehicles.find((v) => String(v?._id) === assignedId) || null;
-
-    const points = [];
-
-    if (route?.source) {
-        points.push({
-            name: route.source.name || "Source",
-            latitude: Number(route.source.latitude),
-            longitude: Number(route.source.longitude),
-            routePointType: "source"
-        });
-    }
-
-    if (Array.isArray(route?.stops)) {
-        route.stops.forEach((stop) => {
-            points.push({
-                name: stop.name || "Stop",
-                latitude: Number(stop.latitude),
-                longitude: Number(stop.longitude),
-                routePointType: "stop"
-            });
-        });
-    }
-
-    if (route?.destination) {
-        points.push({
-            name: route.destination.name || "Destination",
-            latitude: Number(route.destination.latitude),
-            longitude: Number(route.destination.longitude),
-            routePointType: "destination"
-        });
-    }
-
-    const vehicleName =
-        vehicle?.vehicleName ||
-        route?.assignedVehicle?.vehicleName ||
-        route?.vehicleName ||
-        "Bus";
-
-    const capacity =
-        getVehicleCapacity(vehicle) ||
-        getVehicleCapacity(route?.assignedVehicle) ||
-        Number(route?.capacity || 0);
-
-    return {
-        routeId: route?._id ? String(route._id) : `manual-${index + 1}`,
-        routeName: route?.routeName || `Route ${index + 1}`,
-        vehicleId: vehicle?._id ? String(vehicle._id) : assignedId || null,
-        vehicleName,
-        capacity,
-        source: points.find((p) => p.routePointType === "source") || null,
-        stops: points,
-        destination: points.find((p) => p.routePointType === "destination") || null,
-        stopCount: points.length
-    };
-};
 
 export const buildManualPlan = (routes = [], vehicles = []) => {
-    const manualRoutes = routes.map((route, index) =>
-        normalizeManualRoute(route, index, vehicles)
-    );
+    const rawRoutes = Array.isArray(routes) ? routes : [];
+    const manualVehicles = rawRoutes.map((route, index) => {
+        const assignedId = String(route?.assignedVehicle?._id || route?.assignedVehicle || "");
+        const vehicle = vehicles.find((v) => String(v?._id) === assignedId) || null;
 
-    const totalCapacity = manualRoutes.reduce((sum, r) => sum + r.capacity, 0);
+        const points = [];
+        if (route?.source) {
+            points.push({
+                name: route.source.name || "Source",
+                latitude: Number(route.source.latitude),
+                longitude: Number(route.source.longitude),
+                routePointType: "source"
+            });
+        }
+        if (Array.isArray(route?.stops)) {
+            route.stops.forEach((stop) => {
+                points.push({
+                    name: stop.name || "Stop",
+                    latitude: Number(stop.latitude),
+                    longitude: Number(stop.longitude),
+                    routePointType: "stop"
+                });
+            });
+        }
+        if (route?.destination) {
+            points.push({
+                name: route.destination.name || "Destination",
+                latitude: Number(route.destination.latitude),
+                longitude: Number(route.destination.longitude),
+                routePointType: "destination"
+            });
+        }
+
+        const vehicleName = vehicle?.vehicleName || route?.assignedVehicle?.vehicleName || route?.vehicleName || "Bus";
+        const capacity = getVehicleCapacity(vehicle) || getVehicleCapacity(route?.assignedVehicle) || Number(route?.capacity || 0);
+
+        return {
+            routeId: route?._id ? String(route._id) : `manual-${index + 1}`,
+            routeName: route?.routeName || `Route ${index + 1}`,
+            vehicleId: vehicle?._id ? String(vehicle._id) : assignedId || null,
+            vehicleName,
+            capacity,
+            stops: points,
+            assignedUsers: 0,
+            remainingSeats: capacity
+        };
+    });
 
     return {
-        planType: "ADMIN",
-        title: "Admin Manual Route Plan",
-        name: "Admin Manual Route Plan",
-        description:
-            "Routes manually created and saved by the administrator in Route Management.",
-        routes: manualRoutes,
-        routeCount: manualRoutes.length,
-        totalCapacity,
-        createdAt: new Date().toISOString()
+        planType: "MANUAL",
+        type: "route",
+        title: "Stored Manual Routes",
+        buses: manualVehicles,
+        vehicles: manualVehicles,
+        totalRoutes: rawRoutes.length,
+        totalCapacity: manualVehicles.reduce((sum, v) => sum + v.capacity, 0)
     };
-};
-
-/*
-|--------------------------------------------------------------------------
-| TIME FORMATTING UTILITY
-|--------------------------------------------------------------------------
-*/
-
-export const formatTimeOfDay = (totalMinutes) => {
-    let mins = Math.round(totalMinutes);
-    while (mins < 0) mins += 1440;
-    mins = mins % 1440;
-
-    let hours = Math.floor(mins / 60);
-    const m = mins % 60;
-    const period = hours >= 12 ? "PM" : "AM";
-    hours = hours % 12 || 12;
-
-    const formattedH = String(hours).padStart(2, "0");
-    const formattedM = String(m).padStart(2, "0");
-    return `${formattedH}:${formattedM} ${period}`;
 };
 
 /*
 |--------------------------------------------------------------------------
 | DYNAMIC INSTITUTIONAL HUB RESOLVER
 |--------------------------------------------------------------------------
-|
-| Resolves starting point dynamically from the user selection, database
-| routes, or saved institutional map locations. NEVER uses hardcoded coordinates.
-|
 */
 
 export const resolveInstitutionalHub = async ({ userSource, userDestination }) => {
-    if (userSource && isValidCoordinate(userSource.latitude, userSource.longitude)) {
-        return {
-            hub: {
-                name: userSource.name || "Source Hub",
-                address: userSource.address || userSource.displayName || "",
-                latitude: Number(userSource.latitude),
-                longitude: Number(userSource.longitude)
-            },
-            type: "source",
-            provenance: "User Selected Departure Source"
-        };
-    }
-
     if (userDestination && isValidCoordinate(userDestination.latitude, userDestination.longitude)) {
         return {
             hub: {
@@ -2721,64 +2442,17 @@ export const resolveInstitutionalHub = async ({ userSource, userDestination }) =
         };
     }
 
-    // 1. Check existing saved routes from Route Management collection
-    try {
-        const routes = await getCollectionData("routes");
-        if (Array.isArray(routes) && routes.length > 0) {
-            const firstWithSource = routes.find((r) => r?.source && isValidCoordinate(r.source.latitude, r.source.longitude));
-            if (firstWithSource) {
-                return {
-                    hub: {
-                        name: firstWithSource.source.name || "Departure Hub",
-                        address: firstWithSource.source.address || firstWithSource.source.displayName || "",
-                        latitude: Number(firstWithSource.source.latitude),
-                        longitude: Number(firstWithSource.source.longitude)
-                    },
-                    type: "source",
-                    provenance: "Configured Route Management Source Hub"
-                };
-            }
-            const firstWithDest = routes.find((r) => r?.destination && isValidCoordinate(r.destination.latitude, r.destination.longitude));
-            if (firstWithDest) {
-                return {
-                    hub: {
-                        name: firstWithDest.destination.name || "Arrival Hub",
-                        address: firstWithDest.destination.address || firstWithDest.destination.displayName || "",
-                        latitude: Number(firstWithDest.destination.latitude),
-                        longitude: Number(firstWithDest.destination.longitude)
-                    },
-                    type: "destination",
-                    provenance: "Configured Route Management Destination Hub"
-                };
-            }
-        }
-    } catch {
-        // continue
-    }
-
-    // 2. Check saved map locations
-    try {
-        const locations = await getCollectionData("maplocations");
-        if (Array.isArray(locations) && locations.length > 0) {
-            const collegeLoc = locations.find((l) =>
-                (l.category === "campus" || l.category === "college" || l.type === "hub" || l.type === "Campus") &&
-                isValidCoordinate(l.latitude, l.longitude)
-            );
-            if (collegeLoc) {
-                return {
-                    hub: {
-                        name: collegeLoc.name,
-                        address: collegeLoc.displayName || collegeLoc.address || "",
-                        latitude: Number(collegeLoc.latitude),
-                        longitude: Number(collegeLoc.longitude)
-                    },
-                    type: "destination",
-                    provenance: "Saved Institutional Map Location"
-                };
-            }
-        }
-    } catch {
-        // continue
+    if (userSource && isValidCoordinate(userSource.latitude, userSource.longitude)) {
+        return {
+            hub: {
+                name: userSource.name || "Source Hub",
+                address: userSource.address || userSource.displayName || "",
+                latitude: Number(userSource.latitude),
+                longitude: Number(userSource.longitude)
+            },
+            type: "source",
+            provenance: "User Selected Departure Source"
+        };
     }
 
     return null;
@@ -2791,14 +2465,16 @@ export const resolveInstitutionalHub = async ({ userSource, userDestination }) =
 */
 
 export const generateAgentRecommendations = async (payload = {}) => {
+    if (!isDbConnected()) {
+        return {
+            success: false,
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database is currently unavailable."
+        };
+    }
+
     const rawSource = payload?.source || payload?.sourceRegion || null;
     const rawDestination = payload?.destination || payload?.startingPoint || null;
-
-    // Dynamically resolve hub and provenance
-    const resolvedHubInfo = await resolveInstitutionalHub({
-        userSource: rawSource,
-        userDestination: rawDestination
-    });
 
     let sourceHub = null;
     let destinationHub = null;
@@ -2823,27 +2499,35 @@ export const generateAgentRecommendations = async (payload = {}) => {
 
     let tripMode = payload?.tripMode;
     if (!tripMode) {
-        if (sourceHub || (!destinationHub && resolvedHubInfo?.type === "source")) {
-            tripMode = "OUTWARD";
+        if (sourceHub && !destinationHub) {
+            tripMode = "FROM_SOURCE";
         } else {
-            tripMode = "INWARD";
+            tripMode = "TO_DESTINATION";
         }
     }
 
-    const effectiveTripMode = tripMode === "SOURCE_TO_DESTINATION" ? (sourceHub ? "OUTWARD" : "INWARD") : tripMode;
-    const anchorHub = effectiveTripMode === "OUTWARD"
-        ? (sourceHub || resolvedHubInfo?.hub)
-        : (destinationHub || resolvedHubInfo?.hub || sourceHub);
+    const effectiveTripMode = (tripMode === "FROM_SOURCE" || tripMode === "OUTWARD")
+        ? "FROM_SOURCE"
+        : "TO_DESTINATION";
 
-    if (!anchorHub || !isValidCoordinate(anchorHub.latitude, anchorHub.longitude)) {
+    // Guard: Require destination for TO_DESTINATION, or source for FROM_SOURCE
+    if (effectiveTripMode === "TO_DESTINATION" && !destinationHub) {
         return {
             success: false,
-            message:
-                "No departure or destination hub is configured. " +
-                "Please select a Source or Destination location in the AI Agent settings before generating a plan. " +
-                "This can be any campus, office, organization, or transit hub anywhere in the world."
+            code: "MISSING_DESTINATION",
+            message: "Select a destination to generate the AI transportation plan."
         };
     }
+
+    if (effectiveTripMode === "FROM_SOURCE" && !sourceHub) {
+        return {
+            success: false,
+            code: "MISSING_SOURCE",
+            message: "Select a departure source to generate the AI transportation plan."
+        };
+    }
+
+    const anchorHub = effectiveTripMode === "FROM_SOURCE" ? sourceHub : destinationHub;
 
     const requestedDate = normalizeDate(
         payload?.date || payload?.scheduleDate || payload?.schedule?.date
@@ -2856,21 +2540,61 @@ export const generateAgentRecommendations = async (payload = {}) => {
     ]);
 
     const users = getManagedUsers(allUsers);
-    const confirmedUsers = getConfirmedUsers(users);
+    const rawConfirmed = getConfirmedUsers(users);
+    const { uniqueUsers: confirmedUsers, duplicateCount } = deduplicateUsers(rawConfirmed);
 
-    // ZERO-DEMAND RULE: If there are ZERO Coming students, DO NOT GENERATE ANY ROUTES.
+    const availableVehicles = getAvailableVehicles(rawVehicles, schedules, requestedDate);
+    const physicalFleetCapacity = rawVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const totalAvailableCapacity = availableVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+
+    // ZERO-DEMAND RULE: If there are ZERO confirmed Coming users, gracefully return ZERO_DEMAND state
     if (confirmedUsers.length === 0) {
         return {
-            success: false,
-            comingUsers: 0,
-            confirmedUsers: 0,
-            message: "No Coming students available. Students must confirm their travel status before an AI route can be generated."
+            success: true,
+            status: "ZERO_DEMAND",
+            totalDemand: 0,
+            allocatedPassengers: 0,
+            unallocatedPassengers: 0,
+            allocatedVehicles: 0,
+            routes: [],
+            buses: [],
+            stoppingGroups: [],
+            duplicateUsers: duplicateCount,
+            summary: {
+                totalUsers: users.length,
+                confirmedUsers: 0,
+                comingUsers: 0,
+                vehicles: rawVehicles.length,
+                availableVehicles: availableVehicles.length,
+                totalAvailableCapacity,
+                physicalFleetCapacity,
+                allocatedSeats: 0,
+                allocatedUsers: 0,
+                unallocatedUsers: 0,
+                physicalFleetUtilization: 0,
+                routeAllocationUtilization: 0,
+                fleetVehicleUtilization: 0,
+                routes: routes.length,
+                schedules: schedules.length,
+                stoppingAreas: 0,
+                uniqueStoppingAreas: 0,
+                totalRouteStopVisits: 0,
+                uniqueStopCount: 0,
+                routeStopVisitCount: 0,
+                sharedStopCount: 0,
+                splitStopCount: 0,
+                capacityShortage: false,
+                reason: null,
+                stopCountExplanation: "No confirmed passengers available for route generation."
+            },
+            aiPlan: null,
+            manualPlan: buildManualPlan(routes, rawVehicles),
+            recommendations: [],
+            message: "No confirmed passengers available for route generation."
         };
     }
 
-    const availableVehicles = getAvailableVehicles(rawVehicles, schedules, requestedDate);
-
-    // Calculate passenger demand & resolve coordinates strictly scoped around the anchor hub
+    // Resolve stopping areas and coordinates
     const rawStoppingGroups = calculateStoppingGroups(confirmedUsers);
     const stoppingGroups = await resolveStopCoordinates(rawStoppingGroups, anchorHub);
     let resolvedStops = stoppingGroups.filter((s) => isValidCoordinate(s.latitude, s.longitude));
@@ -2879,34 +2603,114 @@ export const generateAgentRecommendations = async (payload = {}) => {
         return {
             success: false,
             comingUsers: confirmedUsers.length,
+            code: "MISSING_STOP_COORDINATES",
             message: "No valid stopping areas with Coming students could be resolved."
         };
     }
 
     const totalComingUsers = confirmedUsers.length;
 
-    // Build AI Recommended Plan with continuous road progression and route consolidation
+    // Build AI Recommended Plan
     const aiPlan = await buildAIPlan({
         sourceHub,
         destinationHub,
         tripMode: effectiveTripMode,
         resolvedStops,
         availableVehicles,
+        rawVehicles,
         totalComingUsers,
         allUsersCount: users.length
     });
 
-    const manualPlan = buildManualPlan(routes, rawVehicles);
-    const totalAvailableCapacity = availableVehicles.reduce(
-        (sum, v) => sum + getVehicleCapacity(v),
-        0
-    );
+    // Run Server-Side Consistency Assertions before proceeding
+    const assertions = [];
+    const totalAssigned = aiPlan.buses.reduce((sum, b) => sum + (b.assignedUsers || 0), 0);
+    const totalAllocatedSeats = aiPlan.buses.reduce((sum, b) => sum + (b.capacity || 0), 0);
 
-    const uniqueStoppingAreas = resolvedStops.length;
-    const totalRouteStopVisits = (aiPlan.buses || []).reduce(
-        (sum, b) => sum + (Array.isArray(b.stops) ? b.stops.length : 0),
-        0
-    );
+    // ASSERT 1: allocatedPassengers + unallocatedPassengers === totalDemand
+    if (totalAssigned + aiPlan.unassignedUsers !== totalComingUsers) {
+        assertions.push(`ASSERT 1: Accounting mismatch: assigned (${totalAssigned}) + unassigned (${aiPlan.unassignedUsers}) !== total demand (${totalComingUsers})`);
+    }
+
+    // ASSERT 2: allocatedPassengers <= totalDemand
+    if (totalAssigned > totalComingUsers) {
+        assertions.push(`ASSERT 2: Over-allocation: assigned (${totalAssigned}) > total demand (${totalComingUsers})`);
+    }
+
+    // ASSERT 3: allocatedPassengers <= allocatedCapacity
+    if (totalAssigned > totalAllocatedSeats) {
+        assertions.push(`ASSERT 3: Vehicle capacity exceeded: assigned (${totalAssigned}) > allocated capacity (${totalAllocatedSeats})`);
+    }
+
+    // ASSERT 4: Every route passenger count <= vehicle capacity
+    aiPlan.buses.forEach((b) => {
+        if (b.assignedUsers > b.capacity) {
+            assertions.push(`ASSERT 4: Route ${b.routeCode} assignedUsers (${b.assignedUsers}) > capacity (${b.capacity})`);
+        }
+    });
+
+    // ASSERT 5: Every passenger is assigned to at most one route
+    const seenPassengerIds = new Set();
+    aiPlan.buses.forEach((b) => {
+        (b.users || []).forEach((uId) => {
+            const strId = String(uId);
+            if (seenPassengerIds.has(strId)) {
+                assertions.push(`ASSERT 5: Duplicate passenger assignment: user ID ${strId}`);
+            }
+            seenPassengerIds.add(strId);
+        });
+    });
+
+    // ASSERT 6: Every assigned passenger belongs to confirmed Coming users
+    const validIds = new Set(confirmedUsers.map((u) => String(u._id || u.userId || u.id || "")));
+    aiPlan.buses.forEach((b) => {
+        (b.users || []).forEach((uId) => {
+            const strId = String(uId);
+            if (strId && !validIds.has(strId)) {
+                assertions.push(`ASSERT 6: Passenger ${strId} not in confirmed users list`);
+            }
+        });
+    });
+
+    // ASSERT 7: Every stop has valid coordinates
+    aiPlan.buses.forEach((b) => {
+        (b.stops || []).forEach((st) => {
+            if (!isValidCoordinate(st.latitude, st.longitude)) {
+                assertions.push(`ASSERT 7: Stop ${st.name} has invalid coordinates`);
+            }
+        });
+    });
+
+    // ASSERT 11/12: uniqueStopCount <= routeStopVisitCount
+    if (aiPlan.uniqueStopCount > aiPlan.routeStopVisitCount && aiPlan.uniqueStopCount > 0) {
+        assertions.push(`ASSERT 11/12: uniqueStopCount (${aiPlan.uniqueStopCount}) > routeStopVisitCount (${aiPlan.routeStopVisitCount})`);
+    }
+
+    // ASSERT 13: Consolidation audit consistency
+    aiPlan.consolidationAudit.forEach((audit) => {
+        if (audit.beforeCapacity + audit.passengersMoved !== audit.afterCapacity) {
+            assertions.push(`ASSERT 13: Consolidation audit mismatch on ${audit.destinationRoute}`);
+        }
+    });
+
+    // ASSERT 15: No impossible distances
+    aiPlan.buses.forEach((b) => {
+        if (b.routeDistanceKm > 250 && (b.straightLineBaselineKm || 0) < 50) {
+            assertions.push(`ASSERT 15: Impossible route distance (${b.routeDistanceKm}km) on ${b.routeCode}`);
+        }
+    });
+
+    if (assertions.length > 0) {
+        console.error("AI Plan Consistency Assertions Failed:", assertions);
+        return {
+            success: false,
+            code: "CONSISTENCY_ASSERTION_FAILED",
+            message: "Generated route plan failed consistency verification.",
+            errors: assertions
+        };
+    }
+
+    const manualPlan = buildManualPlan(routes, rawVehicles);
 
     const planResult = {
         success: true,
@@ -2915,7 +2719,8 @@ export const generateAgentRecommendations = async (payload = {}) => {
         source: sourceHub,
         destination: destinationHub,
         startingPoint: anchorHub,
-        hubProvenance: resolvedHubInfo?.provenance || "User Selection",
+        hubProvenance: "User Selection",
+        duplicateUsers: duplicateCount,
         summary: {
             totalUsers: users.length,
             confirmedUsers: totalComingUsers,
@@ -2923,17 +2728,27 @@ export const generateAgentRecommendations = async (payload = {}) => {
             vehicles: rawVehicles.length,
             availableVehicles: availableVehicles.length,
             totalAvailableCapacity,
+            physicalFleetCapacity,
             allocatedSeats: aiPlan.allocatedSeats,
             allocatedUsers: aiPlan.assignedUsers,
             unallocatedUsers: aiPlan.unassignedUsers,
+            unallocatedReason: aiPlan.unallocatedReason,
             seatUtilization: aiPlan.utilization,
+            physicalFleetUtilization: aiPlan.physicalFleetUtilization,
+            routeAllocationUtilization: aiPlan.routeAllocationUtilization,
+            fleetVehicleUtilization: aiPlan.fleetVehicleUtilization,
+            utilizationNote: aiPlan.utilizationNote,
             routes: routes.length,
             schedules: schedules.length,
-            stoppingAreas: uniqueStoppingAreas,
-            uniqueStoppingAreas,
-            totalRouteStopVisits,
-            mappedStoppingAreas: uniqueStoppingAreas,
-            capacityShortage: totalComingUsers > totalAvailableCapacity,
+            stoppingAreas: aiPlan.uniqueStopCount,
+            uniqueStoppingAreas: aiPlan.uniqueStopCount,
+            uniqueStopCount: aiPlan.uniqueStopCount,
+            totalRouteStopVisits: aiPlan.routeStopVisitCount,
+            routeStopVisitCount: aiPlan.routeStopVisitCount,
+            sharedStopCount: aiPlan.sharedStopCount,
+            splitStopCount: aiPlan.splitStopCount,
+            mappedStoppingAreas: aiPlan.uniqueStopCount,
+            capacityShortage: aiPlan.capacityShortage,
             stopCountExplanation: aiPlan.stopCountExplanation
         },
         stoppingGroups,
@@ -2942,7 +2757,7 @@ export const generateAgentRecommendations = async (payload = {}) => {
         recommendations: aiPlan ? [aiPlan] : []
     };
 
-    // Persist final generated AI plan to MongoDB AiPlan collection ONLY if demand > 0 and routes generated
+    // Persist final generated AI plan to MongoDB AiPlan collection
     if (totalComingUsers > 0 && aiPlan?.buses?.length > 0) {
         try {
             await AiPlan.updateMany(
@@ -2958,7 +2773,7 @@ export const generateAgentRecommendations = async (payload = {}) => {
                 source: sourceHub,
                 destination: destinationHub,
                 startingPoint: anchorHub,
-                hubProvenance: resolvedHubInfo?.provenance || "User Selection",
+                hubProvenance: "User Selection",
                 summary: planResult.summary,
                 stoppingGroups: planResult.stoppingGroups,
                 aiPlan: planResult.aiPlan,
@@ -2978,61 +2793,67 @@ export const generateAgentRecommendations = async (payload = {}) => {
 
 /*
 |--------------------------------------------------------------------------
-| SAVE FINAL ADMINISTRATOR DECISION
+| SAVE FINAL ADMIN SELECTION
 |--------------------------------------------------------------------------
 */
 
 export const saveSelectedPlan = async (selection) => {
-    if (!selection) {
-        throw new Error("Plan selection is required.");
+    if (!isDbConnected()) {
+        return {
+            success: false,
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database is currently unavailable."
+        };
     }
 
-    if (!["AI", "ADMIN"].includes(selection.planType)) {
-        throw new Error("Invalid plan type. Must be AI or ADMIN.");
-    }
+    try {
+        const { planType, plan, startingPoint } = selection;
 
-    if (mongoose.connection.readyState !== 1) {
-        throw new Error("Database connection is not ready.");
-    }
+        if (mongoose.connection.db) {
+            await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                { active: true },
+                { $set: { active: false, status: "superseded" } }
+            );
 
-    const collection = mongoose.connection.db.collection("ai_selected_plans");
-
-    // Deactivate previous active selections rather than deleting historical records
-    await collection.updateMany(
-        { active: { $ne: false } },
-        { $set: { active: false, status: "superseded" } }
-    );
-
-    const document = {
-        active: true,
-        status: "active",
-        planType: selection.planType,
-        plan: selection.plan,
-        startingPoint: selection.startingPoint || null,
-        selectedAt: new Date()
-    };
-
-    const result = await collection.insertOne(document);
-
-    return {
-        success: true,
-        message: "Final transportation plan saved successfully.",
-        selection: {
-            ...document,
-            _id: result.insertedId
+            await mongoose.connection.db.collection("ai_selected_plans").insertOne({
+                planType,
+                plan,
+                startingPoint,
+                active: true,
+                status: "active",
+                selectedAt: new Date()
+            });
         }
-    };
+
+        return {
+            success: true,
+            message: `${planType === "AI" ? "AI Recommended" : "Manual"} route plan activated successfully.`
+        };
+    } catch (error) {
+        console.error("Save selected plan error:", error.message);
+        throw new Error("Unable to save selected plan: " + error.message);
+    }
 };
 
+/*
+|--------------------------------------------------------------------------
+| GET LAST SELECTED PLAN
+|--------------------------------------------------------------------------
+*/
+
 export const getSelectedPlan = async () => {
+    if (!isDbConnected()) {
+        return { success: false, selection: null, code: "DATABASE_UNAVAILABLE" };
+    }
+
     try {
-        if (mongoose.connection.readyState !== 1) {
+        if (!mongoose.connection.db) {
             return { success: true, selection: null };
         }
 
         const selected = await mongoose.connection.db
             .collection("ai_selected_plans")
-            .findOne({ active: { $ne: false } }, { sort: { selectedAt: -1 } });
+            .findOne({ active: true }, { sort: { selectedAt: -1 } });
 
         return {
             success: true,
@@ -3040,15 +2861,9 @@ export const getSelectedPlan = async () => {
         };
     } catch (error) {
         console.error("Get selected plan error:", error.message);
-        return { success: false, selection: null };
+        return { success: false, selection: null, message: "Unable to load selected plan." };
     }
 };
-
-/*
-|--------------------------------------------------------------------------
-| BACKWARD COMPATIBILITY
-|--------------------------------------------------------------------------
-*/
 
 export const getAgentOverview = async () => {
     return await getAIData();
@@ -3065,37 +2880,34 @@ export const analyzeTransport = async () => {
 
 /*
 |--------------------------------------------------------------------------
-| GET ACTIVE AI PLAN FROM DATABASE
+| GET ACTIVE SAVED AI PLAN
 |--------------------------------------------------------------------------
 */
 
 export const getActiveAIPlan = async () => {
+    if (!isDbConnected()) {
+        return { success: false, plan: null, code: "DATABASE_UNAVAILABLE" };
+    }
+
     try {
-        const activePlan = await AiPlan.findOne({ active: true })
-            .sort({ createdAt: -1 })
-            .lean();
+        const activePlan = await AiPlan.findOne({ active: true, status: "active" }).sort({ createdAt: -1 });
 
         if (!activePlan) {
             return {
                 success: true,
-                active: false,
-                plan: null
+                plan: null,
+                message: "No active AI plan found."
             };
         }
 
         return {
             success: true,
-            active: true,
-            plan: {
-                ...activePlan,
-                generatedAt: activePlan.generatedAt ? activePlan.generatedAt.toISOString() : activePlan.createdAt
-            }
+            plan: activePlan
         };
     } catch (error) {
         console.error("Get active AI plan error:", error.message);
         return {
             success: false,
-            active: false,
             plan: null,
             message: "Unable to load active AI plan."
         };
@@ -3104,13 +2916,16 @@ export const getActiveAIPlan = async () => {
 
 /*
 |--------------------------------------------------------------------------
-| RESET AI PLAN & STUDENT TRAVEL STATUSES (IDEMPOTENT & SAFE)
+| RESET AI PLAN & STUDENT TRAVEL STATUSES
 |--------------------------------------------------------------------------
 */
 
 export const resetAIPlanAndStudents = async () => {
+    if (!isDbConnected()) {
+        throw new Error("Database is currently unavailable.");
+    }
+
     try {
-        // 1. Deactivate all active AI plans
         const planUpdate = await AiPlan.updateMany(
             { active: true },
             {
@@ -3122,8 +2937,7 @@ export const resetAIPlanAndStudents = async () => {
             }
         );
 
-        // 2. Deactivate currently active selected plans without deleting historical data
-        if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+        if (mongoose.connection.db) {
             await mongoose.connection.db.collection("ai_selected_plans").updateMany(
                 { active: { $ne: false } },
                 {
@@ -3136,7 +2950,6 @@ export const resetAIPlanAndStudents = async () => {
             );
         }
 
-        // 3. Reset student travel status back to "Pending"
         const userUpdate = await User.updateMany(
             {
                 role: "student",
@@ -3156,7 +2969,7 @@ export const resetAIPlanAndStudents = async () => {
             studentsReset: userUpdate?.modifiedCount || 0
         };
     } catch (error) {
-        console.error("Reset AI plan and students error:", error.message);
+        console.error("Reset AI plan error:", error.message);
         throw new Error(error.message || "Failed to reset AI plan and student travel responses.");
     }
 };

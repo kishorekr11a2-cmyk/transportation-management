@@ -73,6 +73,49 @@
     font-size: 13px;
     font-weight: 700;
     white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.ai-ready.generating {
+    border-color: #bfdbfe;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+.ai-ready.generating .ready-dot {
+    background: #3b82f6;
+    animation: ai-dot-pulse 1s infinite alternate;
+}
+
+.ai-ready.error {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #b91c1c;
+}
+.ai-ready.error .ready-dot {
+    background: #ef4444;
+}
+
+.ai-ready.invalidated {
+    border-color: #fde68a;
+    background: #fffbeb;
+    color: #b45309;
+}
+.ai-ready.invalidated .ready-dot {
+    background: #f59e0b;
+}
+
+.ai-ready.generated {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #15803d;
+}
+.ai-ready.generated .ready-dot {
+    background: #22c55e;
+}
+
+@keyframes ai-dot-pulse {
+    from { opacity: 0.4; transform: scale(0.85); }
+    to { opacity: 1; transform: scale(1.15); }
 }
 
 .ready-dot {
@@ -1020,11 +1063,54 @@
     font-size: 12px;
 }
 
+.ai-plan-result {
+    margin-top: 28px;
+    padding: 28px;
+    border-radius: 18px;
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.plan-meta-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    border-bottom: 1.5px solid #f1f5f9;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.plan-title-col h3 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -0.3px;
+}
+
+.timestamp-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 .optimization-checklist {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 10px;
-    margin: 18px 0;
+    margin: 4px 0 12px;
     padding: 14px 16px;
     border-radius: 10px;
     background: #f0fdf4;

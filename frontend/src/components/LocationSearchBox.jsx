@@ -374,11 +374,16 @@ export default function LocationSearchBox({
                                             </span>
                                         )}
 
-                                        {place.type && place.type !== "Place" && (
+                                        <div className="location-result-meta" style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "3px" }}>
                                             <span className="location-result-type">
-                                                {place.type}
+                                                {place.type || "Place"}
                                             </span>
-                                        )}
+                                            {place.latitude !== undefined && place.longitude !== undefined && (
+                                                <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                                                    📍 {Number(place.latitude).toFixed(5)}, {Number(place.longitude).toFixed(5)}
+                                                </span>
+                                            )}
+                                        </div>
                                     </span>
                                 </button>
                             );
