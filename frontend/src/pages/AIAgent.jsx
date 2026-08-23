@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import {
     getAIData,
@@ -10,6 +11,10 @@ import {
     getSelectedPlan
 } from "../services/aiAgentService";
 import LocationSearchBox from "../components/LocationSearchBox";
+import OptimizationWorkspace from "../components/OptimizationWorkspace";
+import OptimizationResultSummary from "../components/OptimizationResultSummary";
+import ResetRouteModal from "../components/ResetRouteModal";
+import SelectGeneratedRouteModal from "../components/SelectGeneratedRouteModal";
 import "../css/AIAgent.css";
 
 const formatNumber = (value) =>
@@ -122,11 +127,17 @@ const normalizeManualRoutes = (response) => {
 export default function AIAgent() {
     const [data, setData] = useState(null);
 
-    // Source = buses leave from here
+    // Trip direction mode: "FROM_SOURCE" (Evening/Outward) or "TO_DESTINATION" (Morning/Inward)
+    const [tripMode, setTripMode] = useState("FROM_SOURCE");
+
+    // Active endpoint tracker: "source" | "destination"
+    const [activeEndpointField, setActiveEndpointField] = useState("source");
+
+    // Source = buses leave from here (for Outward / Evening)
     const [sourceLocation, setSourceLocation] =
         useState(null);
 
-    // Destination = buses arrive here
+    // Destination = buses arrive here (for Inward / Morning)
     const [destinationLocation, setDestinationLocation] =
         useState(null);
 
@@ -152,10 +163,15 @@ export default function AIAgent() {
     const [selectionMessage, setSelectionMessage] =
         useState("");
 
+    const navigate = useNavigate();
+
     const [lastSelection, setLastSelection] =
         useState(null);
 
     const [showResetModal, setShowResetModal] =
+        useState(false);
+
+    const [showSelectRouteModal, setShowSelectRouteModal] =
         useState(false);
 
     const [resetting, setResetting] =
@@ -172,6 +188,29 @@ export default function AIAgent() {
 
     const [loading, setLoading] =
         useState(true);
+
+    const handleSelectAiRouteToView = (route) => {
+        setShowSelectRouteModal(false);
+        if (!route) {
+            toast.error("Unable to load the selected AI route.");
+            return;
+        }
+        try {
+            sessionStorage.setItem("activeAiViewRoute", JSON.stringify(route));
+            if (planData?.aiPlan || planData) {
+                sessionStorage.setItem("activeAiPlan", JSON.stringify(planData?.aiPlan || planData));
+            }
+        } catch (e) {
+            console.warn("Could not cache activeAiViewRoute", e);
+        }
+        navigate("/routes", {
+            state: {
+                fromAiAgent: true,
+                selectedAiRoute: route,
+                aiPlan: planData?.aiPlan || planData
+            }
+        });
+    };
 
     useEffect(() => {
         loadPageData();
@@ -209,6 +248,9 @@ export default function AIAgent() {
                     const cachedPlan = JSON.parse(cachedPlanStr);
                     if (cachedPlan && (cachedPlan.aiPlan || cachedPlan.buses || cachedPlan.summary)) {
                         setPlanData(cachedPlan);
+                        if (cachedPlan.tripMode) {
+                            setTripMode(cachedPlan.tripMode);
+                        }
                         if (cachedPlan.source && hasValidCoordinates(cachedPlan.source)) {
                             setSourceLocation(cachedPlan.source);
                         }
@@ -232,6 +274,9 @@ export default function AIAgent() {
                 const plan = response.plan;
 
                 setPlanData(plan);
+                if (plan.tripMode) {
+                    setTripMode(plan.tripMode);
+                }
                 try {
                     localStorage.setItem("active_ai_plan", JSON.stringify(plan));
                 } catch {
@@ -323,6 +368,11 @@ export default function AIAgent() {
         }
     };
 
+    const [optStage, setOptStage] = useState(1);
+    const [optStatusMessage, setOptStatusMessage] =
+        useState("Analyzing confirmed demand...");
+    const stageTimersRef = useRef([]);
+
     const handleGenerateAIPlan = async () => {
         const comingCount = Number(
             data?.confirmedUserCount ??
@@ -339,53 +389,107 @@ export default function AIAgent() {
          */
         if (comingCount === 0) {
             const zeroDemandMsg =
-                "No Coming students available. Students must confirm their travel status before an AI route can be generated.";
+                "No confirmed travel demand available. Students must confirm their travel status before an AI route can be generated.";
 
             setGenerationError(
                 zeroDemandMsg
             );
 
             toast.error(
-                "No Coming students available. No transportation route can be generated."
+                "No confirmed travel demand available."
             );
 
             return;
         }
 
-        const hasSource =
-            sourceLocation &&
-            hasValidCoordinates(
-                sourceLocation
-            );
+        const hasSource = hasValidCoordinates(sourceLocation);
+        const hasDestination = hasValidCoordinates(destinationLocation);
 
-        const hasDestination =
-            destinationLocation &&
-            hasValidCoordinates(
-                destinationLocation
-            );
-
-        if (!hasDestination && !hasSource) {
+        if (!hasSource && !hasDestination) {
             setGenerationError(
-                "Select a destination to generate the AI transportation plan."
+                "Set a Source or Destination before generating an AI route."
             );
             return;
         }
+
+        // Auto-infer direction from configured endpoint
+        let detectedTripMode = "FROM_SOURCE";
+        if (hasSource && !hasDestination) {
+            detectedTripMode = "FROM_SOURCE";
+        } else if (hasDestination && !hasSource) {
+            detectedTripMode = "TO_DESTINATION";
+        } else if (activeEndpointField === "destination") {
+            detectedTripMode = "TO_DESTINATION";
+        } else {
+            detectedTripMode = "FROM_SOURCE";
+        }
+
+        setTripMode(detectedTripMode);
+        const isOutward = detectedTripMode === "FROM_SOURCE";
 
         try {
             setGenerating(true);
+            setOptStage(1);
+            setOptStatusMessage("Analyzing confirmed passenger demand...");
             setGenerationError("");
             setSelectionMessage("");
             setResetSuccessMessage("");
 
-            let tripMode = "TO_DESTINATION";
-            if (hasSource && !hasDestination) {
-                tripMode = "FROM_SOURCE";
+            // Clear previous timers
+            stageTimersRef.current.forEach(clearTimeout);
+            stageTimersRef.current = [];
+
+            if (isOutward) {
+                const sourceName = sourceLocation?.name || "Source";
+                const t1 = setTimeout(() => {
+                    setOptStage(2);
+                    setOptStatusMessage("Mapping residential stopping areas & density clusters...");
+                }, 350);
+
+                const t2 = setTimeout(() => {
+                    setOptStage(3);
+                    setOptStatusMessage(`Building outward route from ${sourceName}...`);
+                }, 750);
+
+                const t3 = setTimeout(() => {
+                    setOptStage(4);
+                    setOptStatusMessage("Ordering residential drop-off stops & 2-Opt road sequence...");
+                }, 1200);
+
+                const t4 = setTimeout(() => {
+                    setOptStage(5);
+                    setOptStatusMessage("Optimizing continuous road progression & capacity balancing...");
+                }, 1700);
+
+                stageTimersRef.current.push(t1, t2, t3, t4);
             } else {
-                tripMode = "TO_DESTINATION";
+                const destName = destinationLocation?.name || "Destination";
+                const t1 = setTimeout(() => {
+                    setOptStage(2);
+                    setOptStatusMessage("Mapping residential stopping areas & density clusters...");
+                }, 350);
+
+                const t2 = setTimeout(() => {
+                    setOptStage(3);
+                    setOptStatusMessage(`Building inward route toward ${destName}...`);
+                }, 750);
+
+                const t3 = setTimeout(() => {
+                    setOptStage(4);
+                    setOptStatusMessage("Ordering residential pickup stops & 2-Opt sequence...");
+                }, 1200);
+
+                const t4 = setTimeout(() => {
+                    setOptStage(5);
+                    setOptStatusMessage("Optimizing continuous road progression & capacity balancing...");
+                }, 1700);
+
+                stageTimersRef.current.push(t1, t2, t3, t4);
             }
 
             const payload = {
-                tripMode,
+                tripMode: detectedTripMode,
+                activeEndpoint: detectedTripMode === "FROM_SOURCE" ? "source" : "destination",
                 ...(hasSource ? { source: sourceLocation } : {}),
                 ...(hasDestination ? { destination: destinationLocation } : {})
             };
@@ -397,6 +501,17 @@ export default function AIAgent() {
                     response?.message || "Unable to generate AI plan."
                 );
             }
+
+            // Stage 6 validation
+            setOptStage(6);
+            setOptStatusMessage(
+                isOutward
+                    ? "Validating 100% demand coverage and outward continuity..."
+                    : "Validating 100% demand coverage and inward continuity..."
+            );
+
+            // Brief validation transition
+            await new Promise((r) => setTimeout(r, 400));
 
             setPlanData(response);
             try {
@@ -412,7 +527,7 @@ export default function AIAgent() {
                 });
             } else {
                 toast.success(
-                    "AI route plan generated and saved successfully."
+                    "AI route plan generated and validated successfully."
                 );
             }
 
@@ -423,6 +538,9 @@ export default function AIAgent() {
                 error
             );
 
+            stageTimersRef.current.forEach(clearTimeout);
+            stageTimersRef.current = [];
+
             setPlanData(null);
 
             setGenerationError(
@@ -431,6 +549,8 @@ export default function AIAgent() {
                 "Unable to generate AI route plan."
             );
         } finally {
+            stageTimersRef.current.forEach(clearTimeout);
+            stageTimersRef.current = [];
             setGenerating(false);
         }
     };
@@ -454,7 +574,7 @@ export default function AIAgent() {
                 setShowResetModal(false);
 
                 const msg =
-                    "AI route reset successfully. Student travel responses have been reset to Pending.";
+                    "AI route recommendation reset successfully. Student travel responses remain preserved.";
 
                 setResetSuccessMessage(msg);
 
@@ -578,6 +698,19 @@ export default function AIAgent() {
             data?.vehicles?.length ||
             0,
 
+        availableVehicles:
+            data?.availableVehicleCount ||
+            data?.availableVehicles?.length ||
+            0,
+
+        totalAvailableCapacity:
+            data?.totalAvailableCapacity ||
+            0,
+
+        totalPhysicalCapacity:
+            data?.totalPhysicalCapacity ||
+            0,
+
         routes:
             data?.routeCount ||
             data?.routes?.length ||
@@ -591,8 +724,22 @@ export default function AIAgent() {
         stoppingAreas:
             data?.stopCount ||
             data?.stops?.length ||
+            0,
+
+        uniqueStoppingAreas:
+            data?.stopCount ||
+            data?.stops?.length ||
             0
     };
+
+    const availableVehiclesCount = Number(
+        summary?.availableVehicles ??
+        summary?.availableVehicleCount ??
+        data?.availableVehicleCount ??
+        data?.availableVehicles?.length ??
+        summary?.vehicles ??
+        0
+    );
 
     const aiPlan = planData?.aiPlan;
 
@@ -817,6 +964,20 @@ export default function AIAgent() {
                     </div>
                 </div>
 
+                <div className="summary-card available">
+                    <span>🚍</span>
+                    <div>
+                        <strong>
+                            {formatNumber(
+                                availableVehiclesCount
+                            )}
+                        </strong>
+                        <small>
+                            Available Vehicles
+                        </small>
+                    </div>
+                </div>
+
                 <div className="summary-card">
                     <span>🛣️</span>
                     <div>
@@ -827,20 +988,6 @@ export default function AIAgent() {
                         </strong>
                         <small>
                             Stored Routes
-                        </small>
-                    </div>
-                </div>
-
-                <div className="summary-card">
-                    <span>📅</span>
-                    <div>
-                        <strong>
-                            {formatNumber(
-                                summary.schedules
-                            )}
-                        </strong>
-                        <small>
-                            Schedules
                         </small>
                     </div>
                 </div>
@@ -873,32 +1020,16 @@ export default function AIAgent() {
 
                     <div className="section-heading">
                         <h2>
-                            Trip Route: Source &amp;
-                            Destination
+                            Trip Endpoint
                         </h2>
 
                         <p>
-                            Set the{" "}
-                            <strong>
-                                Source
-                            </strong>{" "}
-                            (where buses leave from —
-                            residential zones, depots,
-                            or townships) and the{" "}
-                            <strong>
-                                Destination
-                            </strong>{" "}
-                            (where buses arrive — your
-                            college, school, or
-                            institution). The AI
-                            generates routes to bring
-                            all Coming students to the
-                            Destination hub.
+                            Provide the location where the transportation route is anchored. Setting a <strong>Source</strong> generates an <strong>Outward route</strong> departing to residential drop-offs; setting a <strong>Destination</strong> generates an <strong>Inward route</strong> collecting from residential pickups.
                         </p>
                     </div>
 
                     {/* SOURCE */}
-                    <div className="trip-endpoint-card source-card">
+                    <div className={`trip-endpoint-card source-card ${sourceLocation ? "active-endpoint" : ""}`}>
 
                         <div className="endpoint-label">
                             <span className="endpoint-icon source-icon">
@@ -907,24 +1038,24 @@ export default function AIAgent() {
 
                             <div>
                                 <strong>
-                                    Source (Departure Point)
+                                    Source / Departure Point
                                 </strong>
 
                                 <small>
-                                    Departure point — residential area, depot, bus stand, station, airport, or any location
+                                    Used when buses begin the journey and travel outward through residential drop-off areas. (e.g. college, school, company, depot, station, city)
                                 </small>
                             </div>
 
                             {sourceLocation && (
                                 <span className="endpoint-badge source-badge">
-                                    Set
+                                    Set (Outward Route)
                                 </span>
                             )}
                         </div>
 
                         <div className="search-box-row">
                             <LocationSearchBox
-                                placeholder="Search departure: residential area, station, airport, depot, street, city..."
+                                placeholder="Search departure: campus, office, depot, station, street, city..."
                                 selectedLocation={
                                     sourceLocation
                                 }
@@ -934,6 +1065,8 @@ export default function AIAgent() {
                                     setSourceLocation(
                                         location
                                     );
+                                    setActiveEndpointField("source");
+                                    setTripMode("FROM_SOURCE");
 
                                     setGenerationError(
                                         ""
@@ -967,7 +1100,7 @@ export default function AIAgent() {
                                     <p>
                                         {
                                             sourceLocation.displayName ||
-                                            ""
+                                             ""
                                         }
                                     </p>
 
@@ -981,17 +1114,17 @@ export default function AIAgent() {
                                         ).toFixed(5)}
                                     </small>
                                 </div>
+
+                                <span className="selected-badge">
+                                    Outward Departure Hub
+                                </span>
                             </div>
                         )}
 
                     </div>
 
-                    <div className="trip-arrow">
-                        ↓ Buses travel
-                    </div>
-
                     {/* DESTINATION */}
-                    <div className="trip-endpoint-card destination-card">
+                    <div className={`trip-endpoint-card destination-card ${destinationLocation ? "active-endpoint" : ""}`}>
 
                         <div className="endpoint-label">
                             <span className="endpoint-icon destination-icon">
@@ -1000,25 +1133,24 @@ export default function AIAgent() {
 
                             <div>
                                 <strong>
-                                    Destination
-                                    (Arrival Hub) *
+                                    Destination / Arrival Hub
                                 </strong>
 
                                 <small>
-                                    Arrival hub — college, university, company, hospital, airport, office, or landmark (required)
+                                    Used when buses travel inward from residential pickup areas toward the destination. (e.g. college, school, company, hospital, landmark)
                                 </small>
                             </div>
 
                             {destinationLocation && (
                                 <span className="endpoint-badge destination-badge">
-                                    Set
+                                    Set (Inward Route)
                                 </span>
                             )}
                         </div>
 
                         <div className="search-box-row">
                             <LocationSearchBox
-                                placeholder="Search arrival: college, university, company, hospital, airport, landmark, city..."
+                                placeholder="Search arrival: college, university, company, hospital, office, landmark, city..."
                                 selectedLocation={
                                     destinationLocation
                                 }
@@ -1028,6 +1160,8 @@ export default function AIAgent() {
                                     setDestinationLocation(
                                         location
                                     );
+                                    setActiveEndpointField("destination");
+                                    setTripMode("TO_DESTINATION");
 
                                     setGenerationError(
                                         ""
@@ -1078,7 +1212,7 @@ export default function AIAgent() {
                                 </div>
 
                                 <span className="selected-badge">
-                                    Active Hub
+                                    Inward Arrival Hub
                                 </span>
 
                             </div>
@@ -1131,16 +1265,15 @@ export default function AIAgent() {
                                 </h3>
 
                                 <p>
-                                    {sourceLocation &&
-                                        !destinationLocation
-                                        ? "OUTWARD mode: Generates continuous drop-off routes from the Source hub to sequential residential stops."
-                                        : destinationLocation &&
-                                            !sourceLocation
-                                            ? "INWARD mode: Generates continuous pickup routes from outermost residential stops to the Destination campus/institution."
-                                            : destinationLocation &&
-                                                sourceLocation
-                                                ? "CORRIDOR mode: Generates continuous routes from Source through stopping areas and arriving at Destination."
-                                                : "Set a Source (leave from here) or Destination (arrive here) to generate optimized continuous bus routes."}
+                                    {sourceLocation && !destinationLocation
+                                        ? `OUTWARD ROUTE: Source (${sourceLocation.name}) → Residential Drop-off Network`
+                                        : destinationLocation && !sourceLocation
+                                            ? `INWARD ROUTE: Residential Pickup Network → Destination (${destinationLocation.name})`
+                                            : sourceLocation
+                                                ? `OUTWARD ROUTE: Source (${sourceLocation.name}) → Residential Drop-off Network`
+                                                : destinationLocation
+                                                    ? `INWARD ROUTE: Residential Pickup Network → Destination (${destinationLocation.name})`
+                                                    : "Set a Source (departure point) or Destination (arrival hub) to generate continuous bus routes."}
                                 </p>
                             </div>
 
@@ -1153,18 +1286,16 @@ export default function AIAgent() {
                             }
                             disabled={
                                 generating ||
-                                (!destinationLocation &&
-                                    !sourceLocation) ||
-                                summary.confirmedUsers ===
-                                0
+                                (!sourceLocation && !destinationLocation) ||
+                                summary.confirmedUsers === 0
                             }
                         >
                             {generating
-                                ? "Calculating Optimization..."
+                                ? "⚡ Optimizing Transportation Network..."
                                 : summary.confirmedUsers ===
                                     0
-                                    ? "⚠️ No Coming Students (Demand: 0)"
-                                    : "⚡ Generate AI Plan"}
+                                    ? "⚠️ No Confirmed Students (Demand: 0)"
+                                    : "⚡ Generate AI Route"}
                         </button>
 
                         <div className="generation-steps">
@@ -1172,43 +1303,48 @@ export default function AIAgent() {
                             <div>
                                 <b>1</b>
                                 <span>
-                                    Analyze coming users
-                                    &amp; stopping areas
+                                    Demand Analysis &amp;
+                                    passenger counts
                                 </span>
                             </div>
 
                             <div>
                                 <b>2</b>
                                 <span>
-                                    Cluster stops &amp;
-                                    optimize continuous
-                                    2-opt paths
+                                    Stopping Area Mapping
+                                    &amp; density clusters
                                 </span>
                             </div>
 
                             <div>
                                 <b>3</b>
                                 <span>
-                                    Check vehicle
-                                    availability &amp;
-                                    seat capacities
+                                    Vehicle Capacity &amp;
+                                    schedule availability
                                 </span>
                             </div>
 
                             <div>
                                 <b>4</b>
                                 <span>
-                                    Consolidate
-                                    low-utilization routes
-                                    &amp; shared corridors
+                                    Road Network 2-Opt
+                                    continuity optimization
                                 </span>
                             </div>
 
                             <div>
                                 <b>5</b>
                                 <span>
-                                    Validate 7-point road
-                                    continuity via OSRM
+                                    Route Consolidation
+                                    &amp; capacity balancing
+                                </span>
+                            </div>
+
+                            <div>
+                                <b>6</b>
+                                <span>
+                                    Final Validation &amp;
+                                    100% demand coverage
                                 </span>
                             </div>
 
@@ -1225,7 +1361,22 @@ export default function AIAgent() {
                         </div>
                     )}
 
-                    {/* Zero Demand */}
+                    {/* Dedicated Optimization Workspace */}
+                    {generating && (
+                        <OptimizationWorkspace
+                            currentStage={optStage}
+                            statusMessage={optStatusMessage}
+                            summary={{
+                                ...summary,
+                                availableVehicles: availableVehiclesCount
+                            }}
+                            sourceName={sourceLocation?.name}
+                            destinationName={destinationLocation?.name}
+                            tripMode={tripMode}
+                        />
+                    )}
+
+                    {/* Zero Demand State */}
                     {!aiPlan &&
                         !generating &&
                         summary.confirmedUsers ===
@@ -1239,9 +1390,7 @@ export default function AIAgent() {
                                 <div className="empty-ai-text">
 
                                     <h3>
-                                        No active AI
-                                        transportation
-                                        plan.
+                                        No confirmed travel demand available.
                                     </h3>
 
                                     <p
@@ -1273,7 +1422,7 @@ export default function AIAgent() {
                             </div>
                         )}
 
-                    {/* Demand Available */}
+                    {/* Ready to Generate State */}
                     {!aiPlan &&
                         !generating &&
                         summary.confirmedUsers >
@@ -1288,7 +1437,7 @@ export default function AIAgent() {
 
                                     <h3>
                                         No AI transportation
-                                        plan generated.
+                                        plan generated yet.
                                     </h3>
 
                                     <p>
@@ -1302,15 +1451,15 @@ export default function AIAgent() {
                                         </strong>{" "}
                                         above and click{" "}
                                         <strong>
-                                            ⚡ Generate AI Plan
+                                            ⚡ Generate AI Route
                                         </strong>{" "}
-                                        to calculate and
-                                        save an optimized
-                                        route plan for{" "}
-                                        {
-                                            summary.confirmedUsers
-                                        }{" "}
-                                        coming students.
+                                        to calculate, optimize, and validate a continuous route recommendation for{" "}
+                                        <strong>
+                                            {
+                                                summary.confirmedUsers
+                                            }{" "}
+                                            confirmed passengers
+                                        </strong>.
                                     </p>
 
                                 </div>
@@ -1318,38 +1467,7 @@ export default function AIAgent() {
                             </div>
                         )}
 
-                    {/* Generating Spinner */}
-                    {generating && (
-                        <div className="ai-generating-box">
-                            <div className="pulse-spinner"></div>
-
-                            <h3>
-                                AI Engine Is
-                                Optimizing
-                                Routes...
-                            </h3>
-
-                            <p>
-                                Evaluating{" "}
-                                <b>
-                                    {
-                                        summary.confirmedUsers
-                                    }
-                                </b>{" "}
-                                Coming students, mapping
-                                residential stopping
-                                areas, running 2-Opt road
-                                continuity &amp;
-                                directional progress,
-                                consolidating
-                                low-utilization routes,
-                                and assigning vehicle
-                                capacities.
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Zero Demand Box */}
+                    {/* Zero Demand Payload Box */}
                     {planData?.status === "ZERO_DEMAND" && !generating && (
                         <div
                             style={{
@@ -1357,23 +1475,30 @@ export default function AIAgent() {
                                 textAlign: "center",
                                 background: "#f8fafc",
                                 borderRadius: "12px",
-                                border: "1px dashed #cbd5e1",
+                                border: "1.5px dashed #cbd5e1",
                                 margin: "20px 0"
                             }}
                         >
                             <div style={{ fontSize: "36px", marginBottom: "10px" }}>👥</div>
-                            <h4 style={{ color: "#334155", fontWeight: "600", marginBottom: "6px" }}>No Confirmed Passengers</h4>
+                            <h4 style={{ color: "#334155", fontWeight: "700", marginBottom: "6px" }}>No Confirmed Passengers</h4>
                             <p style={{ color: "#64748b", maxWidth: "520px", margin: "0 auto", fontSize: "14px" }}>
-                                No confirmed passengers available for route generation. Students must confirm their travel status ("Coming") before AI routes can be generated.
+                                No confirmed travel demand available. Students must confirm their travel status ("Coming") before AI routes can be generated.
                             </p>
                         </div>
                     )}
 
-                    {/* Plan Result */}
+                    {/* Plan Result Summary & Details */}
                     {aiPlan && !generating && (
-                        <div className="ai-plan-result">
+                        <>
+                            <OptimizationResultSummary
+                                plan={planData}
+                                summary={summary}
+                                onViewRoute={() => setShowSelectRouteModal(true)}
+                            />
 
-                            {/* Plan Meta */}
+                            <div className="ai-plan-result" id="ai-plan-result-section">
+
+                                {/* Plan Meta */}
                             <div className="plan-meta-bar">
 
                                 <div className="plan-title-col">
@@ -1492,31 +1617,19 @@ export default function AIAgent() {
                                     </strong>
 
                                     <small>
-                                        Passengers /
-                                        Allocated Seats
+                                        Seats Occupied
                                     </small>
 
-                                    {aiAvailableCapacity >
-                                        aiCapacity && (
-                                            <span
-                                                style={{
-                                                    display:
-                                                        "block",
-                                                    fontSize:
-                                                        "10px",
-                                                    color:
-                                                        "#94a3b8",
-                                                    marginTop:
-                                                        "2px"
-                                                }}
-                                            >
-                                                Fleet:{" "}
-                                                {formatNumber(
-                                                    aiAvailableCapacity
-                                                )}{" "}
-                                                available
-                                            </span>
-                                        )}
+                                    <span
+                                        style={{
+                                            display: "block",
+                                            fontSize: "10px",
+                                            color: "#94a3b8",
+                                            marginTop: "2px"
+                                        }}
+                                    >
+                                        {Math.max(0, aiCapacity - aiAssigned)} unused seats
+                                    </span>
                                 </div>
 
                                 <div>
@@ -1754,7 +1867,7 @@ export default function AIAgent() {
                                 )}
 
                             {/* Bus Routes */}
-                            <div className="ai-bus-list">
+                            <div className="ai-bus-list" id="ai-bus-list-section">
 
                                 {aiBuses.map(
                                     (
@@ -2146,7 +2259,7 @@ export default function AIAgent() {
                                                                                                 {stop.passengersDropped ||
                                                                                                     userCount}
                                                                                             </b>{" "}
-                                                                                            alighted
+                                                                                            students dropped off
                                                                                         </span>
 
                                                                                         {stop.passengersRemaining !==
@@ -2159,9 +2272,7 @@ export default function AIAgent() {
                                                                                                             stop.passengersRemaining
                                                                                                         }
                                                                                                     </b>{" "}
-                                                                                                    still
-                                                                                                    on
-                                                                                                    bus
+                                                                                                    remaining on bus
                                                                                                 </span>
                                                                                             )}
                                                                                     </>
@@ -2174,14 +2285,13 @@ export default function AIAgent() {
                                                                                                     userCount
                                                                                                 }
                                                                                             </b>{" "}
-                                                                                            boarding
+                                                                                            students boarding
                                                                                             ·{" "}
                                                                                             <b>
                                                                                                 {stop.cumulativePassengers ||
                                                                                                     userCount}
                                                                                             </b>{" "}
-                                                                                            on
-                                                                                            bus
+                                                                                            on board
                                                                                         </span>
 
                                                                                         {stop.standbySeatsAtStop !==
@@ -2194,8 +2304,7 @@ export default function AIAgent() {
                                                                                                     {
                                                                                                         stop.standbySeatsAtStop
                                                                                                     }{" "}
-                                                                                                    seats
-                                                                                                    free
+                                                                                                    seats free
                                                                                                 </span>
                                                                                             )}
                                                                                     </>
@@ -2297,6 +2406,7 @@ export default function AIAgent() {
                             </button>
 
                         </div>
+                        </>
                     )}
 
                 </div>
@@ -2706,99 +2816,21 @@ export default function AIAgent() {
 
             </section>
 
-            {/* Reset Confirmation Modal */}
-            {showResetModal && (
-                <div
-                    className="ai-modal-overlay"
-                    onClick={() =>
-                        !resetting &&
-                        setShowResetModal(false)
-                    }
-                >
+            {/* Safe Reset Confirmation Modal */}
+            <ResetRouteModal
+                isOpen={showResetModal}
+                onClose={() => setShowResetModal(false)}
+                onConfirm={handleConfirmReset}
+                isResetting={resetting}
+            />
 
-                    <div
-                        className="ai-modal-card"
-                        onClick={(e) =>
-                            e.stopPropagation()
-                        }
-                    >
-
-                        <div className="ai-modal-header">
-
-                            <span className="ai-modal-icon">
-                                ⚠️
-                            </span>
-
-                            <h2>
-                                Reset AI Generated
-                                Route?
-                            </h2>
-
-                        </div>
-
-                        <div className="ai-modal-body">
-
-                            <p>
-                                This will remove the
-                                currently generated AI
-                                transportation route and
-                                reset all student travel
-                                responses.
-                            </p>
-
-                            <p>
-                                Students will return to{" "}
-                                <strong>
-                                    Pending
-                                </strong>{" "}
-                                and will need to confirm
-                                whether they are{" "}
-                                <strong>
-                                    Coming
-                                </strong>{" "}
-                                or{" "}
-                                <strong>
-                                    Not Coming
-                                </strong>{" "}
-                                for the next trip.
-                            </p>
-
-                        </div>
-
-                        <div className="ai-modal-actions">
-
-                            <button
-                                type="button"
-                                className="ai-modal-btn cancel-btn"
-                                onClick={() =>
-                                    setShowResetModal(
-                                        false
-                                    )
-                                }
-                                disabled={resetting}
-                            >
-                                Cancel
-                            </button>
-
-                            <button
-                                type="button"
-                                className="ai-modal-btn reset-btn"
-                                onClick={
-                                    handleConfirmReset
-                                }
-                                disabled={resetting}
-                            >
-                                {resetting
-                                    ? "Resetting..."
-                                    : "Reset"}
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                </div>
-            )}
+            {/* Select Generated Route Modal */}
+            <SelectGeneratedRouteModal
+                isOpen={showSelectRouteModal}
+                onClose={() => setShowSelectRouteModal(false)}
+                routes={aiBuses || aiPlan?.buses || []}
+                onConfirmSelect={handleSelectAiRouteToView}
+            />
 
         </div>
     );

@@ -11,7 +11,7 @@ const scheduleSchema = new mongoose.Schema(
 
         date: {
             type: Date,
-            required: true
+            default: Date.now
         },
 
         availability: {
@@ -29,8 +29,7 @@ const scheduleSchema = new mongoose.Schema(
 );
 
 scheduleSchema.index(
-    { date: 1, vehicle: 1 },
-    { unique: true }
+    { vehicle: 1 }
 );
 
 export default mongoose.model(

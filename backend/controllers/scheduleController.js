@@ -18,16 +18,24 @@ export const getSchedules = async (req, res) => {
     try {
         if (!adminOnly(req, res)) return;
 
-        const schedules = await Schedule.find()
-            .populate("vehicle")
-            .sort({
-                date: 1,
-                createdAt: -1
-            });
+        const [vehicles, schedules] = await Promise.all([
+            Vehicle.find().sort({ vehicleName: 1 }),
+            Schedule.find().populate("vehicle").sort({ createdAt: -1 })
+        ]);
+
+        // Map schedules by vehicle ID
+        const scheduleMap = new Map();
+        schedules.forEach((s) => {
+            const vId = String(s.vehicle?._id || s.vehicle || "");
+            if (vId && !scheduleMap.has(vId)) {
+                scheduleMap.set(vId, s);
+            }
+        });
 
         res.status(200).json({
             success: true,
             count: schedules.length,
+            vehicles,
             schedules
         });
     } catch (error) {
@@ -53,11 +61,11 @@ export const addSchedule = async (req, res) => {
             availability
         } = req.body;
 
-        if (!vehicle || !date) {
+        if (!vehicle) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Vehicle and date are required."
+                    "Vehicle is required."
             });
         }
 
@@ -86,31 +94,26 @@ export const addSchedule = async (req, res) => {
             });
         }
 
-        const normalizedDate =
-            new Date(date);
+        const normalizedDate = date
+            ? new Date(date)
+            : new Date();
 
-        normalizedDate.setHours(
-            0,
-            0,
-            0,
-            0
-        );
+        normalizedDate.setHours(0, 0, 0, 0);
 
         const schedule =
             await Schedule.findOneAndUpdate(
                 {
-                    vehicle,
-                    date: normalizedDate
+                    vehicle
                 },
                 {
                     $set: {
                         availability:
                             availability ||
-                            "Available"
+                            "Available",
+                        date: normalizedDate
                     },
                     $setOnInsert: {
-                        vehicle,
-                        date: normalizedDate
+                        vehicle
                     }
                 },
                 {
@@ -123,7 +126,7 @@ export const addSchedule = async (req, res) => {
         res.status(200).json({
             success: true,
             message:
-                "Bus availability saved successfully.",
+                `Bus "${existingVehicle.vehicleName}" marked as ${schedule.availability}.`,
             schedule
         });
     } catch (error) {

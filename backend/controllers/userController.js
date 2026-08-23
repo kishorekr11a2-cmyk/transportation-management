@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { isDbConnected } from "../config/db.js";
+import { getUserAllocatedBus } from "../services/aiAgentService.js";
 
 const dbUnavailableResponse = (res) => {
     return res.status(503).json({
@@ -151,6 +152,8 @@ export const studentLogin = async (req, res) => {
             }
         );
 
+        const allocatedBus = await getUserAllocatedBus(student);
+
         res.json({
             success: true,
             message: "Student Login Successful",
@@ -160,7 +163,8 @@ export const studentLogin = async (req, res) => {
                 name: student.name,
                 stoppings: student.stoppings,
                 travelStatus: student.travelStatus,
-                role: student.role
+                role: student.role,
+                allocatedBus
             }
         });
     } catch (error) {
@@ -219,12 +223,57 @@ export const getCurrentUser = async (req, res) => {
             });
         }
 
+        const allocatedBus = await getUserAllocatedBus(user);
+        const userObj = user.toObject ? user.toObject() : { ...user };
+        userObj.allocatedBus = allocatedBus;
+
         res.status(200).json({
             success: true,
-            user
+            user: userObj
         });
     } catch (error) {
         console.error("Get Current User Error:", error.message);
+        if (!isDbConnected()) return dbUnavailableResponse(res);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// =====================================================
+// GET USER ALLOCATED BUS DIRECTLY
+// =====================================================
+
+export const getUserAllocation = async (req, res) => {
+    if (!isDbConnected()) {
+        return dbUnavailableResponse(res);
+    }
+
+    try {
+        const user = await User.findById(req.user.id).select("-password");
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        const allocatedBus = await getUserAllocatedBus(user);
+
+        res.status(200).json({
+            success: true,
+            allocatedBus,
+            user: {
+                userId: user.userId,
+                name: user.name,
+                stoppings: user.stoppings,
+                travelStatus: user.travelStatus
+            }
+        });
+    } catch (error) {
+        console.error("Get User Allocation Error:", error.message);
         if (!isDbConnected()) return dbUnavailableResponse(res);
         res.status(500).json({
             success: false,

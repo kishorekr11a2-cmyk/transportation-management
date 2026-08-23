@@ -43,6 +43,11 @@ const userSchema = new mongoose.Schema(
                 "student"
             ],
             default: "student"
+        },
+
+        allocatedBus: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
         }
     },
     {

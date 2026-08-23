@@ -6,6 +6,7 @@ import authMiddleware
 import {
     getUsers,
     getCurrentUser,
+    getUserAllocation,
     updateTravelStatus,
     addUser,
     deleteUser
@@ -34,6 +35,17 @@ router.get(
     "/me",
     authMiddleware,
     getCurrentUser
+);
+
+
+// ===============================
+// Get User Bus Allocation
+// ===============================
+
+router.get(
+    "/allocated-bus",
+    authMiddleware,
+    getUserAllocation
 );
 
 
