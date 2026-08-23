@@ -240,9 +240,9 @@
 
 .status-confirmed-box {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 14px;
-    padding: 14px 16px;
+    padding: 16px 18px;
     border-radius: 14px;
     margin-top: 10px;
 }
@@ -267,6 +267,7 @@
     font-weight: 800;
     font-size: 14px;
     flex-shrink: 0;
+    margin-top: 2px;
 }
 
 .box-success .status-icon {
@@ -279,34 +280,53 @@
     color: white;
 }
 
+.status-text-content {
+    flex: 1;
+}
+
 .status-confirmed-box strong {
     display: block;
-    font-size: 14px;
+    font-size: 15px;
     color: #0f172a;
+    font-weight: 700;
 }
 
-.status-confirmed-box p {
-    font-size: 12px;
+.status-subtext {
+    font-size: 13px;
     color: #64748b;
-    margin: 2px 0 0 0;
+    margin: 3px 0 10px 0;
+    line-height: 1.4;
 }
 
-.btn-change-status {
-    margin-left: auto;
+.status-lock-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     background: #ffffff;
-    border: 1px solid #cbd5e1;
-    padding: 6px 12px;
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
     border-radius: 8px;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 12.5px;
     color: #475569;
-    cursor: pointer;
-    transition: all 0.2s;
+    font-weight: 500;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
-.btn-change-status:hover {
-    background: #f1f5f9;
-    color: #0f172a;
+.box-success .status-lock-notice {
+    border-color: #bbf7d0;
+    background: rgba(255, 255, 255, 0.9);
+    color: #166534;
+}
+
+.box-muted .status-lock-notice {
+    border-color: #e2e8f0;
+    background: #ffffff;
+    color: #475569;
+}
+
+.lock-icon {
+    font-size: 13px;
+    flex-shrink: 0;
 }
 
 /* Bus Info Card (Full Width) */

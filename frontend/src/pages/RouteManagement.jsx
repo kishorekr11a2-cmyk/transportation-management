@@ -164,7 +164,19 @@ export default function RouteManagement() {
             }, 350);
         }
 
+        const handleSync = () => {
+            if (document.visibilityState === "visible") {
+                loadRoutes();
+                loadVehicles();
+            }
+        };
+
+        window.addEventListener("focus", handleSync);
+        document.addEventListener("visibilitychange", handleSync);
+
         return () => {
+            window.removeEventListener("focus", handleSync);
+            document.removeEventListener("visibilitychange", handleSync);
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;

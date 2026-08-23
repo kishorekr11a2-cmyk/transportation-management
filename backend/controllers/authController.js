@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { isDbConnected } from "../config/db.js";
+import { getUserAllocatedBus } from "../services/aiAgentService.js";
 
 const dbUnavailableResponse = (res) => {
     return res.status(503).json({
@@ -148,6 +149,8 @@ export const studentLogin = async (req, res) => {
             }
         );
 
+        const allocatedBus = await getUserAllocatedBus(student);
+
         res.status(200).json({
             success: true,
             message: "Student Login Successful",
@@ -156,7 +159,10 @@ export const studentLogin = async (req, res) => {
                 id: student._id,
                 userId: student.userId,
                 name: student.name,
-                role: student.role
+                stoppings: student.stoppings || "",
+                travelStatus: student.travelStatus || "Pending",
+                role: student.role,
+                allocatedBus
             }
         });
     } catch (error) {

@@ -8,27 +8,61 @@ const StudentDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
 
-    const loadStudentData = async () => {
+    const loadStudentData = async (showSpinner = false) => {
         try {
-            setLoading(true);
+            if (showSpinner) {
+                setLoading(true);
+            }
             const response = await api.get("/users/me");
 
-            if (response.data.success) {
+            if (response.data.success && response.data.user) {
                 setStudent(response.data.user);
+
+                try {
+                    sessionStorage.setItem("user", JSON.stringify(response.data.user));
+                    localStorage.setItem("student_user", JSON.stringify(response.data.user));
+                    localStorage.setItem("user", JSON.stringify(response.data.user));
+                } catch (e) {}
             }
         } catch (error) {
             console.error("Load Student Error:", error);
-            toast.error(
-                error.response?.data?.message ||
-                "Failed to load user information"
-            );
+            if (showSpinner) {
+                toast.error(
+                    error.response?.data?.message ||
+                    "Failed to load user information"
+                );
+            }
         } finally {
-            setLoading(false);
+            if (showSpinner) {
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => {
-        loadStudentData();
+        // Initial load with spinner
+        loadStudentData(true);
+
+        // Immediate background re-fetch when tab is focused or becomes visible
+        const handleSync = () => {
+            if (document.visibilityState === "visible") {
+                loadStudentData(false);
+            }
+        };
+
+        window.addEventListener("focus", handleSync);
+        document.addEventListener("visibilitychange", handleSync);
+
+        // Real-time background sync interval (polls every 5s for admin approvals / resets)
+        const pollInterval = setInterval(() => {
+            loadStudentData(false);
+        }, 5000);
+
+        return () => {
+            window.removeEventListener("focus", handleSync);
+            document.removeEventListener("visibilitychange", handleSync);
+            clearInterval(pollInterval);
+        };
     }, []);
 
     const handleTravelStatus = async (status) => {
@@ -39,20 +73,9 @@ const StudentDashboard = () => {
             });
 
             if (response.data.success) {
-                setStudent((previous) => ({
-                    ...previous,
-                    travelStatus: response.data.travelStatus
-                }));
-
-                const storedUser = JSON.parse(localStorage.getItem("user"));
-                if (storedUser) {
-                    storedUser.travelStatus = response.data.travelStatus;
-                    localStorage.setItem("user", JSON.stringify(storedUser));
-                }
-
                 toast.success(response.data.message);
-                // Reload full data to refresh bus allocation if changed
-                loadStudentData();
+                // Reload full authoritative database data to refresh bus allocation
+                await loadStudentData(false);
             }
         } catch (error) {
             console.error("Travel Status Error:", error);
@@ -159,36 +182,30 @@ const StudentDashboard = () => {
                     )}
 
                     {student.travelStatus === "Coming" && (
-                        <div className="status-confirmed-box box-success">
+                        <div className="status-confirmed-box box-success locked-response">
                             <div className="status-icon">✓</div>
-                            <div>
+                            <div className="status-text-content">
                                 <strong>Travel Confirmed: Coming</strong>
-                                <p>Your seat request is registered for today's transit schedule.</p>
+                                <p className="status-subtext">Your seat request is registered for today's transit schedule.</p>
+                                <div className="status-lock-notice">
+                                    <span className="lock-icon">🔒</span>
+                                    <span>Your response has been submitted. You cannot change your response until the administrator resets it.</span>
+                                </div>
                             </div>
-                            <button 
-                                className="btn-change-status" 
-                                onClick={() => handleTravelStatus("Not Coming")}
-                                disabled={updating}
-                            >
-                                Change to Not Coming
-                            </button>
                         </div>
                     )}
 
                     {student.travelStatus === "Not Coming" && (
-                        <div className="status-confirmed-box box-muted">
+                        <div className="status-confirmed-box box-muted locked-response">
                             <div className="status-icon">✕</div>
-                            <div>
+                            <div className="status-text-content">
                                 <strong>Travel Confirmed: Not Coming</strong>
-                                <p>You have opted out of travel for today. No bus seat will be reserved.</p>
+                                <p className="status-subtext">You have opted out of travel for today. No bus seat will be reserved.</p>
+                                <div className="status-lock-notice">
+                                    <span className="lock-icon">🔒</span>
+                                    <span>Your response has been submitted. You cannot change your response until the administrator resets it.</span>
+                                </div>
                             </div>
-                            <button 
-                                className="btn-change-status" 
-                                onClick={() => handleTravelStatus("Coming")}
-                                disabled={updating}
-                            >
-                                Change to Coming
-                            </button>
                         </div>
                     )}
                 </div>
@@ -196,14 +213,14 @@ const StudentDashboard = () => {
                 {/* 3. Bus Information Card (Rich Admin-Approved Allocation View) */}
                 <div className={`student-card bus-info-card full-width ${isAllocated ? 'bus-allocated' : ''}`}>
                     <div className="card-header-line">
-                        <h2>🚌 Bus Allocation & Route Details</h2>
+                        <h2>🚌 {isAllocated ? "My Transportation" : "Transportation Status"}</h2>
                         {isAllocated ? (
                             <span className="allocation-badge badge-approved">
                                 ✓ Admin Approved & Allocated
                             </span>
                         ) : (
                             <span className="allocation-badge badge-pending">
-                                ⏳ {allocatedBus?.adminApprovalStatus || "Pending Admin Approval"}
+                                ⏳ Not Assigned
                             </span>
                         )}
                     </div>
@@ -288,20 +305,18 @@ const StudentDashboard = () => {
                     ) : (
                         <div className="bus-unallocated-state">
                             <div className="unallocated-icon">🚌</div>
-                            <h3>
-                                {student.travelStatus === "Not Coming"
-                                    ? "No Bus Allocated (Not Traveling)"
-                                    : "Bus Allocation in Progress"}
-                            </h3>
+                            <h3>Transportation Not Assigned</h3>
                             <p className="unallocated-desc">
                                 {allocatedBus?.message ||
-                                    "Bus allocation will appear here automatically once the administrator reviews and approves the daily transportation plan."}
+                                    (student.travelStatus === "Coming"
+                                        ? "Waiting for the administrator to finalize your transportation plan."
+                                        : "Bus allocation will appear here after confirmation and admin approval.")}
                             </p>
-                            {student.travelStatus !== "Not Coming" && (
+                            {student.travelStatus === "Coming" && (
                                 <div className="status-flow-hint">
-                                    <span className="flow-step done">✓ Confirmed Travel Intent</span>
+                                    <span className="flow-step done">✓ Travel Confirmed: Coming</span>
                                     <span className="flow-arrow">→</span>
-                                    <span className="flow-step current">⏳ Admin Route Optimization</span>
+                                    <span className="flow-step current">⏳ Admin Route Plan Approval</span>
                                     <span className="flow-arrow">→</span>
                                     <span className="flow-step">🚌 Bus Seat Assignment</span>
                                 </div>

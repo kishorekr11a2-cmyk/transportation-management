@@ -37,23 +37,19 @@ function StudentLogin() {
                 formData
             );
 
-            // Save token
-            localStorage.setItem(
-                "token",
-                response.data.token
-            );
+            // Save token in tab-isolated sessionStorage
+            try {
+                sessionStorage.setItem("token", response.data.token);
+                sessionStorage.setItem("user", JSON.stringify(response.data.user));
+                sessionStorage.setItem("role", "student");
+            } catch (e) {}
 
-            // Save complete user object
-            localStorage.setItem(
-                "user",
-                JSON.stringify(response.data.user)
-            );
-
-            // Save userId separately (used in StudentDashboard)
-            localStorage.setItem(
-                "userId",
-                response.data.user.userId
-            );
+            // Save in localStorage with student prefix and standard keys
+            localStorage.setItem("student_token", response.data.token);
+            localStorage.setItem("student_user", JSON.stringify(response.data.user));
+            localStorage.setItem("token", response.data.token);
+            localStorage.setItem("user", JSON.stringify(response.data.user));
+            localStorage.setItem("userId", response.data.user.userId);
 
             toast.success("Login Successful");
 

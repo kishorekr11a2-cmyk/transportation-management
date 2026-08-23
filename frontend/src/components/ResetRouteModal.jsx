@@ -52,7 +52,7 @@ export default function ResetRouteModal({
                         </p>
                     </div>
                     <p className="ai-modal-note">
-                        Student travel responses will reset to <em>Pending</em> so passengers can confirm their travel status for the next trip.
+                        Student travel responses (Coming / Not Coming) will remain preserved in the database.
                     </p>
                 </div>
 

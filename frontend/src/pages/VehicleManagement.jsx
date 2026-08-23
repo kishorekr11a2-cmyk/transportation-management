@@ -28,37 +28,38 @@ const VehicleManagement = () => {
 
 
 
-    useEffect(()=>{
+    // Get Vehicles
+    const getVehicles = async () => {
+        try {
+            const response = await api.get("/vehicles");
+            setVehicles(response.data.vehicles || []);
+        } catch (error) {
+            console.error("Failed to load vehicles:", error);
+        }
+    };
 
+    useEffect(() => {
         getVehicles();
 
-    },[]);
+        const handleSync = () => {
+            if (document.visibilityState === "visible") {
+                getVehicles();
+            }
+        };
 
+        window.addEventListener("focus", handleSync);
+        document.addEventListener("visibilitychange", handleSync);
 
+        const pollInterval = setInterval(() => {
+            getVehicles();
+        }, 5000);
 
-
-
-    // Get Vehicles
-
-    const getVehicles = async()=>{
-
-        try{
-
-            const response = await api.get("/vehicles");
-
-            setVehicles(response.data.vehicles || []);
-
-        }
-        catch(error){
-
-            toast.error(
-                error.response?.data?.message ||
-                "Failed to load vehicles"
-            );
-
-        }
-
-    };
+        return () => {
+            window.removeEventListener("focus", handleSync);
+            document.removeEventListener("visibilitychange", handleSync);
+            clearInterval(pollInterval);
+        };
+    }, []);
 
 
 

@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import AiPlan from "../models/AiPlan.js";
 import { isDbConnected } from "../config/db.js";
 import { getUserAllocatedBus } from "../services/aiAgentService.js";
 
@@ -283,7 +285,7 @@ export const getUserAllocation = async (req, res) => {
 };
 
 // =====================================================
-// UPDATE TRAVEL STATUS
+// UPDATE TRAVEL STATUS (STUDENT / USER ONLY)
 // =====================================================
 
 export const updateTravelStatus = async (req, res) => {
@@ -293,12 +295,12 @@ export const updateTravelStatus = async (req, res) => {
 
     try {
         const { travelStatus } = req.body;
-        const allowedStatuses = ["Coming", "Not Coming", "Pending"];
+        const allowedStatuses = ["Coming", "Not Coming"];
 
         if (!allowedStatuses.includes(travelStatus)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid travel status"
+                message: "Invalid travel status. Only 'Coming' or 'Not Coming' can be submitted."
             });
         }
 
@@ -317,6 +319,14 @@ export const updateTravelStatus = async (req, res) => {
             });
         }
 
+        // Check if user has already submitted a response in the current cycle
+        if (user.travelStatus && user.travelStatus !== "Pending") {
+            return res.status(400).json({
+                success: false,
+                message: "Travel status already submitted. Please contact the administrator to reset your response before submitting again."
+            });
+        }
+
         user.travelStatus = travelStatus;
         await user.save();
 
@@ -327,6 +337,152 @@ export const updateTravelStatus = async (req, res) => {
         });
     } catch (error) {
         console.error("Update Travel Status Error:", error.message);
+        if (!isDbConnected()) return dbUnavailableResponse(res);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// =====================================================
+// GLOBAL RESET ALL USERS TRAVEL STATUS (ADMIN ONLY)
+// =====================================================
+
+export const resetAllUsersTravelStatus = async (req, res) => {
+    if (!isDbConnected()) {
+        return dbUnavailableResponse(res);
+    }
+
+    try {
+        // Count affected students
+        const usersToReset = await User.countDocuments({
+            role: "student",
+            travelStatus: { $in: ["Coming", "Not Coming"] }
+        });
+
+        const allocationsToRemove = await User.countDocuments({
+            role: "student",
+            $or: [
+                { "allocatedBus.isAllocated": true },
+                { allocatedBus: { $ne: null } }
+            ]
+        });
+
+        // Reset travel status to Pending and remove all transportation allocations
+        await User.updateMany(
+            { role: "student" },
+            {
+                $set: {
+                    travelStatus: "Pending",
+                    allocatedBus: null
+                }
+            }
+        );
+
+        // Deactivate active generated AI plan recommendation in AiPlan
+        await AiPlan.updateMany(
+            { active: true },
+            {
+                $set: {
+                    active: false,
+                    status: "reset",
+                    resetAt: new Date()
+                }
+            }
+        );
+
+        // Deactivate active approved plan in ai_selected_plans
+        if (mongoose.connection.db) {
+            await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                { active: true },
+                {
+                    $set: {
+                        active: false,
+                        status: "reset",
+                        resetAt: new Date()
+                    }
+                }
+            );
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Travel status cycle reset successfully. Generated AI routes and bus allocations cleared.",
+            usersReset: usersToReset,
+            allocationsRemoved: allocationsToRemove
+        });
+    } catch (error) {
+        console.error("Global Reset Users Travel Status Error:", error.message);
+        if (!isDbConnected()) return dbUnavailableResponse(res);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// =====================================================
+// RESET INDIVIDUAL USER TRAVEL STATUS (ADMIN ONLY)
+// =====================================================
+
+export const resetUserTravelStatus = async (req, res) => {
+    if (!isDbConnected()) {
+        return dbUnavailableResponse(res);
+    }
+
+    try {
+        const { userId } = req.params;
+
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: "User ID is required"
+            });
+        }
+
+        // Find user by userId string or MongoDB _id
+        const user = await User.findOne({
+            $or: [
+                { userId: userId },
+                { _id: mongoose.Types.ObjectId.isValid(userId) ? userId : null }
+            ].filter(Boolean)
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        // If user is already in Pending state and has no allocation, notify administrator
+        if (user.travelStatus === "Pending" && (!user.allocatedBus || !user.allocatedBus.isAllocated)) {
+            return res.status(400).json({
+                success: false,
+                message: "User travel status is already Pending."
+            });
+        }
+
+        // Reset travel status to initial Pending state and clear allocation
+        user.travelStatus = "Pending";
+        user.allocatedBus = null;
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Travel status reset successfully. The user can now submit a new response.",
+            user: {
+                userId: user.userId,
+                name: user.name,
+                stoppings: user.stoppings,
+                travelStatus: user.travelStatus,
+                allocatedBus: null,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        console.error("Reset User Travel Status Error:", error.message);
         if (!isDbConnected()) return dbUnavailableResponse(res);
         res.status(500).json({
             success: false,

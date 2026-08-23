@@ -214,6 +214,31 @@ export default function AIAgent() {
 
     useEffect(() => {
         loadPageData();
+
+        const handleSync = () => {
+            if (document.visibilityState === "visible") {
+                loadAIData();
+                loadActivePlan();
+                loadLastSelection();
+                loadManualRoutes();
+            }
+        };
+
+        window.addEventListener("focus", handleSync);
+        document.addEventListener("visibilitychange", handleSync);
+
+        // Cross-tab background polling to sync resets and live updates
+        const pollInterval = setInterval(() => {
+            loadAIData();
+            loadActivePlan();
+            loadLastSelection();
+        }, 5000);
+
+        return () => {
+            window.removeEventListener("focus", handleSync);
+            document.removeEventListener("visibilitychange", handleSync);
+            clearInterval(pollInterval);
+        };
     }, []);
 
     const loadPageData = async () => {
@@ -231,6 +256,15 @@ export default function AIAgent() {
         try {
             const response = await getAIData();
             setData(response);
+
+            // If travel status has been reset and there are 0 confirmed passengers, clear generated routes
+            const comingCount = Number(response?.confirmedUserCount ?? response?.comingUsers ?? 0);
+            if (comingCount === 0) {
+                localStorage.removeItem("active_ai_plan");
+                setPlanData(null);
+                setSelectedPlanType("");
+                setLastSelection(null);
+            }
         } catch (error) {
             console.error(
                 "Unable to load AI data:",
@@ -241,30 +275,6 @@ export default function AIAgent() {
 
     const loadActivePlan = async () => {
         try {
-            // Check localStorage first for instant restoration without flicker
-            const cachedPlanStr = localStorage.getItem("active_ai_plan");
-            if (cachedPlanStr) {
-                try {
-                    const cachedPlan = JSON.parse(cachedPlanStr);
-                    if (cachedPlan && (cachedPlan.aiPlan || cachedPlan.buses || cachedPlan.summary)) {
-                        setPlanData(cachedPlan);
-                        if (cachedPlan.tripMode) {
-                            setTripMode(cachedPlan.tripMode);
-                        }
-                        if (cachedPlan.source && hasValidCoordinates(cachedPlan.source)) {
-                            setSourceLocation(cachedPlan.source);
-                        }
-                        if (cachedPlan.destination && hasValidCoordinates(cachedPlan.destination)) {
-                            setDestinationLocation(cachedPlan.destination);
-                        } else if (cachedPlan.startingPoint && hasValidCoordinates(cachedPlan.startingPoint) && !cachedPlan.source) {
-                            setDestinationLocation(cachedPlan.startingPoint);
-                        }
-                    }
-                } catch {
-                    // Ignore parse error
-                }
-            }
-
             const response = await getActivePlan();
 
             if (
@@ -310,8 +320,11 @@ export default function AIAgent() {
                         plan.startingPoint
                     );
                 }
-            } else if (!cachedPlanStr) {
+            } else {
+                // If backend has no active plan (e.g. travel status was reset), clear state and storage
+                localStorage.removeItem("active_ai_plan");
                 setPlanData(null);
+                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
             }
         } catch (error) {
             console.error(
@@ -359,6 +372,9 @@ export default function AIAgent() {
                 setSelectedPlanType(
                     response.selection.planType
                 );
+            } else {
+                setLastSelection(null);
+                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
             }
         } catch (error) {
             console.error(
@@ -622,7 +638,7 @@ export default function AIAgent() {
     };
 
     const handleSaveFinalPlan = async () => {
-        if (!selectedPlanType) {
+        if (savingSelection || !selectedPlanType) {
             return;
         }
 
@@ -639,7 +655,7 @@ export default function AIAgent() {
 
         try {
             setSavingSelection(true);
-            setSelectionMessage("");
+            setSelectionMessage("Confirming transportation plan & publishing allocations...");
 
             const response =
                 await saveSelectedPlan({
@@ -653,12 +669,16 @@ export default function AIAgent() {
 
             if (response?.success) {
                 setLastSelection(
-                    response.selection
+                    response.selection || {
+                        planType: selectedPlanType,
+                        selectedAt: new Date()
+                    }
                 );
 
-                setSelectionMessage(
-                    "Final transportation plan confirmed and saved successfully!"
-                );
+                const msg = `${selectedPlanType === "AI" ? "AI Recommended" : "Admin Manual"} transportation plan confirmed and published to MongoDB successfully!`;
+                setSelectionMessage(msg);
+                toast.success(msg);
+                await loadAIData();
             } else {
                 throw new Error(
                     response?.message ||
@@ -671,26 +691,24 @@ export default function AIAgent() {
                 error
             );
 
-            setSelectionMessage(
-                error?.response?.data?.message ||
-                error?.message ||
-                "Unable to save final plan."
-            );
+            const err = error?.response?.data?.message || error?.message || "Unable to save final plan.";
+            setSelectionMessage(err);
+            toast.error(err);
         } finally {
             setSavingSelection(false);
         }
     };
 
-    const summary = planData?.summary || {
+    const summary = {
         totalUsers:
             data?.userCount ||
             data?.totalUsers ||
             0,
 
         confirmedUsers:
-            data?.confirmedUserCount ||
-            data?.comingUsers ||
-            data?.confirmedUsers ||
+            data?.confirmedUserCount ??
+            data?.comingUsers ??
+            data?.confirmedUsers ??
             0,
 
         vehicles:
@@ -860,7 +878,7 @@ export default function AIAgent() {
                         onClick={() =>
                             setShowResetModal(true)
                         }
-                        title="Reset AI Generated Route and all student responses for the next trip"
+                        title="Reset AI Generated Route recommendation"
                     >
                         🔄 Reset AI Generated Route
                     </button>

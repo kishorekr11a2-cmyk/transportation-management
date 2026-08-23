@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getActiveToken } from "./api";
 import {
     searchPlaces as globalSearchPlaces,
     normalizeLocation,
@@ -19,7 +20,7 @@ const api = axios.create({
 // Automatically attach JWT Token
 api.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem("token");
+        const token = getActiveToken();
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }

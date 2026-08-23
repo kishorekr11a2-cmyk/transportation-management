@@ -10,6 +10,7 @@ import {
     saveSelectedPlan,
     getSelectedPlan,
     getActiveAIPlan,
+    resetGeneratedAIRoute,
     resetAIPlanAndStudents
 } from "../services/aiAgentService.js";
 
@@ -372,7 +373,7 @@ router.get(
 
 /*
 |--------------------------------------------------------------------------
-| RESET AI GENERATED PLAN & RESET STUDENT TRAVEL RESPONSES
+| RESET AI GENERATED PLAN (Does NOT modify student travel status)
 |--------------------------------------------------------------------------
 */
 
@@ -386,7 +387,7 @@ router.post(
     ) => {
         try {
             const result =
-                await resetAIPlanAndStudents();
+                await resetGeneratedAIRoute();
 
             res.json(
                 result

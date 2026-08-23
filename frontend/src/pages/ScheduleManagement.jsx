@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
-import axios from "axios";
 import { toast } from "react-hot-toast";
+import api from "../services/api";
 import {
     FiTruck,
     FiCheckCircle,
@@ -13,8 +13,6 @@ import {
 } from "react-icons/fi";
 import "../css/ScheduleManagement.css";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-
 const ScheduleManagement = () => {
     const [vehicles, setVehicles] = useState([]);
     const [schedules, setSchedules] = useState([]);
@@ -23,18 +21,14 @@ const ScheduleManagement = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("ALL");
 
-    const getConfig = () => ({
-        headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`
-        }
-    });
-
-    const loadData = async () => {
+    const loadData = async (showSpinner = false) => {
         try {
-            setLoading(true);
+            if (showSpinner) {
+                setLoading(true);
+            }
             const [vehicleResponse, scheduleResponse] = await Promise.all([
-                axios.get(`${API_URL}/vehicles`, getConfig()),
-                axios.get(`${API_URL}/schedules`, getConfig())
+                api.get("/vehicles"),
+                api.get("/schedules")
             ]);
 
             const vehicleData =
@@ -46,16 +40,39 @@ const ScheduleManagement = () => {
             setSchedules(scheduleResponse.data.schedules || []);
         } catch (error) {
             console.error("Load Scheduling Error:", error);
-            toast.error(
-                error.response?.data?.message || "Unable to load schedule data."
-            );
+            if (showSpinner) {
+                toast.error(
+                    error.response?.data?.message || "Unable to load schedule data."
+                );
+            }
         } finally {
-            setLoading(false);
+            if (showSpinner) {
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => {
-        loadData();
+        loadData(true);
+
+        const handleSync = () => {
+            if (document.visibilityState === "visible") {
+                loadData(false);
+            }
+        };
+
+        window.addEventListener("focus", handleSync);
+        document.addEventListener("visibilitychange", handleSync);
+
+        const pollInterval = setInterval(() => {
+            loadData(false);
+        }, 5000);
+
+        return () => {
+            window.removeEventListener("focus", handleSync);
+            document.removeEventListener("visibilitychange", handleSync);
+            clearInterval(pollInterval);
+        };
     }, []);
 
     // Create a unified list of vehicles with their availability status
@@ -124,14 +141,10 @@ const ScheduleManagement = () => {
         try {
             setUpdatingId(item._id);
 
-            await axios.post(
-                `${API_URL}/schedules`,
-                {
-                    vehicle: item._id,
-                    availability: newStatus
-                },
-                getConfig()
-            );
+            await api.post("/schedules", {
+                vehicle: item._id,
+                availability: newStatus
+            });
 
             toast.success(
                 `${item.vehicleName} marked as ${newStatus}`

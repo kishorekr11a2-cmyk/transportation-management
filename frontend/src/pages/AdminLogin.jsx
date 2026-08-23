@@ -42,29 +42,33 @@ function AdminLogin() {
 
             console.log(response.data);
 
-            localStorage.setItem(
-                "token",
-                response.data.token
-            );
+            // Save token in tab-isolated sessionStorage
+            try {
+                sessionStorage.setItem("token", response.data.token);
+                sessionStorage.setItem("user", JSON.stringify(response.data.user));
+                sessionStorage.setItem("role", "admin");
+            } catch (e) {}
 
-            localStorage.setItem(
-                "user",
-                JSON.stringify(response.data.user)
-            );
+            // Save in localStorage with admin prefix and standard keys
+            localStorage.setItem("admin_token", response.data.token);
+            localStorage.setItem("admin_user", JSON.stringify(response.data.user));
+            localStorage.setItem("token", response.data.token);
+            localStorage.setItem("user", JSON.stringify(response.data.user));
 
             toast.success("Login Successful");
 
             if (response.data.user.role === "admin") {
-
                 navigate("/admin-dashboard");
-
             } else {
-
                 toast.error("You are not an Admin");
-
+                try {
+                    sessionStorage.removeItem("token");
+                    sessionStorage.removeItem("user");
+                } catch (e) {}
                 localStorage.removeItem("token");
                 localStorage.removeItem("user");
-
+                localStorage.removeItem("admin_token");
+                localStorage.removeItem("admin_user");
             }
 
         } catch (error) {
