@@ -26,6 +26,30 @@ const userSchema = new mongoose.Schema(
             trim: true
         },
 
+        city: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
+        district: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
+        state: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
+        country: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
         travelStatus: {
             type: String,
             enum: [
@@ -43,6 +67,24 @@ const userSchema = new mongoose.Schema(
                 "student"
             ],
             default: "student"
+        },
+
+        assignedVehicle: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
+        assignedRoute: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
+        allocationStatus: {
+            type: String,
+            default: "Not Assigned",
+            trim: true
         },
 
         allocatedBus: {

@@ -375,6 +375,9 @@ export const resetAllUsersTravelStatus = async (req, res) => {
             {
                 $set: {
                     travelStatus: "Pending",
+                    assignedVehicle: null,
+                    assignedRoute: null,
+                    allocationStatus: "Not Assigned",
                     allocatedBus: null
                 }
             }
@@ -466,6 +469,9 @@ export const resetUserTravelStatus = async (req, res) => {
 
         // Reset travel status to initial Pending state and clear allocation
         user.travelStatus = "Pending";
+        user.assignedVehicle = null;
+        user.assignedRoute = null;
+        user.allocationStatus = "Not Assigned";
         user.allocatedBus = null;
         await user.save();
 
@@ -476,7 +482,13 @@ export const resetUserTravelStatus = async (req, res) => {
                 userId: user.userId,
                 name: user.name,
                 stoppings: user.stoppings,
+                city: user.city,
+                state: user.state,
+                country: user.country,
                 travelStatus: user.travelStatus,
+                assignedVehicle: null,
+                assignedRoute: null,
+                allocationStatus: "Not Assigned",
                 allocatedBus: null,
                 role: user.role
             }

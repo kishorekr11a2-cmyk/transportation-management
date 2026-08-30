@@ -2,18 +2,28 @@
    GLOBAL OPEN LOCATION SEARCH SERVICE (Universal Internet-Based Geocoding)
    
    Architecture:
-   - Stage 1: Parallel multi-provider search across Wikidata, Komoot Photon (OSM Elasticsearch),
-              and OpenStreetMap Nominatim with live query variants.
-   - Stage 2: Location-aware and distinctive fallback resolution.
+   - Query Parser & Normalizer: Delimiter extraction (commas), tail-locality extraction,
+     distinctive place tokens, category detection, acronym handling.
+   - Intelligent Query Variant Generator: Generates targeted place+locality, core-entity+locality,
+     category+locality, place-alone, and acronym queries.
+   - Stage 1: Parallel multi-provider search across OpenStreetMap Nominatim, Komoot Photon
+     (OSM Elasticsearch), Wikidata Open Geocoding, with targeted variant dispatching.
+   - Stage 2: Location-aware & distinctive fallback resolution.
    - Stage 3: Open-Meteo global administrative boundary resolution.
-   - Reverse Geocoding: Multi-provider reverse resolution (Nominatim & BigDataCloud) to always
-                        extract and display true physical street/neighbourhood/city addresses.
+   - Reverse Geocoding: Multi-provider reverse resolution (Nominatim & BigDataCloud).
+   - Location-Aware Relevance Ranking Engine:
+     * Exact Place Name Matching (+350)
+     * Distinctive Token Coverage (+220)
+     * Exact Locality/City Boost (+500)
+     * Locality Missing Penalty (-600)
+     * City Contradiction Penalty (-300 to -500)
+     * Highway/Street Destination False Match Protection (Road vs City)
+     * Category Alignment Bonus (+100)
+   - Deduplication: Coordinate proximity grid + normalized name merging.
 
    Design Principles:
-   - ZERO hardcoded dictionaries, institution lists, or country-specific fallbacks.
-   - Full global coverage across all cities, villages, institutions, roads, and landmarks.
-   - Location-aware scoring ensuring specific city/locality intent (e.g. Madurai vs Chennai)
-     is strictly preserved and prioritized.
+   - ZERO hardcoded city lists or country-specific shortcuts.
+   - 100% generic, global, and location-aware.
    - Consistent 3-line UI presentation:
        Line 1: Place Name
        Line 2: Physical Address / Location Hierarchy
@@ -22,7 +32,7 @@
 
 const searchCache = new Map();
 const reverseCache = new Map();
-const MAX_CACHE_SIZE = 400;
+const MAX_CACHE_SIZE = 500;
 
 /* ==========================================================================
    1. CANONICAL SEARCH TEXT NORMALIZATION
@@ -57,15 +67,17 @@ export const normalizeSearchText = (text) => {
    2. GENERIC TOKEN DEFINITIONS (LANGUAGE & CATEGORY STOPWORDS)
    ========================================================================== */
 
-const STOP_WORDS = new Set([
+export const STOP_WORDS = new Set([
     "of", "and", "the", "in", "at", "for", "to", "a", "an", "is", "on", "near", "by", "dt", "district",
-    "de", "du", "la", "le", "les", "und", "der", "die", "das"
+    "de", "du", "la", "le", "les", "und", "der", "die", "das", "des"
 ]);
 
-const GENERIC_CATEGORY_WORDS = new Set([
-    "college", "university", "school", "institute", "polytechnic", "academy", "campus", "institution",
-    "engineering", "technology", "tech", "science", "arts", "medical",
-    "hospital", "clinic", "dispensary", "health", "pharmacy", "care", "blood", "bank",
+export const GENERIC_CATEGORY_WORDS = new Set([
+    "college", "colleges", "university", "universities", "school", "schools", "institute", "institutes",
+    "polytechnic", "academy", "campus", "institution", "institutions",
+    "matric", "matriculation", "higher", "secondary", "high", "primary", "nursery", "residential", "vidyalaya", "vidyalayam",
+    "engineering", "technology", "tech", "science", "arts", "medical", "management",
+    "hospital", "hospitals", "clinic", "clinics", "dispensary", "health", "pharmacy", "care", "blood", "bank",
     "theatre", "theater", "cinema", "talkies", "hall", "auditorium", "multiplex",
     "railway", "station", "train", "metro", "bus", "stand", "stop", "terminal", "depot", "junction", "airport", "aerodrome", "airfield", "port",
     "mall", "market", "bazaar", "store", "supermarket", "complex", "plaza", "centre", "center", "hub",
@@ -74,7 +86,7 @@ const GENERIC_CATEGORY_WORDS = new Set([
     "office", "company", "headquarters", "building", "tower"
 ]);
 
-const ABBREVIATION_EXPANSIONS = {
+export const ABBREVIATION_EXPANSIONS = {
     headquarters: "hq",
     hq: "headquarters",
     engineering: "engg",
@@ -110,7 +122,8 @@ const ABBREVIATION_EXPANSIONS = {
     international: "intl",
     intl: "international",
     center: "ctr",
-    ctr: "center"
+    ctr: "center",
+    sda: "seventh day adventist"
 };
 
 export const isAcronymMatch = (text, acronym) => {
@@ -130,7 +143,296 @@ export const isAcronymMatch = (text, acronym) => {
 };
 
 /* ==========================================================================
-   3. CATEGORIZATION & HUMAN-READABLE TYPE FORMATTING
+   3. QUERY PARSER & INTENT STRUCTURING
+   ========================================================================== */
+
+export const parseSearchQuery = (rawQuery) => {
+    if (typeof rawQuery === "object" && rawQuery !== null && rawQuery.clean !== undefined) {
+        return rawQuery;
+    }
+
+    const clean = typeof rawQuery === "string" ? rawQuery.trim() : String(rawQuery || "").trim();
+    if (!clean) {
+        return {
+            raw: "",
+            clean: "",
+            placeName: "",
+            locality: "",
+            normClean: "",
+            normPlace: "",
+            normLoc: "",
+            distinctivePlaceTokens: [],
+            categoryTokens: [],
+            localityTokens: [],
+            hasExplicitLocality: false,
+            primaryCategory: null
+        };
+    }
+
+    let placeCandidate = "";
+    let localityCandidate = "";
+    let hasExplicitLocality = false;
+    let commaParts = [];
+
+    // 1. Check for comma separation: "Place Name, Locality / City / State / Country"
+    if (clean.includes(",")) {
+        commaParts = clean
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean);
+
+        if (commaParts.length >= 2) {
+            placeCandidate = commaParts[0];
+            localityCandidate = commaParts.slice(1).join(" ").trim();
+            hasExplicitLocality = true;
+        } else if (commaParts.length === 1) {
+            placeCandidate = commaParts[0];
+        }
+    }
+
+    // 2. If no comma, check for space-separated place + tail locality
+    if (!hasExplicitLocality) {
+        const words = clean.split(/\s+/).filter(Boolean);
+        if (words.length >= 2) {
+            const lastWord = words[words.length - 1];
+            const lastLow = lastWord.toLowerCase();
+
+            // If last word is not a category word and not a stop word
+            if (!GENERIC_CATEGORY_WORDS.has(lastLow) && !STOP_WORDS.has(lastLow) && lastWord.length >= 2) {
+                // If it's 3+ words (e.g. "Seventh Day Adventist School Madurai", "Taj Hotel Chennai", "Heathrow Airport London")
+                if (words.length >= 3) {
+                    placeCandidate = words.slice(0, -1).join(" ");
+                    localityCandidate = lastWord;
+                    hasExplicitLocality = true;
+                } else if (words.length === 2 && GENERIC_CATEGORY_WORDS.has(words[0].toLowerCase())) {
+                    // Category + locality: "school madurai", "hospital madurai", "airport chennai", "hotel singapore"
+                    placeCandidate = words[0];
+                    localityCandidate = words[1];
+                    hasExplicitLocality = true;
+                } else {
+                    placeCandidate = clean;
+                }
+            } else {
+                placeCandidate = clean;
+            }
+        } else {
+            placeCandidate = clean;
+        }
+    }
+
+    const normClean = normalizeSearchText(clean);
+    const normPlace = normalizeSearchText(placeCandidate);
+    const normLoc = normalizeSearchText(localityCandidate);
+
+    const placeTokens = normPlace
+        .split(" ")
+        .filter((t) => t.length > 0 && !STOP_WORDS.has(t));
+
+    const distinctivePlaceTokens = placeTokens.filter((t) => !GENERIC_CATEGORY_WORDS.has(t));
+    const categoryTokens = placeTokens.filter((t) => GENERIC_CATEGORY_WORDS.has(t));
+
+    const localityTokens = normLoc
+        .split(" ")
+        .filter((t) => t.length > 0 && !STOP_WORDS.has(t));
+
+    // Detect primary category intent if any
+    let primaryCategory = null;
+    for (const ct of categoryTokens) {
+        if (/school|matric|higher|secondary|primary|nursery|vidyalaya/.test(ct)) {
+            primaryCategory = "education";
+            break;
+        }
+        if (/college|university|institute|academy|polytechnic|campus/.test(ct)) {
+            primaryCategory = "education";
+            break;
+        }
+        if (/hospital|clinic|dispensary|health|pharmacy|blood/.test(ct)) {
+            primaryCategory = "hospital";
+            break;
+        }
+        if (/airport|aerodrome|airfield/.test(ct)) {
+            primaryCategory = "airport";
+            break;
+        }
+        if (/station|railway|train|metro|subway/.test(ct)) {
+            primaryCategory = "train";
+            break;
+        }
+        if (/bus|stand|stop|terminal|depot/.test(ct)) {
+            primaryCategory = "bus";
+            break;
+        }
+        if (/hotel|resort|hostel/.test(ct)) {
+            primaryCategory = "hotel";
+            break;
+        }
+        if (/theatre|theater|cinema/.test(ct)) {
+            primaryCategory = "cinema";
+            break;
+        }
+        if (/office|company|headquarters|building/.test(ct)) {
+            primaryCategory = "workplace";
+            break;
+        }
+    }
+
+    return {
+        raw: rawQuery,
+        clean,
+        placeName: placeCandidate,
+        locality: localityCandidate,
+        commaParts,
+        normClean,
+        normPlace,
+        normLoc,
+        distinctivePlaceTokens,
+        categoryTokens,
+        localityTokens,
+        hasExplicitLocality,
+        primaryCategory
+    };
+};
+
+/* ==========================================================================
+   4. DYNAMIC QUERY VARIANT GENERATOR
+   ========================================================================== */
+
+export const generateQueryVariants = (rawQuery) => {
+    const parsed = parseSearchQuery(rawQuery);
+    if (!parsed.clean) return [];
+
+    const variants = new Set();
+
+    // 1. Clean raw string
+    variants.add(parsed.clean);
+
+    // 2. Unpunctuated full string
+    const unpunct = parsed.clean
+        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"+\[\]|\\]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (unpunct && unpunct !== parsed.clean) {
+        variants.add(unpunct);
+    }
+
+    // 3. Comma-separated hierarchy variants
+    if (parsed.commaParts && parsed.commaParts.length >= 2) {
+        const p0 = parsed.commaParts[0];
+        const p1 = parsed.commaParts[1];
+        const p2 = parsed.commaParts[2];
+        const pLast = parsed.commaParts[parsed.commaParts.length - 1];
+
+        // Place + City
+        variants.add(`${p0}, ${p1}`);
+        variants.add(`${p0} ${p1}`);
+        // Place alone
+        variants.add(p0);
+
+        if (parsed.commaParts.length >= 3 && p2) {
+            variants.add(`${p0}, ${p1}, ${p2}`);
+            variants.add(`${p0} ${p1} ${p2}`);
+        }
+        if (parsed.commaParts.length >= 4 && pLast && pLast !== p1) {
+            variants.add(`${p0}, ${pLast}`);
+            variants.add(`${p0} ${pLast}`);
+        }
+    }
+
+    // 4. If explicit locality was parsed, prioritize locality-anchored distinctive variants
+    if (parsed.hasExplicitLocality && parsed.locality) {
+        // Distinctive Place Tokens (first 2) + Locality (e.g. "Seventh Day Madurai")
+        if (parsed.distinctivePlaceTokens.length >= 2) {
+            variants.add(`${parsed.distinctivePlaceTokens.slice(0, 2).join(" ")} ${parsed.locality}`);
+        }
+
+        // Full Distinctive Place Tokens + Locality (e.g. "Seventh Day Adventist Madurai")
+        if (parsed.distinctivePlaceTokens.length > 0) {
+            const distinctiveStr = parsed.distinctivePlaceTokens.join(" ");
+            variants.add(`${distinctiveStr} ${parsed.locality}`);
+
+            // Distinctive + Category + Locality (e.g. "Seventh Day School Madurai")
+            if (parsed.categoryTokens.length > 0) {
+                const cat = parsed.categoryTokens[parsed.categoryTokens.length - 1];
+                variants.add(`${distinctiveStr} ${cat} ${parsed.locality}`);
+                if (parsed.distinctivePlaceTokens.length >= 2) {
+                    variants.add(`${parsed.distinctivePlaceTokens.slice(0, 2).join(" ")} ${cat} ${parsed.locality}`);
+                }
+            }
+        }
+
+        // Category + Locality bidirectional variants (e.g. "school madurai" -> "school madurai", "madurai school")
+        if (parsed.categoryTokens.length > 0) {
+            const catStr = parsed.categoryTokens.join(" ");
+            variants.add(`${catStr} ${parsed.locality}`);
+            variants.add(`${parsed.locality} ${catStr}`);
+        }
+
+        // Place + Locality without comma
+        variants.add(`${parsed.placeName} ${parsed.locality}`);
+
+        // Place Name Alone
+        if (parsed.placeName && parsed.placeName !== parsed.clean) {
+            variants.add(parsed.placeName);
+        }
+
+        // Acronym handling (e.g. "Seventh Day Adventist" -> "SDA Madurai", "SDA School Madurai")
+        if (parsed.distinctivePlaceTokens.length >= 3) {
+            const acronym = parsed.distinctivePlaceTokens.map((t) => t[0]).join("");
+            if (acronym.length >= 2 && acronym.length <= 4) {
+                variants.add(`${acronym.toUpperCase()} ${parsed.locality}`);
+                if (parsed.categoryTokens.length > 0) {
+                    variants.add(`${acronym.toUpperCase()} ${parsed.categoryTokens[0]} ${parsed.locality}`);
+                }
+            }
+        }
+    }
+
+    // 5. Acronym dotted/spaced variations: "kln" -> "K. L. N."
+    const words = unpunct.split(/\s+/).filter(Boolean);
+    for (const w of words) {
+        const low = w.toLowerCase();
+        if (/^[a-zA-Z]{2,4}$/.test(w) && !STOP_WORDS.has(low) && !GENERIC_CATEGORY_WORDS.has(low)) {
+            const spacedDotted = low.split("").join(". ") + ".";
+            variants.add(parsed.clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.toUpperCase()));
+            variants.add(parsed.clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.replace(/\s+/g, "").toUpperCase()));
+        }
+    }
+
+    // 6. Bidirectional abbreviations
+    let expanded = parsed.clean;
+    for (const [abbr, full] of Object.entries(ABBREVIATION_EXPANSIONS)) {
+        const re = new RegExp(`\\b${abbr}\\b`, "gi");
+        if (re.test(expanded)) {
+            variants.add(expanded.replace(re, full));
+        }
+    }
+
+    // 6. Road / Office / Stop / Rd strip variant
+    const withoutRd = unpunct
+        .replace(/\b(office\s+)?(rd|road|street|st|ave|lane|junction|stop|stand|depot)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (withoutRd && withoutRd !== unpunct) {
+        variants.add(withoutRd);
+    }
+
+    // 7. Distinctive entity alone
+    const distinctive = words.filter((w) => !STOP_WORDS.has(w.toLowerCase()) && !GENERIC_CATEGORY_WORDS.has(w.toLowerCase()));
+    if (distinctive.length > 0) {
+        const dStr = distinctive.join(" ");
+        if (dStr !== parsed.clean && dStr !== unpunct) {
+            variants.add(dStr);
+        }
+        if (distinctive.length > 1) {
+            variants.add(distinctive[0]);
+        }
+    }
+
+    return Array.from(variants).filter((v) => Boolean(v && v.trim().length >= 2));
+};
+
+/* ==========================================================================
+   5. CATEGORIZATION & HUMAN-READABLE TYPE FORMATTING
    ========================================================================== */
 
 export const formatPlaceType = (rawType, rawClass = "") => {
@@ -139,8 +441,7 @@ export const formatPlaceType = (rawType, rawClass = "") => {
 
     if (/college/.test(t) || /college/.test(c)) return "College";
     if (/university/.test(t) || /university/.test(c)) return "University";
-    if (/school/.test(t) || /school/.test(c)) return "School";
-    if (/kindergarten|preschool/.test(t)) return "Preschool";
+    if (/school|kindergarten|preschool/.test(t) || /school/.test(c)) return "School";
     if (/blood_bank/.test(t)) return "Blood Bank";
     if (/hospital|clinic|dispensary|health/.test(t) || /hospital|clinic/.test(c)) return "Hospital";
     if (/pharmacy|chemist/.test(t)) return "Pharmacy";
@@ -173,12 +474,13 @@ export const formatPlaceType = (rawType, rawClass = "") => {
 
 export const detectCategory = (types = []) => {
     const list = Array.isArray(types) ? types.map((t) => String(t).toLowerCase()) : [];
-    if (list.some((t) => /college|university|school|education|campus|academy/.test(t))) return "education";
+    if (list.some((t) => /college|university|school|education|campus|academy|preschool|kindergarten/.test(t))) return "education";
     if (list.some((t) => /hospital|clinic|health|doctor|pharmacy|blood/.test(t))) return "hospital";
     if (list.some((t) => /station|railway|train|subway|metro/.test(t))) return "train";
     if (list.some((t) => /bus|transit|depot|terminal/.test(t))) return "bus";
     if (list.some((t) => /airport|aerodrome|airfield/.test(t))) return "airport";
     if (list.some((t) => /office|company|commercial|workplace|business|newspaper/.test(t))) return "workplace";
+    if (list.some((t) => /hotel|motel|resort|hostel|guest_house/.test(t))) return "hotel";
     if (list.some((t) => /residential|apartment|house|neighborhood|suburb/.test(t))) return "residential";
     return "place";
 };
@@ -198,6 +500,8 @@ export const getCategoryIcon = (placeOrCategory) => {
             return "✈️";
         case "workplace":
             return "🏢";
+        case "hotel":
+            return "🏨";
         case "residential":
             return "🏠";
         default:
@@ -206,7 +510,7 @@ export const getCategoryIcon = (placeOrCategory) => {
 };
 
 /* ==========================================================================
-   4. ADDRESS HIERARCHY & NORMALIZATION
+   6. ADDRESS HIERARCHY & COORDINATE VALIDATION
    ========================================================================== */
 
 export const isValidCoordinate = (item) => {
@@ -360,12 +664,13 @@ export const normalizeLocation = (raw) => {
         type: formattedType,
         category,
         placeId: raw.placeId || raw.place_id || `loc-${lat.toFixed(5)}-${lon.toFixed(5)}`,
-        source: raw.source || "Global Geocoder"
+        source: raw.source || "Global Geocoder",
+        importance: Number(raw.importance || 0.6)
     };
 };
 
 /* ==========================================================================
-   5. FAST MULTI-PROVIDER REVERSE GEOCODING
+   7. FAST MULTI-PROVIDER REVERSE GEOCODING
    ========================================================================== */
 
 export const reverseGeocodeFast = async (lat, lon, signal) => {
@@ -473,90 +778,44 @@ export const reverseGeocode = async (latitude, longitude) => {
 };
 
 /* ==========================================================================
-   6. DYNAMIC QUERY VARIANT GENERATOR
-   ========================================================================== */
-
-export const generateQueryVariants = (rawQuery) => {
-    const clean = String(rawQuery || "").trim();
-    if (!clean) return [];
-
-    const variants = new Set();
-    variants.add(clean);
-
-    const unpunct = clean.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"+\[\]|\\]/g, " ").replace(/\s+/g, " ").trim();
-    if (unpunct && unpunct !== clean) variants.add(unpunct);
-
-    const words = unpunct.split(/\s+/).filter(Boolean);
-
-    // Acronym dotted/spaced variations: "kln" -> "K. L. N."
-    for (const w of words) {
-        const low = w.toLowerCase();
-        if (/^[a-zA-Z]{2,4}$/.test(w) && !STOP_WORDS.has(low) && !GENERIC_CATEGORY_WORDS.has(low)) {
-            const spacedDotted = low.split("").join(". ") + ".";
-            variants.add(clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.toUpperCase()));
-            variants.add(clean.replace(new RegExp(`\\b${w}\\b`, "i"), spacedDotted.replace(/\s+/g, "").toUpperCase()));
-        }
-    }
-
-    // Bidirectional abbreviations
-    let expanded = clean;
-    for (const [abbr, full] of Object.entries(ABBREVIATION_EXPANSIONS)) {
-        const re = new RegExp(`\\b${abbr}\\b`, "gi");
-        if (re.test(expanded)) {
-            variants.add(expanded.replace(re, full));
-        }
-    }
-
-    // Road / Office / Stop / Rd strip variant (e.g. "Theekathir Office Rd, Madurai" -> "Theekathir Madurai", "Theekathir")
-    const withoutRd = unpunct.replace(/\b(office\s+)?(rd|road|street|st|ave|lane|junction|stop|stand|depot)\b/gi, " ").replace(/\s+/g, " ").trim();
-    if (withoutRd && withoutRd !== unpunct) {
-        variants.add(withoutRd);
-    }
-
-    // If query has 3+ words: generate (all words except last), and (first word + last word)
-    if (words.length >= 3) {
-        variants.add(words.slice(0, -1).join(" "));
-        variants.add(`${words[0]} ${words[words.length - 1]}`);
-        if (/^[a-zA-Z]{2,4}$/.test(words[0])) {
-            const spacedFirst = words[0].split("").join(". ") + ".";
-            variants.add(`${spacedFirst} ${words.slice(1, -1).join(" ")}`);
-        }
-    }
-
-    // Distinctive entity alone (e.g. "Theekathir", "Velammal", "KLN", "Meenakshi")
-    const distinctive = words.filter((w) => !STOP_WORDS.has(w.toLowerCase()) && !GENERIC_CATEGORY_WORDS.has(w.toLowerCase()));
-    if (distinctive.length > 0) {
-        const dStr = distinctive.join(" ");
-        if (dStr !== clean && dStr !== unpunct) {
-            variants.add(dStr);
-        }
-        if (distinctive.length > 1) {
-            variants.add(distinctive[0]);
-        }
-    }
-
-    return Array.from(variants).filter(Boolean);
-};
-
-/* ==========================================================================
-   7. PROVIDER ADAPTERS
+   8. PROVIDER ADAPTERS
    ========================================================================== */
 
 export const searchNominatim = async (query, signal) => {
     try {
+        const clean = String(query || "").trim();
+        if (!clean) return [];
+
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query.trim())}&format=jsonv2&addressdetails=1&namedetails=1&limit=6&accept-language=en`;
-        const res = await fetch(url, {
-            headers: {
-                Accept: "application/json",
-                "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
-            },
-            signal: signal || controller.signal
-        });
-        clearTimeout(timeout);
-        if (!res.ok) return [];
-        const data = await res.json();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean)}&format=jsonv2&addressdetails=1&namedetails=1&limit=6&accept-language=en`;
+        
+        let res;
+        try {
+            res = await fetch(url, {
+                headers: {
+                    Accept: "application/json",
+                    "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
+                },
+                signal: signal || controller.signal
+            });
+        } catch {
+            return [];
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        if (!res || !res.ok) return [];
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("json")) return [];
+
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            return [];
+        }
+
         if (!Array.isArray(data)) return [];
 
         return data.map((item) => {
@@ -596,16 +855,36 @@ export const searchNominatim = async (query, signal) => {
 
 export const searchPhoton = async (query, signal) => {
     try {
+        const clean = String(query || "").trim();
+        if (!clean) return [];
+
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query.trim())}&limit=6&lang=en`;
-        const res = await fetch(url, {
-            headers: { Accept: "application/json" },
-            signal: signal || controller.signal
-        });
-        clearTimeout(timeout);
-        if (!res.ok) return [];
-        const data = await res.json();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(clean)}&limit=6&lang=en`;
+        
+        let res;
+        try {
+            res = await fetch(url, {
+                headers: { Accept: "application/json" },
+                signal: signal || controller.signal
+            });
+        } catch {
+            return [];
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        if (!res || !res.ok) return [];
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("json")) return [];
+
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            return [];
+        }
+
         const features = Array.isArray(data?.features) ? data.features : [];
 
         return features.map((f) => {
@@ -654,7 +933,7 @@ export const searchPhoton = async (query, signal) => {
                 types: [props.osm_value, props.osm_key].filter(Boolean),
                 type: formattedType,
                 category: detectCategory([props.osm_value, props.osm_key, formattedType]),
-                importance: 0.6,
+                importance: 0.65,
                 source: "Komoot Photon"
             };
         }).filter(isValidCoordinate);
@@ -693,7 +972,7 @@ export const searchWikidata = async (query, signal) => {
                 const res = await fetch(url, {
                     headers: {
                         Accept: "application/json",
-                        "User-Agent": "AITransportationManagement/6.0 (https://ai-trans.app; support@ai-trans.app)"
+                        "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
                     },
                     signal: signal || controller.signal
                 });
@@ -717,22 +996,29 @@ export const searchWikidata = async (query, signal) => {
         const cRes = await fetch(claimsUrl, {
             headers: {
                 Accept: "application/json",
-                "User-Agent": "AITransportationManagement/6.0 (https://ai-trans.app; support@ai-trans.app)"
+                "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
             },
             signal
         });
         if (!cRes.ok) return [];
         const cData = await cRes.json();
 
-        const results = [];
-        for (const item of searchResults) {
+        const validEntities = searchResults.slice(0, 3).map((item) => {
             const entity = cData.entities?.[item.id];
             const p625 = entity?.claims?.P625?.[0]?.mainsnak?.datavalue?.value;
             if (p625 && isValidCoordinate({ lat: p625.latitude, lon: p625.longitude })) {
-                const name = item.label || clean;
-                const lat = Number(p625.latitude);
-                const lon = Number(p625.longitude);
+                return {
+                    item,
+                    lat: Number(p625.latitude),
+                    lon: Number(p625.longitude)
+                };
+            }
+            return null;
+        }).filter(Boolean);
 
+        const results = await Promise.all(
+            validEntities.map(async ({ item, lat, lon }) => {
+                const name = item.label || clean;
                 let rev = null;
                 try {
                     rev = await reverseGeocodeFast(lat, lon, signal);
@@ -743,7 +1029,7 @@ export const searchWikidata = async (query, signal) => {
                 const address = rev?.address || (item.description ? `${item.description}` : name);
                 const formattedType = formatPlaceType(item.description || "institution", "landmark");
 
-                results.push({
+                return {
                     name: String(name).trim(),
                     displayName: `${name}, ${address}`,
                     address,
@@ -760,9 +1046,9 @@ export const searchWikidata = async (query, signal) => {
                     category: detectCategory(["education", "landmark", formattedType]),
                     importance: 0.95,
                     source: "Wikidata Open Geocoding"
-                });
-            }
-        }
+                };
+            })
+        );
         return results;
     } catch {
         return [];
@@ -771,14 +1057,17 @@ export const searchWikidata = async (query, signal) => {
 
 export const searchOpenMeteo = async (query, signal) => {
     try {
-        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=5&language=en&format=json`;
+        const clean = String(query || "").trim();
+        if (!clean) return [];
+
+        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(clean)}&count=5&language=en&format=json`;
         const res = await fetch(url, { headers: { Accept: "application/json" }, signal });
         if (!res.ok) return [];
         const data = await res.json();
         if (!Array.isArray(data?.results)) return [];
 
         return data.results.map((r) => {
-            const name = r.name || query;
+            const name = r.name || clean;
             const parts = [r.name, r.admin1, r.country].filter(Boolean);
             const address = parts.join(", ");
 
@@ -807,69 +1096,119 @@ export const searchOpenMeteo = async (query, signal) => {
 };
 
 /* ==========================================================================
-   8. LOCATION-AWARE RELEVANCE RANKING & DEDUPLICATION
+   9. LOCATION-AWARE RELEVANCE RANKING & DEDUPLICATION
    ========================================================================== */
 
-export const calculateRelevanceScore = (item, rawQuery) => {
-    const normQuery = normalizeSearchText(rawQuery);
+export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null) => {
+    const parsed = parsedQuery || parseSearchQuery(rawQuery);
     const normName = normalizeSearchText(item.name);
-    const normAddr = normalizeSearchText(item.address || item.displayName || "");
+    const normAddr = normalizeSearchText(`${item.address || ""} ${item.displayName || ""}`);
+    const normCity = normalizeSearchText(item.city);
+    const normDist = normalizeSearchText(item.district);
+    const normState = normalizeSearchText(item.state);
+    const normCountry = normalizeSearchText(item.country);
+    const normType = normalizeSearchText(item.type);
 
     let score = 0;
-    const queryTokens = normQuery.split(" ").filter((t) => t.length > 0 && !STOP_WORDS.has(t));
-    const distinctiveTokens = queryTokens.filter((t) => !GENERIC_CATEGORY_WORDS.has(t));
 
-    // 1. Exact Name Match
-    if (normName === normQuery) {
-        score += 260;
-    } else if (normName.startsWith(normQuery)) {
-        score += 190;
-    } else if (normName.includes(normQuery)) {
+    // 1. Exact / Substring Name Match against parsed place name and full clean query
+    if (parsed.normClean && normName === parsed.normClean) {
+        score += 350;
+    } else if (parsed.normPlace && normName === parsed.normPlace) {
+        score += 300;
+    } else if (parsed.normPlace && normName.startsWith(parsed.normPlace)) {
+        score += 240;
+    } else if (parsed.normPlace && normName.includes(parsed.normPlace)) {
+        score += 180;
+    } else if (parsed.normPlace && parsed.normPlace.includes(normName) && normName.length >= 3) {
         score += 140;
-    } else if (normQuery.includes(normName)) {
-        score += 120;
     }
 
-    // 2. Location-Aware Matching (e.g. "madurai", "chennai", "pottapalayam", "london")
-    for (const token of queryTokens) {
-        if (normAddr.includes(token)) {
-            score += 80;
-            const itemCity = normalizeSearchText(item.city);
-            const itemDist = normalizeSearchText(item.district);
-            const itemState = normalizeSearchText(item.state);
-            const itemCountry = normalizeSearchText(item.country);
-            if (itemCity.includes(token) || itemDist.includes(token)) {
-                score += 130;
-            } else if (itemState.includes(token) || itemCountry.includes(token)) {
-                score += 60;
+    // 2. Distinctive Place Tokens Matching
+    let matchedDistinctiveInName = 0;
+    let matchedDistinctiveInAddr = 0;
+
+    for (const dt of parsed.distinctivePlaceTokens) {
+        if (normName.includes(dt)) {
+            matchedDistinctiveInName++;
+            score += 120;
+        } else if (normAddr.includes(dt)) {
+            matchedDistinctiveInAddr++;
+            score += 40;
+        }
+    }
+
+    if (parsed.distinctivePlaceTokens.length > 0) {
+        const totalDistinctive = parsed.distinctivePlaceTokens.length;
+        const nameRatio = matchedDistinctiveInName / totalDistinctive;
+
+        if (nameRatio >= 0.99) {
+            score += 220;
+        } else if (nameRatio >= 0.5) {
+            score += 120;
+        } else if (matchedDistinctiveInName === 0 && matchedDistinctiveInAddr === 0) {
+            score -= 150;
+        }
+    }
+
+    // 3. Category / Type Token Matching & Bonus
+    for (const ct of parsed.categoryTokens) {
+        if (normName.includes(ct)) {
+            score += 30;
+        } else if (normAddr.includes(ct) || normType.includes(ct)) {
+            score += 20;
+        }
+    }
+
+    if (parsed.primaryCategory && item.category === parsed.primaryCategory) {
+        score += 100;
+    }
+
+    // 4. Locality Matching & Locality Penalties (Crucial for Place + City Intent)
+    if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
+        let hasCityDistMatch = false;
+        let hasStateCountryMatch = false;
+        let hasAddressOnlyMatch = false;
+
+        const locTokens = parsed.localityTokens;
+        for (const lt of locTokens) {
+            if (normCity.includes(lt) || normDist.includes(lt) || (normCity.length >= 3 && lt.includes(normCity))) {
+                hasCityDistMatch = true;
+                score += 500; // Strong locality match boost!
+            } else if (normState.includes(lt) || normCountry.includes(lt) || (normState.length >= 3 && lt.includes(normState)) || (normCountry.length >= 3 && lt.includes(normCountry))) {
+                hasStateCountryMatch = true;
+                score += 150;
+            } else if (normAddr.includes(lt)) {
+                hasAddressOnlyMatch = true;
             }
         }
-    }
 
-    // 3. Distinctive Entity Token Matching
-    let matchedDistinctive = 0;
-    for (const dt of distinctiveTokens) {
-        if (normName.includes(dt)) {
-            matchedDistinctive++;
-            score += 100;
-        } else if (normAddr.includes(dt)) {
-            matchedDistinctive++;
-            score += 60;
+        if (hasAddressOnlyMatch && !hasCityDistMatch && !hasStateCountryMatch) {
+            // Check if address match is merely a highway name with a contradicting city
+            const isCityConflict = normCity && !locTokens.some((lt) => normCity.includes(lt) || lt.includes(normCity));
+            if (isCityConflict) {
+                score += 40;
+                score -= 300;
+            } else {
+                score += 80;
+            }
         }
-    }
 
-    if (distinctiveTokens.length > 0 && matchedDistinctive === distinctiveTokens.length) {
-        score += 130;
-    } else if (distinctiveTokens.length > 0 && matchedDistinctive === 0) {
-        score -= 100;
-    }
-
-    // 4. Category / Type Alignment
-    for (const catToken of queryTokens.filter((t) => GENERIC_CATEGORY_WORDS.has(t))) {
-        if (normName.includes(catToken)) {
-            score += 30;
-        } else if (normAddr.includes(catToken) || normalizeSearchText(item.type).includes(catToken)) {
-            score += 20;
+        // Penalty only if target locality was explicitly requested but completely absent from result
+        if (!hasCityDistMatch && !hasStateCountryMatch && !hasAddressOnlyMatch) {
+            score -= 500;
+        } else if (!hasCityDistMatch && normCity.length > 0 && !locTokens.some((lt) => normCity.includes(lt) || lt.includes(normCity))) {
+            score -= 250;
+        }
+    } else {
+        // Unanchored query: give standard credit for tokens matching city/state
+        const queryTokens = parsed.normClean.split(" ").filter((t) => t.length > 0 && !STOP_WORDS.has(t));
+        for (const qt of queryTokens) {
+            if (normCity.includes(qt) || normDist.includes(qt)) {
+                score += 90;
+            } else if (normAddr.includes(qt)) {
+                score += 40;
+            }
         }
     }
 
@@ -882,22 +1221,36 @@ export const calculateRelevanceScore = (item, rawQuery) => {
 };
 
 export const deduplicateAndRankResults = (candidates, rawQuery) => {
-    const seen = new Map();
+    const parsed = parseSearchQuery(rawQuery);
+    const seenGeo = new Map();
+    const seenNameAddr = new Map();
     const scored = [];
 
     for (const item of candidates) {
         if (!item || !item.name || !isValidCoordinate(item)) continue;
 
-        const score = calculateRelevanceScore(item, rawQuery);
+        const score = calculateRelevanceScore(item, rawQuery, parsed);
         const geoKey = `${Number(item.latitude).toFixed(3)}|${Number(item.longitude).toFixed(3)}`;
+        const nameAddrKey = `${normalizeSearchText(item.name)}|${normalizeSearchText(item.city || item.district || "")}`;
 
-        if (seen.has(geoKey)) {
-            const existing = seen.get(geoKey);
+        if (seenGeo.has(geoKey)) {
+            const existing = seenGeo.get(geoKey);
             if (score > existing._score) {
                 existing.name = item.name;
                 existing.displayName = item.displayName;
                 existing.address = item.address;
                 existing.type = item.type;
+                existing.category = item.category || existing.category;
+                existing._score = score;
+            }
+            continue;
+        }
+
+        if (nameAddrKey.length > 5 && seenNameAddr.has(nameAddrKey)) {
+            const existing = seenNameAddr.get(nameAddrKey);
+            if (score > existing._score) {
+                existing.displayName = item.displayName;
+                existing.address = item.address;
                 existing._score = score;
             }
             continue;
@@ -907,7 +1260,11 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
             ...item,
             _score: score
         };
-        seen.set(geoKey, candidateScored);
+
+        seenGeo.set(geoKey, candidateScored);
+        if (nameAddrKey.length > 5) {
+            seenNameAddr.set(nameAddrKey, candidateScored);
+        }
         scored.push(candidateScored);
     }
 
@@ -920,7 +1277,7 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
 };
 
 /* ==========================================================================
-   9. ENTRY POINT: searchPlaces
+   10. ENTRY POINT: searchPlaces
    ========================================================================== */
 
 export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
@@ -954,21 +1311,29 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
         }
     }
 
+    const parsed = parseSearchQuery(clean);
     const variants = generateQueryVariants(clean);
     const candidates = [];
     let providerError = null;
 
     try {
-        // Stage 1: Parallel search on non-rate-limited providers (Wikidata, Photon + variants, and 1 main Nominatim call)
+        // Stage 1: Parallel multi-provider search across primary query and top targeted variants
         const fastPromises = [
-            searchWikidata(clean, signal),
             searchPhoton(clean, signal),
-            searchNominatim(clean, signal)
+            searchNominatim(clean, signal),
+            searchWikidata(clean, signal)
         ];
 
-        for (const v of variants.slice(1)) {
+        // Add top targeted variants
+        const targetedVariants = variants.slice(1, 8);
+        for (const v of targetedVariants) {
             if (signal?.aborted) break;
             fastPromises.push(searchPhoton(v, signal));
+            fastPromises.push(searchNominatim(v, signal));
+        }
+
+        if (parsed.hasExplicitLocality && parsed.placeName && parsed.placeName !== clean) {
+            fastPromises.push(searchWikidata(parsed.placeName, signal));
         }
 
         const responses = await Promise.allSettled(fastPromises);
@@ -978,33 +1343,33 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
             }
         }
 
-        // Stage 2: If candidates empty OR candidates do not match all distinctive query tokens (e.g. location "Madurai")
-        const normClean = normalizeSearchText(clean);
-        const cleanTokens = normClean.split(" ").filter((t) => t.length > 0 && !STOP_WORDS.has(t));
-        const distinctiveTokens = cleanTokens.filter((t) => !GENERIC_CATEGORY_WORDS.has(t));
+        // Stage 2: Check if candidates satisfy target locality or distinctive tokens
+        let hasLocalityMatch = true;
+        if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
+            hasLocalityMatch = candidates.some((c) => {
+                const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
+                return parsed.localityTokens.some((lt) => cNorm.includes(lt));
+            });
+        }
 
-        const hasFullMatch = candidates.some((c) => {
-            const cNorm = normalizeSearchText(`${c.name} ${c.address} ${c.city} ${c.district} ${c.state}`);
-            return distinctiveTokens.every((dt) => cNorm.includes(dt));
-        });
-
-        if (!hasFullMatch && variants.length > 1) {
-            const fallbackVariants = [...variants.slice(1)].reverse();
-            for (const v of fallbackVariants) {
+        // If no candidate matches target locality, run fallback queries on remaining variants
+        if (!hasLocalityMatch && variants.length > targetedVariants.length + 1) {
+            const remainingVariants = variants.slice(targetedVariants.length + 1, targetedVariants.length + 6);
+            for (const v of remainingVariants) {
                 if (signal?.aborted) break;
                 const nomRes = await searchNominatim(v, signal);
                 if (Array.isArray(nomRes) && nomRes.length > 0) {
                     candidates.push(...nomRes);
                     const nowHasMatch = candidates.some((c) => {
-                        const cNorm = normalizeSearchText(`${c.name} ${c.address} ${c.city} ${c.district} ${c.state}`);
-                        return distinctiveTokens.every((dt) => cNorm.includes(dt));
+                        const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
+                        return parsed.localityTokens.some((lt) => cNorm.includes(lt));
                     });
                     if (nowHasMatch) break;
                 }
             }
         }
 
-        // Stage 3: If still empty, try Open-Meteo
+        // Stage 3: If still empty, try Open-Meteo for global city / boundary lookup
         if (candidates.length === 0) {
             try {
                 const meteo = await searchOpenMeteo(clean, signal);
@@ -1054,6 +1419,7 @@ export default {
     reverseGeocode,
     reverseGeocodeFast,
     normalizeSearchText,
+    parseSearchQuery,
     isAcronymMatch,
     generateQueryVariants,
     normalizeLocation,
@@ -1064,5 +1430,8 @@ export default {
     formatAddressHierarchy,
     buildCleanAddress,
     calculateRelevanceScore,
-    deduplicateAndRankResults
+    deduplicateAndRankResults,
+    STOP_WORDS,
+    GENERIC_CATEGORY_WORDS,
+    ABBREVIATION_EXPANSIONS
 };

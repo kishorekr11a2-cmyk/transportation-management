@@ -1,277 +1,762 @@
-/* Main Container */
+/* ====================================================
+   VEHICLE MANAGEMENT — Digital Depot CSS
+   Uses design tokens from global.css
+   ==================================================== */
 
-.vehicle-management {
-
-    min-height: 100vh;
-    padding: 30px;
-    background: #f4f7fb;
-    font-family: Arial, sans-serif;
+/* ── Page wrapper ── */
+.depot-page {
+  min-height: 100vh;
+  background: #f1f5f9;
+  /* Subtle depot-floor grid pattern */
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 40px 40px;
+  font-family: 'Outfit', system-ui, sans-serif;
+  color: #0f172a;
 }
 
-
-/* Back Button */
-
-.back-btn {
-
-    background: #2563eb;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 15px;
-    transition: 0.3s;
-
+/* ────────────────────────────────────────────────────
+   HEADER
+──────────────────────────────────────────────────── */
+.depot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1.25rem 2.5rem;
+  background: rgba(255, 255, 255, 0.93);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 200;
 }
 
-
-.back-btn:hover {
-
-    background: #1d4ed8;
-
+.depot-header__left {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
 }
 
-
-
-/* Heading */
-
-.vehicle-management h1 {
-
-    text-align: center;
-    color: #1e293b;
-    margin: 25px 0;
-    font-size: 32px;
-
+.depot-header__right {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
 }
 
-
-
-/* Add Vehicle Form */
-
-.vehicle-management form {
-
-    background: white;
-    width: 400px;
-    margin: auto;
-    padding: 25px;
-    border-radius: 12px;
-    box-shadow: 0px 5px 20px rgba(0,0,0,0.1);
-
+/* Back button */
+.depot-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 1rem;
+  background: white;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
-
-
-.vehicle-management input {
-
-    width: 100%;
-    padding: 12px;
-    margin-bottom: 15px;
-
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-
-    font-size: 15px;
-    outline: none;
-
+.depot-back-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  transform: translateX(-2px);
 }
 
-
-
-.vehicle-management input:focus {
-
-    border-color: #2563eb;
-
+.depot-back-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }
 
-
-
-/* Add Button */
-
-.vehicle-management form button {
-
-    width: 100%;
-
-    background: #16a34a;
-
-    color: white;
-
-    border: none;
-
-    padding: 12px;
-
-    border-radius: 6px;
-
-    cursor: pointer;
-
-    font-size: 16px;
-
-    transition: 0.3s;
-
+/* Brand */
+.depot-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-
-
-.vehicle-management form button:hover {
-
-    background: #15803d;
-
+.depot-brand__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: white;
+  flex-shrink: 0;
 }
 
-
-
-/* Vehicle List */
-
-.vehicle-list {
-
-    margin-top: 35px;
-
-    display: flex;
-
-    justify-content: center;
-
-    gap: 20px;
-
-    flex-wrap: wrap;
-
+.depot-brand__label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #3b82f6;
+  line-height: 1;
+  margin-bottom: 0.2rem;
 }
 
-
-
-/* Vehicle Card */
-
-.vehicle-card {
-
-    width: 260px;
-
-    background: white;
-
-    padding: 20px;
-
-    border-radius: 12px;
-
-    box-shadow: 0px 5px 15px rgba(0,0,0,0.1);
-
-    text-align: center;
-
-    transition: 0.3s;
-
+.depot-brand__title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1;
+  letter-spacing: -0.3px;
 }
 
-
-
-.vehicle-card:hover {
-
-    transform: translateY(-5px);
-
+/* Subtitle */
+.depot-header__subtitle {
+  font-size: 0.82rem;
+  color: #64748b;
+  font-weight: 400;
+  max-width: 280px;
+  line-height: 1.4;
+  text-align: right;
 }
 
-
-
-/* Vehicle Name */
-
-.vehicle-card h3 {
-
-    color:#2563eb;
-
-    margin-bottom:15px;
-
+/* Add Vehicle button */
+.depot-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.25rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.3);
 }
 
-
-
-/* Capacity */
-
-.vehicle-card p {
-
-    color:#334155;
-
-    font-size:16px;
-
+.depot-add-btn:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
 }
 
-
-
-/* Empty Message */
-
-.vehicle-list p {
-
-    color:#64748b;
-
-    font-size:18px;
-
+.depot-add-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 3px;
 }
 
-
-
-/* Mobile Responsive */
-
-@media(max-width:768px){
-
-
-    .vehicle-management{
-
-        padding:15px;
-
-    }
-
-
-    .vehicle-management form{
-
-        width:90%;
-
-    }
-
-
-    .vehicle-management h1{
-
-        font-size:24px;
-
-    }
-
-
-    .vehicle-card{
-
-        width:90%;
-
-    }
-
+.depot-add-btn--center {
+  margin: 0 auto;
 }
 
-.edit-btn{
-
-    background:#dda036;
-    color:white;
-    border:none;
-    padding:8px 18px;
-    border-radius:6px;
-    cursor:pointer;
-    margin-right:10px;
-
+/* ────────────────────────────────────────────────────
+   FORM OVERLAY / PANEL
+──────────────────────────────────────────────────── */
+.depot-form-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  padding: 1rem;
+  animation: overlayFadeIn 0.18s ease;
 }
 
-
-.edit-btn:hover{
-
-    background:#da8b30;
-
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-
-
-.delete-btn{
-
-    background:#8e8686;
-    color:white;
-    border:none;
-    padding:8px 18px;
-    border-radius:6px;
-    cursor:pointer;
-
+.depot-form-panel {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.18);
+  width: 100%;
+  max-width: 420px;
+  animation: panelSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
 }
 
+@keyframes panelSlideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
 
-.delete-btn:hover{
+.depot-form-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 1.75rem 1.25rem;
+  border-bottom: 1px solid #f1f5f9;
+}
 
-    background:#a15858;
+.depot-form-panel__title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.2px;
+}
 
+.depot-form-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  font-family: 'Outfit', sans-serif;
+}
+
+.depot-form-close:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+
+.depot-form-close:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Form body */
+.depot-form {
+  padding: 1.5rem 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.depot-form__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.depot-form__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.depot-form__input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-family: 'Outfit', sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+  outline: none;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+}
+
+.depot-form__input:focus {
+  border-color: #3b82f6;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.depot-form__input::placeholder {
+  color: #94a3b8;
+}
+
+.depot-form__actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.depot-form__cancel {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #64748b;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.depot-form__cancel:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.depot-form__submit {
+  flex: 2;
+  padding: 0.7rem 1rem;
+  background: #3b82f6;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: white;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.depot-form__submit:hover {
+  background: #2563eb;
+}
+
+.depot-form__submit:focus-visible,
+.depot-form__cancel:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* ────────────────────────────────────────────────────
+   DEPOT FLOOR
+──────────────────────────────────────────────────── */
+.depot-floor {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2.5rem 2.5rem 4rem;
+}
+
+.depot-floor__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.depot-floor__title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.3px;
+}
+
+.depot-floor__subtitle {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-top: 0.15rem;
+}
+
+.depot-vehicle-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  padding: 0.3rem 0.85rem;
+  border-radius: 9999px;
+}
+
+.depot-floor__divider {
+  height: 1px;
+  background: linear-gradient(90deg, #e2e8f0 0%, transparent 100%);
+  margin-bottom: 2rem;
+}
+
+/* ────────────────────────────────────────────────────
+   DEPOT BAY GRID
+──────────────────────────────────────────────────── */
+.depot-bay-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+/* ────────────────────────────────────────────────────
+   DEPOT BAY (vehicle card)
+──────────────────────────────────────────────────── */
+.depot-bay {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 1.5rem 1.5rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle parking-bay accent line at bottom */
+.depot-bay::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #3b82f6 0%, #1d4ed8 100%);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.depot-bay:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.depot-bay:hover::after {
+  opacity: 1;
+}
+
+/* Bay label */
+.depot-bay__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 1.25rem;
+}
+
+.depot-bay__label-text {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.depot-bay__label-line {
+  flex: 1;
+  height: 1px;
+  background: #f1f5f9;
+  margin-left: 0.75rem;
+}
+
+/* Bus icon */
+.depot-bay__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  margin-bottom: 1.1rem;
+  transition: background 0.22s ease;
+}
+
+.depot-bay:hover .depot-bay__icon-wrap {
+  background: linear-gradient(145deg, #dbeafe 0%, #bfdbfe 100%);
+}
+
+.depot-bay__bus-icon {
+  color: #3b82f6;
+  transition: color 0.22s ease;
+}
+
+.depot-bay:hover .depot-bay__bus-icon {
+  color: #2563eb;
+}
+
+/* Vehicle identity */
+.depot-bay__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+}
+
+.depot-bay__name {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  word-break: break-all;
+}
+
+.depot-bay__type-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+}
+
+/* Separator */
+.depot-bay__separator {
+  width: 40px;
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0 auto 1rem;
+}
+
+/* Seat capacity */
+.depot-bay__capacity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  margin-bottom: 1.35rem;
+}
+
+.depot-bay__capacity-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+}
+
+.depot-bay__capacity-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1e40af;
+  line-height: 1;
+}
+
+.depot-bay__seats-unit {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: lowercase;
+}
+
+/* Action buttons */
+.depot-bay__actions {
+  display: flex;
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.depot-bay__edit-btn,
+.depot-bay__delete-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 9px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  border: 1px solid transparent;
+}
+
+.depot-bay__edit-btn {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.depot-bay__edit-btn:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0284c7;
+}
+
+.depot-bay__delete-btn {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.depot-bay__delete-btn:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+  color: #9f1239;
+}
+
+.depot-bay__edit-btn:focus-visible,
+.depot-bay__delete-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* ────────────────────────────────────────────────────
+   SKELETON LOADING STATE
+──────────────────────────────────────────────────── */
+.depot-bay--skeleton {
+  pointer-events: none;
+  gap: 1rem;
+}
+
+.depot-bay__label-sk,
+.depot-bay__icon-sk,
+.depot-bay__name-sk,
+.depot-bay__capacity-sk,
+.depot-bay__actions-sk {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+  border-radius: 8px;
+}
+
+.depot-bay__label-sk   { height: 12px; width: 60%; }
+.depot-bay__icon-sk    { height: 80px; width: 80px; border-radius: 20px; }
+.depot-bay__name-sk    { height: 28px; width: 50%; }
+.depot-bay__capacity-sk { height: 20px; width: 40%; }
+.depot-bay__actions-sk { height: 36px; width: 100%; border-radius: 9px; }
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* ────────────────────────────────────────────────────
+   EMPTY / ERROR STATE
+──────────────────────────────────────────────────── */
+.depot-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 5rem 2rem;
+  text-align: center;
+}
+
+.depot-state__icon {
+  color: #cbd5e1;
+}
+
+.depot-state--error .depot-state__icon {
+  color: #fca5a5;
+}
+
+.depot-state__heading {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.3px;
+}
+
+.depot-state__message {
+  font-size: 0.9rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-top: 0.1rem;
+}
+
+.depot-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.2rem;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  margin-top: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.depot-retry-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.depot-retry-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* ────────────────────────────────────────────────────
+   RESPONSIVE — Tablet ≤ 900px
+──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .depot-bay-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+
+  .depot-floor {
+    padding: 2rem 1.5rem 3rem;
+  }
+
+  .depot-header {
+    padding: 1rem 1.5rem;
+  }
+
+  .depot-header__subtitle {
+    display: none;
+  }
+}
+
+/* ────────────────────────────────────────────────────
+   RESPONSIVE — Mobile ≤ 600px
+──────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .depot-bay-grid {
+    grid-template-columns: 1fr;
+    gap: 0.875rem;
+  }
+
+  .depot-floor {
+    padding: 1.5rem 1rem 3rem;
+  }
+
+  .depot-header {
+    padding: 0.9rem 1rem;
+    gap: 0.75rem;
+  }
+
+  .depot-brand__title {
+    font-size: 1rem;
+  }
+
+  .depot-brand__label {
+    font-size: 0.65rem;
+  }
+
+  .depot-back-btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .depot-bay__name {
+    font-size: 1.35rem;
+  }
+
+  .depot-bay {
+    padding: 1.35rem 1.25rem 1.2rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .depot-brand {
+    display: none;
+  }
 }

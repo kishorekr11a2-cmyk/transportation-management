@@ -1,5 +1,6 @@
 import Route from "../models/Route.js";
 import Vehicle from "../models/Vehicle.js";
+import Schedule from "../models/Schedule.js";
 
 const isValidStop = (stop) => {
     return (
@@ -81,21 +82,27 @@ export const addRoute = async (req, res) => {
         if (!routeName?.trim()) {
             return res.status(400).json({
                 success: false,
-                message: "Route name is required."
+                message: "Route name or number is required."
             });
         }
 
-        if (!isValidStop(source)) {
+        const trimmedName = routeName.trim();
+
+        // Check for duplicate route name (case-insensitive)
+        const duplicateNameRoute = await Route.findOne({
+            routeName: { $regex: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }
+        });
+        if (duplicateNameRoute) {
             return res.status(400).json({
                 success: false,
-                message: "Valid source is required."
+                message: `A route with name "${trimmedName}" already exists. Please choose a distinct route name.`
             });
         }
 
-        if (!isValidStop(destination)) {
+        if (!isValidStop(source) || !isValidStop(destination)) {
             return res.status(400).json({
                 success: false,
-                message: "Valid destination is required."
+                message: "Please add at least two valid stops (start and destination with coordinates)."
             });
         }
 
@@ -109,16 +116,14 @@ export const addRoute = async (req, res) => {
         if (stops.some((stop) => !isValidStop(stop))) {
             return res.status(400).json({
                 success: false,
-                message: "One or more route stops are invalid."
+                message: "One or more route stops have invalid coordinates."
             });
         }
 
         let vehicle = null;
 
         if (assignedVehicle) {
-            vehicle = await validateVehicle(
-                assignedVehicle
-            );
+            vehicle = await validateVehicle(assignedVehicle);
 
             if (!vehicle) {
                 return res.status(400).json({
@@ -126,23 +131,38 @@ export const addRoute = async (req, res) => {
                     message: "Selected vehicle was not found."
                 });
             }
+
+            // Verify vehicle is scheduled and available in Schedule Management
+            const schedule = await Schedule.findOne({ vehicle: vehicle._id });
+            if (!schedule || schedule.availability !== "Available") {
+                return res.status(400).json({
+                    success: false,
+                    message: `Vehicle "${vehicle.vehicleName}" is not currently scheduled as Available in Schedule Management.`
+                });
+            }
+
+            // CRITICAL: Reject if vehicle is already allocated to another active route
+            const existingAssignedRoute = await Route.findOne({ assignedVehicle: vehicle._id });
+            if (existingAssignedRoute) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Vehicle "${vehicle.vehicleName}" is already allocated to route "${existingAssignedRoute.routeName}". Please select another available vehicle.`
+                });
+            }
         }
 
         const route = await Route.create({
-            routeName: routeName.trim(),
+            routeName: trimmedName,
             source: formatStopPayload(source),
             stops: stops.map(formatStopPayload),
             destination: formatStopPayload(destination),
-            assignedVehicle: vehicle
-                ? vehicle._id
-                : null
+            assignedVehicle: vehicle ? vehicle._id : null
         });
 
-        const populatedRoute =
-            await Route.findById(route._id).populate(
-                "assignedVehicle",
-                "vehicleName capacity"
-            );
+        const populatedRoute = await Route.findById(route._id).populate(
+            "assignedVehicle",
+            "vehicleName capacity"
+        );
 
         res.status(201).json({
             success: true,
@@ -150,10 +170,7 @@ export const addRoute = async (req, res) => {
             route: populatedRoute
         });
     } catch (error) {
-        console.error(
-            "Add route error:",
-            error
-        );
+        console.error("Add route error:", error);
 
         res.status(500).json({
             success: false,
@@ -168,9 +185,7 @@ export const addRoute = async (req, res) => {
 
 export const getRouteById = async (req, res) => {
     try {
-        const route = await Route.findById(
-            req.params.id
-        ).populate(
+        const route = await Route.findById(req.params.id).populate(
             "assignedVehicle",
             "vehicleName capacity"
         );
@@ -187,10 +202,7 @@ export const getRouteById = async (req, res) => {
             route
         });
     } catch (error) {
-        console.error(
-            "Get route error:",
-            error
-        );
+        console.error("Get route error:", error);
 
         res.status(500).json({
             success: false,
@@ -216,18 +228,28 @@ export const updateRoute = async (req, res) => {
         if (!routeName?.trim()) {
             return res.status(400).json({
                 success: false,
-                message: "Route name is required."
+                message: "Route name or number is required."
             });
         }
 
-        if (
-            !isValidStop(source) ||
-            !isValidStop(destination)
-        ) {
+        const trimmedName = routeName.trim();
+
+        // Check for duplicate route name on another route
+        const duplicateNameRoute = await Route.findOne({
+            routeName: { $regex: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+            _id: { $ne: req.params.id }
+        });
+        if (duplicateNameRoute) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Valid source and destination are required."
+                message: `A route with name "${trimmedName}" already exists. Please choose a distinct route name.`
+            });
+        }
+
+        if (!isValidStop(source) || !isValidStop(destination)) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid source and destination locations with coordinates are required."
             });
         }
 
@@ -241,47 +263,61 @@ export const updateRoute = async (req, res) => {
         if (stops.some((stop) => !isValidStop(stop))) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "One or more route stops are invalid."
+                message: "One or more route stops have invalid coordinates."
             });
         }
 
         let vehicle = null;
 
         if (assignedVehicle) {
-            vehicle = await validateVehicle(
-                assignedVehicle
-            );
+            vehicle = await validateVehicle(assignedVehicle);
 
             if (!vehicle) {
                 return res.status(400).json({
                     success: false,
-                    message:
-                        "Selected vehicle was not found."
+                    message: "Selected vehicle was not found."
+                });
+            }
+
+            // Verify vehicle is scheduled and available in Schedule Management
+            const schedule = await Schedule.findOne({ vehicle: vehicle._id });
+            if (!schedule || schedule.availability !== "Available") {
+                return res.status(400).json({
+                    success: false,
+                    message: `Vehicle "${vehicle.vehicleName}" is not currently scheduled as Available in Schedule Management.`
+                });
+            }
+
+            // CRITICAL: Reject if vehicle is already allocated to ANOTHER route
+            const existingAssignedRoute = await Route.findOne({
+                assignedVehicle: vehicle._id,
+                _id: { $ne: req.params.id }
+            });
+            if (existingAssignedRoute) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Vehicle "${vehicle.vehicleName}" is already allocated to route "${existingAssignedRoute.routeName}". Please select another available vehicle.`
                 });
             }
         }
 
-        const route =
-            await Route.findByIdAndUpdate(
-                req.params.id,
-                {
-                    routeName: routeName.trim(),
-                    source: formatStopPayload(source),
-                    stops: stops.map(formatStopPayload),
-                    destination: formatStopPayload(destination),
-                    assignedVehicle: vehicle
-                        ? vehicle._id
-                        : null
-                },
-                {
-                    new: true,
-                    runValidators: true
-                }
-            ).populate(
-                "assignedVehicle",
-                "vehicleName capacity"
-            );
+        const route = await Route.findByIdAndUpdate(
+            req.params.id,
+            {
+                routeName: trimmedName,
+                source: formatStopPayload(source),
+                stops: stops.map(formatStopPayload),
+                destination: formatStopPayload(destination),
+                assignedVehicle: vehicle ? vehicle._id : null
+            },
+            {
+                new: true,
+                runValidators: true
+            }
+        ).populate(
+            "assignedVehicle",
+            "vehicleName capacity"
+        );
 
         if (!route) {
             return res.status(404).json({
@@ -296,10 +332,7 @@ export const updateRoute = async (req, res) => {
             route
         });
     } catch (error) {
-        console.error(
-            "Update route error:",
-            error
-        );
+        console.error("Update route error:", error);
 
         res.status(500).json({
             success: false,

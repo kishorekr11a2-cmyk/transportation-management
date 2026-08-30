@@ -141,6 +141,10 @@ export default function AIAgent() {
     const [destinationLocation, setDestinationLocation] =
         useState(null);
 
+    // Track user interaction and initial hydration to protect endpoint state
+    const userInteractedRef = useRef(false);
+    const initialHydratedRef = useRef(false);
+
     // Legacy alias for backward compatibility
     const selectedLocation =
         destinationLocation || sourceLocation;
@@ -218,7 +222,7 @@ export default function AIAgent() {
         const handleSync = () => {
             if (document.visibilityState === "visible") {
                 loadAIData();
-                loadActivePlan();
+                loadActivePlan(false);
                 loadLastSelection();
                 loadManualRoutes();
             }
@@ -230,7 +234,7 @@ export default function AIAgent() {
         // Cross-tab background polling to sync resets and live updates
         const pollInterval = setInterval(() => {
             loadAIData();
-            loadActivePlan();
+            loadActivePlan(false);
             loadLastSelection();
         }, 5000);
 
@@ -244,11 +248,12 @@ export default function AIAgent() {
     const loadPageData = async () => {
         await Promise.all([
             loadAIData(),
-            loadActivePlan(),
+            loadActivePlan(true),
             loadLastSelection(),
             loadManualRoutes()
         ]);
 
+        initialHydratedRef.current = true;
         setLoading(false);
     };
 
@@ -273,7 +278,7 @@ export default function AIAgent() {
         }
     };
 
-    const loadActivePlan = async () => {
+    const loadActivePlan = async (isInitial = false) => {
         try {
             const response = await getActivePlan();
 
@@ -284,41 +289,39 @@ export default function AIAgent() {
                 const plan = response.plan;
 
                 setPlanData(plan);
-                if (plan.tripMode) {
-                    setTripMode(plan.tripMode);
-                }
                 try {
                     localStorage.setItem("active_ai_plan", JSON.stringify(plan));
                 } catch {
                     // Ignore quota error
                 }
 
-                if (
-                    plan.source &&
-                    hasValidCoordinates(plan.source)
-                ) {
-                    setSourceLocation(plan.source);
-                }
+                // Restore endpoint ONLY on initial hydration if user has not yet interacted
+                if (isInitial && !userInteractedRef.current) {
+                    const hasPlanSource = plan.source && hasValidCoordinates(plan.source);
+                    const hasPlanDest = plan.destination && hasValidCoordinates(plan.destination);
+                    const hasPlanStart = plan.startingPoint && hasValidCoordinates(plan.startingPoint);
 
-                if (
-                    plan.destination &&
-                    hasValidCoordinates(
-                        plan.destination
-                    )
-                ) {
-                    setDestinationLocation(
-                        plan.destination
-                    );
-                } else if (
-                    plan.startingPoint &&
-                    hasValidCoordinates(
-                        plan.startingPoint
-                    ) &&
-                    !plan.source
-                ) {
-                    setDestinationLocation(
-                        plan.startingPoint
-                    );
+                    if (plan.tripMode === "FROM_SOURCE" || (hasPlanSource && !hasPlanDest)) {
+                        if (hasPlanSource) {
+                            setSourceLocation(plan.source);
+                            setDestinationLocation(null);
+                            setActiveEndpointField("source");
+                            setTripMode("FROM_SOURCE");
+                        }
+                    } else if (plan.tripMode === "TO_DESTINATION" || hasPlanDest || hasPlanStart) {
+                        const dest = hasPlanDest ? plan.destination : (hasPlanStart ? plan.startingPoint : null);
+                        if (dest) {
+                            setDestinationLocation(dest);
+                            setSourceLocation(null);
+                            setActiveEndpointField("destination");
+                            setTripMode("TO_DESTINATION");
+                        }
+                    } else if (hasPlanSource) {
+                        setSourceLocation(plan.source);
+                        setDestinationLocation(null);
+                        setActiveEndpointField("source");
+                        setTripMode("FROM_SOURCE");
+                    }
                 }
             } else {
                 // If backend has no active plan (e.g. travel status was reset), clear state and storage
@@ -389,6 +392,38 @@ export default function AIAgent() {
         useState("Analyzing confirmed demand...");
     const stageTimersRef = useRef([]);
 
+    const handleSourceSelect = (location) => {
+        userInteractedRef.current = true;
+        setSourceLocation(location);
+        setDestinationLocation(null);
+        setActiveEndpointField("source");
+        setTripMode("FROM_SOURCE");
+        setGenerationError("");
+    };
+
+    const handleDestinationSelect = (location) => {
+        userInteractedRef.current = true;
+        setDestinationLocation(location);
+        setSourceLocation(null);
+        setActiveEndpointField("destination");
+        setTripMode("TO_DESTINATION");
+        setGenerationError("");
+    };
+
+    const handleSourceClear = () => {
+        userInteractedRef.current = true;
+        setSourceLocation(null);
+        setActiveEndpointField(null);
+        setGenerationError("");
+    };
+
+    const handleDestinationClear = () => {
+        userInteractedRef.current = true;
+        setDestinationLocation(null);
+        setActiveEndpointField(null);
+        setGenerationError("");
+    };
+
     const handleGenerateAIPlan = async () => {
         const comingCount = Number(
             data?.confirmedUserCount ??
@@ -420,28 +455,26 @@ export default function AIAgent() {
 
         const hasSource = hasValidCoordinates(sourceLocation);
         const hasDestination = hasValidCoordinates(destinationLocation);
+        const endpointCount = Number(hasSource) + Number(hasDestination);
 
-        if (!hasSource && !hasDestination) {
-            setGenerationError(
-                "Set a Source or Destination before generating an AI route."
-            );
+        if (endpointCount === 0) {
+            const msg = "Set a Source or Destination before generating an AI route.";
+            setGenerationError(msg);
+            toast.error(msg);
             return;
         }
 
-        // Auto-infer direction from configured endpoint
-        let detectedTripMode = "FROM_SOURCE";
-        if (hasSource && !hasDestination) {
-            detectedTripMode = "FROM_SOURCE";
-        } else if (hasDestination && !hasSource) {
-            detectedTripMode = "TO_DESTINATION";
-        } else if (activeEndpointField === "destination") {
-            detectedTripMode = "TO_DESTINATION";
-        } else {
-            detectedTripMode = "FROM_SOURCE";
+        if (endpointCount > 1) {
+            const msg = "Please set either a Source or a Destination, not both.";
+            setGenerationError(msg);
+            toast.error(msg);
+            return;
         }
 
-        setTripMode(detectedTripMode);
-        const isOutward = detectedTripMode === "FROM_SOURCE";
+        const effectiveTripMode = hasSource ? "FROM_SOURCE" : "TO_DESTINATION";
+        setTripMode(effectiveTripMode);
+        setActiveEndpointField(hasSource ? "source" : "destination");
+        const isOutward = effectiveTripMode === "FROM_SOURCE";
 
         try {
             setGenerating(true);
@@ -504,10 +537,10 @@ export default function AIAgent() {
             }
 
             const payload = {
-                tripMode: detectedTripMode,
-                activeEndpoint: detectedTripMode === "FROM_SOURCE" ? "source" : "destination",
-                ...(hasSource ? { source: sourceLocation } : {}),
-                ...(hasDestination ? { destination: destinationLocation } : {})
+                tripMode: effectiveTripMode,
+                activeEndpoint: hasSource ? "source" : "destination",
+                source: hasSource ? sourceLocation : null,
+                destination: hasDestination ? destinationLocation : null
             };
 
             const response = await generateRecommendations(payload);
@@ -529,6 +562,7 @@ export default function AIAgent() {
             // Brief validation transition
             await new Promise((r) => setTimeout(r, 400));
 
+            userInteractedRef.current = true;
             setPlanData(response);
             try {
                 localStorage.setItem("active_ai_plan", JSON.stringify(response));
@@ -579,6 +613,7 @@ export default function AIAgent() {
                 await resetAIPlan();
 
             if (response?.success) {
+                userInteractedRef.current = true;
                 localStorage.removeItem("active_ai_plan");
                 setPlanData(null);
                 setSourceLocation(null);
@@ -1077,28 +1112,8 @@ export default function AIAgent() {
                                 selectedLocation={
                                     sourceLocation
                                 }
-                                onSelectLocation={(
-                                    location
-                                ) => {
-                                    setSourceLocation(
-                                        location
-                                    );
-                                    setActiveEndpointField("source");
-                                    setTripMode("FROM_SOURCE");
-
-                                    setGenerationError(
-                                        ""
-                                    );
-                                }}
-                                onClear={() => {
-                                    setSourceLocation(
-                                        null
-                                    );
-
-                                    setGenerationError(
-                                        ""
-                                    );
-                                }}
+                                onSelectLocation={handleSourceSelect}
+                                onClear={handleSourceClear}
                             />
                         </div>
 
@@ -1172,28 +1187,8 @@ export default function AIAgent() {
                                 selectedLocation={
                                     destinationLocation
                                 }
-                                onSelectLocation={(
-                                    location
-                                ) => {
-                                    setDestinationLocation(
-                                        location
-                                    );
-                                    setActiveEndpointField("destination");
-                                    setTripMode("TO_DESTINATION");
-
-                                    setGenerationError(
-                                        ""
-                                    );
-                                }}
-                                onClear={() => {
-                                    setDestinationLocation(
-                                        null
-                                    );
-
-                                    setGenerationError(
-                                        ""
-                                    );
-                                }}
+                                onSelectLocation={handleDestinationSelect}
+                                onClear={handleDestinationClear}
                             />
                         </div>
 
@@ -1287,11 +1282,7 @@ export default function AIAgent() {
                                         ? `OUTWARD ROUTE: Source (${sourceLocation.name}) → Residential Drop-off Network`
                                         : destinationLocation && !sourceLocation
                                             ? `INWARD ROUTE: Residential Pickup Network → Destination (${destinationLocation.name})`
-                                            : sourceLocation
-                                                ? `OUTWARD ROUTE: Source (${sourceLocation.name}) → Residential Drop-off Network`
-                                                : destinationLocation
-                                                    ? `INWARD ROUTE: Residential Pickup Network → Destination (${destinationLocation.name})`
-                                                    : "Set a Source (departure point) or Destination (arrival hub) to generate continuous bus routes."}
+                                            : "Set a Source (departure point) or Destination (arrival hub) to generate continuous bus routes."}
                                 </p>
                             </div>
 
@@ -1304,7 +1295,7 @@ export default function AIAgent() {
                             }
                             disabled={
                                 generating ||
-                                (!sourceLocation && !destinationLocation) ||
+                                (Number(hasValidCoordinates(sourceLocation)) + Number(hasValidCoordinates(destinationLocation)) !== 1) ||
                                 summary.confirmedUsers === 0
                             }
                         >
@@ -1972,51 +1963,39 @@ export default function AIAgent() {
 
                                                     <span>
                                                         👥{" "}
-                                                        <b>
-                                                            {
-                                                                assigned
-                                                            }
-                                                        </b>{" "}
-                                                        students
-                                                        boarding
+                                                        <b>{assigned}</b>{" "}
+                                                        {(bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planData?.tripMode === "OUTWARD" || planData?.tripMode === "FROM_SOURCE")
+                                                            ? "passengers boarding"
+                                                            : "passengers dropped"}
                                                     </span>
 
                                                     <span>
                                                         📍{" "}
                                                         <b>
-                                                            {Array.isArray(
-                                                                bus.stops
-                                                            )
-                                                                ? bus
-                                                                    .stops
-                                                                    .length
-                                                                : 0}
+                                                            {Array.isArray(bus.stops) ? bus.stops.length : 0}
                                                         </b>{" "}
-                                                        pickup stops
+                                                        {(bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planData?.tripMode === "OUTWARD" || planData?.tripMode === "FROM_SOURCE")
+                                                            ? "drop-off stops"
+                                                            : "pickup stops"}
                                                     </span>
 
                                                     {bus.routeDistanceKm && (
                                                         <span>
                                                             🛣️{" "}
-                                                            <b>
-                                                                {
-                                                                    bus.routeDistanceKm
-                                                                }{" "}
-                                                                km
-                                                            </b>{" "}
-                                                            total
-                                                            route
+                                                            <b>{bus.routeDistanceKm} km</b>{" "}
+                                                            total route
                                                         </span>
                                                     )}
 
                                                     <span
-                                                        className={`status-pill ${bus.isContinuous
+                                                        className={`status-pill ${bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
                                                             ? "continuous"
                                                             : "warning"
                                                             }`}
                                                     >
-                                                        {bus.roadRouteStatus ||
-                                                            "Road Optimized (Continuous)"}
+                                                        {bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
+                                                            ? "✓ Road Optimized (Continuous)"
+                                                            : (bus.roadRouteStatus || "Discontinuous Corridor / Review Needed")}
                                                     </span>
 
                                                     {bus.isConsolidated && (
@@ -2158,8 +2137,8 @@ export default function AIAgent() {
                                                             >
                                                                 (
                                                                 {bus.isDetour
-                                                                    ? `Exceeds ${bus.detourThreshold}× threshold`
-                                                                    : `Within ${bus.detourThreshold}× threshold — acceptable`}
+                                                                    ? `Exceeds ${bus.detourThreshold || "2.2"}× threshold`
+                                                                    : `Within ${bus.detourThreshold || "2.2"}× threshold — acceptable`}
                                                                 )
                                                             </span>
                                                         </div>
@@ -2277,7 +2256,7 @@ export default function AIAgent() {
                                                                                                 {stop.passengersDropped ||
                                                                                                     userCount}
                                                                                             </b>{" "}
-                                                                                            students dropped off
+                                                                                            passengers dropped off
                                                                                         </span>
 
                                                                                         {stop.passengersRemaining !==
@@ -2303,7 +2282,7 @@ export default function AIAgent() {
                                                                                                     userCount
                                                                                                 }
                                                                                             </b>{" "}
-                                                                                            students boarding
+                                                                                            passengers boarding
                                                                                             ·{" "}
                                                                                             <b>
                                                                                                 {stop.cumulativePassengers ||

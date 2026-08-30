@@ -12,7 +12,7 @@ const DEBOUNCE_MS = 450;
 const MAX_SUGGESTIONS = 8;
 
 export default function LocationSearchBox({
-    placeholder = "Search any location (e.g. KLN College, IIT Madras, Chennai Central, Taj Mahal, Times Square)...",
+    placeholder = "Search any location (e.g. Madurai, IIT Madras, Chennai Central, Taj Mahal, Times Square)...",
     selectedLocation = null,
     onSelectLocation,
     onClear,
@@ -40,11 +40,16 @@ export default function LocationSearchBox({
     /* Keep input text synchronized with external changes */
     useEffect(() => {
         if (selectedLocation) {
-            setQuery(
-                selectedLocation.name
-                    ? `${selectedLocation.name}${selectedLocation.address && selectedLocation.address !== selectedLocation.name ? ` (${selectedLocation.address.split(",")[0]})` : ""}`
-                    : selectedLocation.displayName || ""
-            );
+            const formatted = selectedLocation.name
+                ? `${selectedLocation.name}${selectedLocation.address && selectedLocation.address !== selectedLocation.name ? ` (${selectedLocation.address.split(",")[0]})` : ""}`
+                : selectedLocation.displayName || "";
+            setQuery(formatted);
+        } else {
+            setQuery("");
+            setSuggestions([]);
+            setShowDropdown(false);
+            setErrorMessage("");
+            setEmptyMessage("");
         }
     }, [selectedLocation]);
 

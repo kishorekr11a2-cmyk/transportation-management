@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api from "../services/api";
 import {
@@ -14,16 +14,13 @@ import L from "leaflet";
 delete L.Icon.Default.prototype._getIconUrl;
 
 L.Icon.Default.mergeOptions({
-    iconRetinaUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-    iconUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-    shadowUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+    iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+    iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+    shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
 });
 
 const getRouteFromOSRM = async (locations) => {
-    if (locations.length < 2) {
+    if (!Array.isArray(locations) || locations.length < 2) {
         return null;
     }
 
@@ -57,27 +54,83 @@ export default function RouteManagement() {
     const lineRef = useRef(null);
     const temporaryMarkerRef = useRef(null);
 
+    // Database state
     const [routes, setRoutes] = useState([]);
     const [vehicles, setVehicles] = useState([]);
+    const [schedules, setSchedules] = useState([]);
 
+    // Single Unified Route Stop Form State
     const [routeName, setRouteName] = useState("");
-    const [routeStops, setRouteStops] = useState([]);
-    const [destination, setDestination] = useState(null);
-
     const [selectedVehicle, setSelectedVehicle] = useState("");
-    const [selectedLocation, setSelectedLocation] = useState(null);
+    const [selectedStops, setSelectedStops] = useState([]);
+    const [newStopCandidate, setNewStopCandidate] = useState(null);
 
+    const [editingRoute, setEditingRoute] = useState(null);
     const [loading, setLoading] = useState(false);
     const [routingLoading, setRoutingLoading] = useState(false);
     const [error, setError] = useState("");
-    const [editingRoute, setEditingRoute] = useState(null);
+    const [successMessage, setSuccessMessage] = useState("");
     const [fullscreen, setFullscreen] = useState(false);
 
-    // AI Generated Route Inspection State
+    // AI Generated Route Inspection State (Read-only viewer)
     const [aiViewingRoute, setAiViewingRoute] = useState(null);
 
     // ==================================================
-    // FULL ACCESS INTERACTIVE MAP INITIALIZATION
+    // 1. VEHICLE ALLOCATION AVAILABILITY (SCHEDULED + AVAILABLE + UNASSIGNED)
+    // ==================================================
+    const availableVehicles = useMemo(() => {
+        // Map of schedules by vehicle ID
+        const scheduleMap = new Map();
+        schedules.forEach((s) => {
+            const vId = String(s.vehicle?._id || s.vehicle || "");
+            if (vId) {
+                scheduleMap.set(vId, s);
+            }
+        });
+
+        // Set of vehicle IDs allocated to other active routes
+        const assignedVehicleIds = new Set(
+            routes
+                .filter((r) => !editingRoute || String(r._id) !== String(editingRoute._id))
+                .map((r) => String(r.assignedVehicle?._id || r.assignedVehicle || ""))
+                .filter(Boolean)
+        );
+
+        // Filter vehicles: MUST have schedule === "Available" AND NOT allocated to other routes
+        return vehicles.filter((v) => {
+            const vId = String(v._id);
+
+            // If editing, allow the route's currently assigned vehicle
+            if (editingRoute) {
+                const currentAssignedId = String(
+                    editingRoute.assignedVehicle?._id || editingRoute.assignedVehicle || ""
+                );
+                if (vId === currentAssignedId) {
+                    return true;
+                }
+            }
+
+            // Check if allocated to another route
+            if (assignedVehicleIds.has(vId)) {
+                return false;
+            }
+
+            // Check if vehicle is scheduled and available in Schedule Management
+            const sched = scheduleMap.get(vId);
+            if (!sched || sched.availability !== "Available") {
+                return false;
+            }
+
+            return true;
+        });
+    }, [routes, vehicles, schedules, editingRoute]);
+
+    const assignedVehicleObj = useMemo(() => {
+        return vehicles.find((v) => String(v._id) === String(selectedVehicle)) || null;
+    }, [vehicles, selectedVehicle]);
+
+    // ==================================================
+    // 2. MAP INITIALIZATION & EVENT LISTENERS
     // ==================================================
     useEffect(() => {
         if (!mapContainerRef.current || mapRef.current) {
@@ -85,7 +138,7 @@ export default function RouteManagement() {
         }
 
         const map = L.map(mapContainerRef.current, {
-            center: [13.0827, 80.2707], // Default centered on transit corridor
+            center: [9.9252, 78.1198], // Default transit region
             zoom: 12,
             zoomControl: true,
             dragging: true,
@@ -96,15 +149,15 @@ export default function RouteManagement() {
             touchZoom: true
         });
 
-        // CartoDB Voyager — Vector tiles, crisp and high performance
         L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
             subdomains: "abcd",
             maxZoom: 20
         }).addTo(map);
 
+        // Click on map to add stop candidate
         map.on("click", async (event) => {
-            if (aiViewingRoute) return; // Ignore pin clicks while inspecting AI route
+            if (aiViewingRoute) return;
 
             const lat = event.latlng.lat;
             const lng = event.latlng.lng;
@@ -120,7 +173,7 @@ export default function RouteManagement() {
                     types: rev.types || ["point_of_interest"]
                 };
 
-                setSelectedLocation(loc);
+                setNewStopCandidate(loc);
                 setError("");
                 showTemporaryMarker(loc);
             } catch {
@@ -133,7 +186,7 @@ export default function RouteManagement() {
                     types: ["point_of_interest"]
                 };
 
-                setSelectedLocation(loc);
+                setNewStopCandidate(loc);
                 setError("");
                 showTemporaryMarker(loc);
             }
@@ -141,8 +194,7 @@ export default function RouteManagement() {
 
         mapRef.current = map;
 
-        loadRoutes();
-        loadVehicles();
+        loadData();
 
         // Check if an AI route was passed to view
         let aiRouteToView = location.state?.selectedAiRoute;
@@ -164,10 +216,10 @@ export default function RouteManagement() {
             }, 350);
         }
 
+        // Silent background sync without resetting active route builder state
         const handleSync = () => {
             if (document.visibilityState === "visible") {
-                loadRoutes();
-                loadVehicles();
+                loadDataSilently();
             }
         };
 
@@ -184,8 +236,66 @@ export default function RouteManagement() {
         };
     }, []);
 
-    const showTemporaryMarker = (location) => {
-        if (!mapRef.current || !isValidCoordinate(location)) return;
+    // ==================================================
+    // 3. API DATA FETCHERS
+    // ==================================================
+    const loadData = async () => {
+        try {
+            setLoading(true);
+            const [routeRes, vehicleRes, scheduleRes] = await Promise.all([
+                api.get("/routes"),
+                api.get("/vehicles"),
+                api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
+            ]);
+
+            const routeData = Array.isArray(routeRes.data)
+                ? routeRes.data
+                : routeRes.data?.routes || routeRes.data?.data || [];
+            setRoutes(routeData);
+
+            const vehicleData = Array.isArray(vehicleRes.data)
+                ? vehicleRes.data
+                : vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
+            setVehicles(vehicleData);
+
+            setSchedules(scheduleRes.data?.schedules || []);
+        } catch (err) {
+            console.error("Load Data Error:", err);
+            setError("Unable to load routes and vehicle schedules.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const loadDataSilently = async () => {
+        try {
+            const [routeRes, vehicleRes, scheduleRes] = await Promise.all([
+                api.get("/routes"),
+                api.get("/vehicles"),
+                api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
+            ]);
+
+            const routeData = Array.isArray(routeRes.data)
+                ? routeRes.data
+                : routeRes.data?.routes || routeRes.data?.data || [];
+            setRoutes(routeData);
+
+            const vehicleData = Array.isArray(vehicleRes.data)
+                ? vehicleRes.data
+                : vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
+            setVehicles(vehicleData);
+
+            setSchedules(scheduleRes.data?.schedules || []);
+        } catch {
+            // silent background sync
+        }
+    };
+
+    // ==================================================
+    // 4. MAP DRAWING & MARKERS
+    // ==================================================
+    const showTemporaryMarker = (loc) => {
+        if (!mapRef.current || !isValidCoordinate(loc)) return;
 
         if (temporaryMarkerRef.current) {
             temporaryMarkerRef.current.remove();
@@ -199,147 +309,48 @@ export default function RouteManagement() {
             iconAnchor: [15, 30]
         });
 
-        const marker = L.marker([Number(location.latitude), Number(location.longitude)], {
-            icon: tempIcon
-        })
+        const marker = L.marker([Number(loc.latitude), Number(loc.longitude)], { icon: tempIcon })
             .addTo(mapRef.current)
             .bindPopup(
                 `<div style="font-family:system-ui; font-size:13px;">
-                    <strong style="color:#0f172a; font-size:14px;">📍 ${location.name || "Selected Location"}</strong>
-                    <div style="color:#475569; font-size:12px; margin-top:3px;">${location.address || ""}</div>
-                    <div style="color:#94a3b8; font-size:11px; margin-top:3px;">${Number(location.latitude).toFixed(5)}, ${Number(location.longitude).toFixed(5)}</div>
+                    <strong style="color:#0f172a; font-size:14px;">📍 ${loc.name || "Selected Location"}</strong>
+                    <div style="color:#475569; font-size:12px; margin-top:3px;">${loc.address || ""}</div>
+                    <div style="color:#94a3b8; font-size:11px; margin-top:3px;">${Number(loc.latitude).toFixed(5)}, ${Number(loc.longitude).toFixed(5)}</div>
                  </div>`
             )
             .openPopup();
 
         temporaryMarkerRef.current = marker;
-        mapRef.current.setView([Number(location.latitude), Number(location.longitude)], 15, { animate: true });
+        mapRef.current.setView([Number(loc.latitude), Number(loc.longitude)], 14, { animate: true });
     };
 
-    const loadRoutes = async () => {
-        try {
-            setLoading(true);
-            const response = await api.get("/routes");
-            const routeData = Array.isArray(response.data)
-                ? response.data
-                : response.data?.routes || response.data?.data || [];
-            setRoutes(routeData);
-        } catch (err) {
-            console.error("Load Routes Error:", err);
-            setError("Unable to load routes.");
-        } finally {
-            setLoading(false);
-        }
+    const drawRouteMarkers = (locations) => {
+        if (!mapRef.current) return;
+
+        markersRef.current.forEach((m) => m.remove());
+        markersRef.current = [];
+
+        if (!Array.isArray(locations) || locations.length === 0) return;
+
+        locations.forEach((loc, index) => {
+            if (!isValidCoordinate(loc)) return;
+
+            const stopNumber = index + 1;
+            const customIcon = L.divIcon({
+                className: "custom-map-icon",
+                html: `<div style="background:#2563eb; color:#fff; border:2px solid #fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; box-shadow:0 3px 8px rgba(37,99,235,0.4);">${stopNumber}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 28]
+            });
+
+            const marker = L.marker([Number(loc.latitude), Number(loc.longitude)], { icon: customIcon })
+                .addTo(mapRef.current)
+                .bindPopup(`<strong>Stop ${stopNumber}: ${loc.name}</strong><br><small>${loc.address || ""}</small>`);
+            markersRef.current.push(marker);
+        });
     };
 
-    const loadVehicles = async () => {
-        try {
-            const response = await api.get("/vehicles");
-            const vehicleData = Array.isArray(response.data)
-                ? response.data
-                : response.data?.vehicles || response.data?.data || [];
-            setVehicles(vehicleData);
-        } catch (err) {
-            console.error("Load Vehicles Error:", err);
-        }
-    };
-
-    const selectSearchResult = (result) => {
-        const location = normalizeLocation(result);
-        if (!location || !isValidCoordinate(location)) {
-            setError("This location does not have valid coordinates.");
-            return;
-        }
-        setSelectedLocation(location);
-        setError("");
-        showTemporaryMarker(location);
-    };
-
-    const addLocationToRoute = async () => {
-        if (!selectedLocation) {
-            setError("Search or pin a location first.");
-            return;
-        }
-
-        const exists = routeStops.some(
-            (stop) =>
-                (stop.placeId && selectedLocation.placeId && stop.placeId === selectedLocation.placeId) ||
-                (Number(stop.latitude).toFixed(4) === Number(selectedLocation.latitude).toFixed(4) &&
-                 Number(stop.longitude).toFixed(4) === Number(selectedLocation.longitude).toFixed(4))
-        );
-
-        if (exists) {
-            setError("This location is already added in the route.");
-            return;
-        }
-
-        const newStop = {
-            name: selectedLocation.name,
-            address: selectedLocation.address || "",
-            latitude: Number(selectedLocation.latitude),
-            longitude: Number(selectedLocation.longitude),
-            placeId: selectedLocation.placeId || "",
-            types: selectedLocation.types || []
-        };
-
-        const updatedStops = [...routeStops, newStop];
-        setRouteStops(updatedStops);
-        setSelectedLocation(null);
-        setError("");
-
-        if (temporaryMarkerRef.current) {
-            temporaryMarkerRef.current.remove();
-            temporaryMarkerRef.current = null;
-        }
-
-        await redrawRoadRoute(updatedStops, destination);
-    };
-
-    const setDestinationLocation = async () => {
-        if (!selectedLocation) {
-            setError("Search or pin a location first.");
-            return;
-        }
-
-        const newDestination = {
-            name: selectedLocation.name,
-            address: selectedLocation.address || "",
-            latitude: Number(selectedLocation.latitude),
-            longitude: Number(selectedLocation.longitude),
-            placeId: selectedLocation.placeId || "",
-            types: selectedLocation.types || []
-        };
-
-        setDestination(newDestination);
-        setSelectedLocation(null);
-        setError("");
-
-        if (temporaryMarkerRef.current) {
-            temporaryMarkerRef.current.remove();
-            temporaryMarkerRef.current = null;
-        }
-
-        await redrawRoadRoute(routeStops, newDestination);
-    };
-
-    const removeStop = async (index) => {
-        const updated = routeStops.filter((_, i) => i !== index);
-        setRouteStops(updated);
-        await redrawRoadRoute(updated, destination);
-    };
-
-    const moveStop = async (index, direction) => {
-        const updated = [...routeStops];
-        const newIndex = index + direction;
-
-        if (newIndex < 0 || newIndex >= updated.length) return;
-
-        [updated[index], updated[newIndex]] = [updated[newIndex], updated[index]];
-        setRouteStops(updated);
-        await redrawRoadRoute(updated, destination);
-    };
-
-    const redrawRoadRoute = async (stops, dest) => {
+    const redrawRoadRoute = useCallback(async (locations) => {
         if (!mapRef.current) return;
 
         if (lineRef.current) {
@@ -347,17 +358,17 @@ export default function RouteManagement() {
             lineRef.current = null;
         }
 
-        const locations = [...stops, ...(dest ? [dest] : [])];
+        const validLocations = (locations || []).filter((loc) => isValidCoordinate(loc));
 
-        if (locations.length < 2) {
-            drawSavedRouteMarkers(stops, dest);
+        drawRouteMarkers(validLocations);
+
+        if (validLocations.length < 2) {
             return;
         }
 
         try {
             setRoutingLoading(true);
-
-            const route = await getRouteFromOSRM(locations);
+            const route = await getRouteFromOSRM(validLocations);
             let pathCoords = [];
 
             if (route && Array.isArray(route.geometry?.coordinates)) {
@@ -366,7 +377,7 @@ export default function RouteManagement() {
                     Number(lng)
                 ]);
             } else {
-                pathCoords = locations.map((loc) => [
+                pathCoords = validLocations.map((loc) => [
                     Number(loc.latitude),
                     Number(loc.longitude)
                 ]);
@@ -380,130 +391,16 @@ export default function RouteManagement() {
                 lineCap: "round"
             }).addTo(mapRef.current);
 
-            drawSavedRouteMarkers(stops, dest);
-
             mapRef.current.fitBounds(lineRef.current.getBounds(), {
                 padding: [50, 50]
             });
         } catch (err) {
             console.error("Road Route Error:", err);
-            setError("Unable to create road route.");
+            setError("Unable to calculate road route between selected stops.");
         } finally {
             setRoutingLoading(false);
         }
-    };
-
-    const drawSavedRouteMarkers = (stops, dest) => {
-        if (!mapRef.current) return;
-
-        markersRef.current.forEach((marker) => marker.remove());
-        markersRef.current = [];
-
-        stops.forEach((stop, index) => {
-            const stopIcon = L.divIcon({
-                className: "custom-map-icon stop-icon",
-                html: `<div style="background:#2563eb; color:#fff; border:2px solid #fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; box-shadow:0 3px 8px rgba(0,0,0,0.3);">${index + 1}</div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 28]
-            });
-
-            const marker = L.marker([Number(stop.latitude), Number(stop.longitude)], {
-                icon: stopIcon
-            })
-                .addTo(mapRef.current)
-                .bindPopup(
-                    `<strong>Stop ${index + 1}: ${stop.name}</strong><br><small>${stop.address || ""}</small>`
-                );
-
-            markersRef.current.push(marker);
-        });
-
-        if (dest) {
-            const destIcon = L.divIcon({
-                className: "custom-map-icon dest-icon",
-                html: `<div style="background:#16a34a; color:#fff; border:2px solid #fff; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; box-shadow:0 3px 10px rgba(0,0,0,0.3);">🏁</div>`,
-                iconSize: [32, 32],
-                iconAnchor: [16, 32]
-            });
-
-            const marker = L.marker([Number(dest.latitude), Number(dest.longitude)], {
-                icon: destIcon
-            })
-                .addTo(mapRef.current)
-                .bindPopup(`<strong>🏁 Destination: ${dest.name}</strong><br><small>${dest.address || ""}</small>`);
-
-            markersRef.current.push(marker);
-        }
-    };
-
-    const drawAiRouteMarkers = (aiRoute) => {
-        if (!mapRef.current || !aiRoute) return;
-
-        markersRef.current.forEach((marker) => marker.remove());
-        markersRef.current = [];
-
-        const isToDestination = aiRoute.tripMode === "TO_DESTINATION" || aiRoute.tripMode === "INWARD";
-        const stops = Array.isArray(aiRoute.stops) ? aiRoute.stops : [];
-
-        // 1. Source Hub (if outward)
-        if (!isToDestination && aiRoute.sourceHub && isValidCoordinate(aiRoute.sourceHub)) {
-            const sourceIcon = L.divIcon({
-                className: "custom-map-icon source-hub-icon",
-                html: `<div style="background:#4f46e5; color:#fff; border:2px solid #fff; border-radius:50%; width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 4px 12px rgba(79,70,229,0.5); font-weight:bold;">🏫</div>`,
-                iconSize: [34, 34],
-                iconAnchor: [17, 34]
-            });
-
-            const marker = L.marker([Number(aiRoute.sourceHub.latitude), Number(aiRoute.sourceHub.longitude)], {
-                icon: sourceIcon
-            })
-                .addTo(mapRef.current)
-                .bindPopup(`<strong>🏫 Source / Departure Point:</strong><br>${aiRoute.sourceHub.name || "Configured Source"}`);
-            markersRef.current.push(marker);
-        }
-
-        // 2. Ordered Stops
-        stops.forEach((stop, index) => {
-            const stopNumber = index + 1;
-            const stopIcon = L.divIcon({
-                className: "custom-map-icon stop-icon",
-                html: `<div style="background:#2563eb; color:#fff; border:2px solid #fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; box-shadow:0 3px 8px rgba(37,99,235,0.4);">${stopNumber}</div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 28]
-            });
-
-            const userCount = stop.userCount || (stop.userIds?.length) || 0;
-
-            const marker = L.marker([Number(stop.latitude), Number(stop.longitude)], {
-                icon: stopIcon
-            })
-                .addTo(mapRef.current)
-                .bindPopup(
-                    `<strong>Stop ${stopNumber}: ${stop.name}</strong><br>` +
-                    `<small>${stop.address || ""}</small><br>` +
-                    `👥 <b>Passengers:</b> ${userCount} students`
-                );
-
-            markersRef.current.push(marker);
-        });
-
-        // 3. Destination Hub (if inward)
-        if (isToDestination && aiRoute.destinationHub && isValidCoordinate(aiRoute.destinationHub)) {
-            const destIcon = L.divIcon({
-                className: "custom-map-icon dest-hub-icon",
-                html: `<div style="background:#16a34a; color:#fff; border:2px solid #fff; border-radius:50%; width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 4px 12px rgba(22,163,74,0.5); font-weight:bold;">🏁</div>`,
-                iconSize: [34, 34],
-                iconAnchor: [17, 34]
-            });
-
-            const marker = L.marker([Number(aiRoute.destinationHub.latitude), Number(aiRoute.destinationHub.longitude)], {
-                icon: destIcon
-            })
-                .addTo(mapRef.current)
-                .bindPopup(`<strong>🏁 Destination / Arrival Hub:</strong><br>${aiRoute.destinationHub.name || "Configured Destination"}`);
-            markersRef.current.push(marker);
-        }
-    };
+    }, []);
 
     const redrawAiRoadRoute = async (aiRoute) => {
         if (!mapRef.current || !aiRoute) return;
@@ -529,10 +426,7 @@ export default function RouteManagement() {
             }
         }
 
-        if (locations.length < 2) {
-            drawAiRouteMarkers(aiRoute);
-            return;
-        }
+        if (locations.length < 2) return;
 
         try {
             setRoutingLoading(true);
@@ -559,54 +453,128 @@ export default function RouteManagement() {
                 lineCap: "round"
             }).addTo(mapRef.current);
 
-            drawAiRouteMarkers(aiRoute);
-
             mapRef.current.fitBounds(lineRef.current.getBounds(), {
                 padding: [50, 50]
             });
         } catch (err) {
             console.error("AI Road Route Error:", err);
-            setError("Unable to render AI road route.");
         } finally {
             setRoutingLoading(false);
         }
     };
 
+    // ==================================================
+    // 5. UNIFIED SINGLE ROUTE BUILDER ACTIONS
+    // ==================================================
+    const handleSelectStopCandidate = (loc) => {
+        const normalized = normalizeLocation(loc);
+        if (!normalized || !isValidCoordinate(normalized)) {
+            setError("Selected location does not have valid coordinates.");
+            return;
+        }
+        setNewStopCandidate(normalized);
+        setError("");
+        showTemporaryMarker(normalized);
+    };
+
+    const handleAddStopToRoute = () => {
+        if (!newStopCandidate) {
+            setError("Search and select a location from the results first.");
+            return;
+        }
+
+        const normalized = normalizeLocation(newStopCandidate);
+        if (!normalized || !isValidCoordinate(normalized)) {
+            setError("Selected location does not have valid coordinates.");
+            return;
+        }
+
+        const newStop = {
+            name: normalized.name,
+            address: normalized.address || "",
+            displayName: normalized.displayName || normalized.address || normalized.name,
+            latitude: Number(normalized.latitude),
+            longitude: Number(normalized.longitude),
+            placeId: normalized.placeId || "",
+            types: normalized.types || []
+        };
+
+        const updatedStops = [...selectedStops, newStop];
+        setSelectedStops(updatedStops);
+        setNewStopCandidate(null);
+        setError("");
+
+        if (temporaryMarkerRef.current) {
+            temporaryMarkerRef.current.remove();
+            temporaryMarkerRef.current = null;
+        }
+
+        redrawRoadRoute(updatedStops);
+    };
+
+    const removeStop = (index) => {
+        const updated = selectedStops.filter((_, i) => i !== index);
+        setSelectedStops(updated);
+        redrawRoadRoute(updated);
+    };
+
+    const moveStop = (index, direction) => {
+        const updated = [...selectedStops];
+        const newIndex = index + direction;
+
+        if (newIndex < 0 || newIndex >= updated.length) return;
+
+        [updated[index], updated[newIndex]] = [updated[newIndex], updated[index]];
+        setSelectedStops(updated);
+        redrawRoadRoute(updated);
+    };
+
+    // ==================================================
+    // 6. SAVE, EDIT, DELETE & RESET ROUTE
+    // ==================================================
     const saveRoute = async () => {
         if (!routeName.trim()) {
-            setError("Enter a route name or route number.");
+            setError("Route name or number is required.");
             return;
         }
 
-        if (routeStops.length < 1) {
-            setError("Add at least one stop to the route.");
+        if (selectedStops.length < 2) {
+            setError("Please add at least two stops.");
             return;
         }
 
-        if (!destination) {
-            setError("Select a destination.");
+        if (!selectedVehicle) {
+            setError("Please select an available scheduled bus for this route.");
             return;
         }
 
         try {
             setLoading(true);
             setError("");
+            setSuccessMessage("");
+
+            // Internally derive source, stops, destination from unified sequence
+            const source = selectedStops[0];
+            const destination = selectedStops[selectedStops.length - 1];
+            const stops = selectedStops.length > 2 ? selectedStops.slice(1, -1) : [];
 
             const payload = {
                 routeName: routeName.trim(),
-                source: routeStops[0] || destination,
-                stops: routeStops,
+                source,
+                stops,
                 destination,
-                assignedVehicle: selectedVehicle || null
+                assignedVehicle: selectedVehicle
             };
 
             if (editingRoute) {
                 await api.put(`/routes/${editingRoute._id}`, payload);
+                setSuccessMessage(`Route "${routeName.trim()}" updated successfully!`);
             } else {
                 await api.post("/routes", payload);
+                setSuccessMessage(`Route "${routeName.trim()}" created successfully!`);
             }
 
-            await loadRoutes();
+            await loadData();
             clearRoute();
         } catch (err) {
             console.error("Save Route Error:", err);
@@ -619,16 +587,26 @@ export default function RouteManagement() {
     const editRoute = (route) => {
         setEditingRoute(route);
         setRouteName(route.routeName || "");
-        setRouteStops(Array.isArray(route.stops) ? route.stops : []);
-        setDestination(route.destination || null);
         setSelectedVehicle(route.assignedVehicle?._id || route.assignedVehicle || "");
-        setSelectedLocation(null);
-        setError("");
 
-        redrawRoadRoute(
-            Array.isArray(route.stops) ? route.stops : [],
-            route.destination || null
-        );
+        // Reconstruct unified sequence: source + stops + destination
+        const stopsList = [
+            route.source,
+            ...(Array.isArray(route.stops) ? route.stops : []),
+            route.destination
+        ].filter((l) => isValidCoordinate(l));
+
+        setSelectedStops(stopsList);
+        setNewStopCandidate(null);
+        setError("");
+        setSuccessMessage("");
+
+        if (temporaryMarkerRef.current) {
+            temporaryMarkerRef.current.remove();
+            temporaryMarkerRef.current = null;
+        }
+
+        redrawRoadRoute(stopsList);
     };
 
     const deleteRoute = async (route) => {
@@ -643,9 +621,10 @@ export default function RouteManagement() {
             if (editingRoute?._id === route._id) {
                 clearRoute();
             }
+            setSuccessMessage(`Route "${route.routeName}" deleted successfully.`);
         } catch (err) {
             console.error("Delete Route Error:", err);
-            setError("Unable to delete route.");
+            setError(err.response?.data?.message || err.message || "Unable to delete route.");
         } finally {
             setLoading(false);
         }
@@ -654,10 +633,9 @@ export default function RouteManagement() {
     const clearRoute = () => {
         setEditingRoute(null);
         setRouteName("");
-        setRouteStops([]);
-        setDestination(null);
         setSelectedVehicle("");
-        setSelectedLocation(null);
+        setSelectedStops([]);
+        setNewStopCandidate(null);
         setError("");
 
         if (lineRef.current) {
@@ -665,7 +643,7 @@ export default function RouteManagement() {
             lineRef.current = null;
         }
 
-        markersRef.current.forEach((marker) => marker.remove());
+        markersRef.current.forEach((m) => m.remove());
         markersRef.current = [];
 
         if (temporaryMarkerRef.current) {
@@ -676,9 +654,7 @@ export default function RouteManagement() {
 
     const newRoute = () => {
         clearRoute();
-        if (mapRef.current) {
-            mapRef.current.setView([13.0827, 80.2707], 12);
-        }
+        setSuccessMessage("");
     };
 
     const panMap = (direction) => {
@@ -700,18 +676,28 @@ export default function RouteManagement() {
         }, 250);
     };
 
-    const assignedVehicleObj = vehicles.find(
-        (v) => String(v._id) === String(selectedVehicle)
-    );
-
     return (
         <div className={`route-container ${fullscreen ? "route-fullscreen" : ""}`}>
             {!fullscreen && <h2>🛣️ Route Management</h2>}
 
             {error && <div className="route-error">{error}</div>}
+            {successMessage && (
+                <div style={{
+                    padding: "10px 14px",
+                    background: "#ecfdf5",
+                    color: "#047857",
+                    borderRadius: "10px",
+                    border: "1px solid #a7f3d0",
+                    marginBottom: "16px",
+                    fontWeight: "600",
+                    fontSize: "13px"
+                }}>
+                    ✓ {successMessage}
+                </div>
+            )}
 
             <div className="route-layout">
-                {/* 100% FULL ACCESS INTERACTIVE MAP */}
+                {/* 100% INTERACTIVE ROAD MAP */}
                 <div className="map-section">
                     <button className="fullscreen-button" onClick={toggleFullscreen}>
                         {fullscreen ? "✕ Exit Fullscreen" : "⛶ Fullscreen"}
@@ -719,20 +705,12 @@ export default function RouteManagement() {
 
                     {/* MAP PAN CONTROLS */}
                     <div className="map-pan-controls">
-                        <button onClick={() => panMap("up")} title="Move map up">
-                            ↑
-                        </button>
+                        <button onClick={() => panMap("up")} title="Move map up">↑</button>
                         <div>
-                            <button onClick={() => panMap("left")} title="Move map left">
-                                ←
-                            </button>
-                            <button onClick={() => panMap("right")} title="Move map right">
-                                →
-                            </button>
+                            <button onClick={() => panMap("left")} title="Move map left">←</button>
+                            <button onClick={() => panMap("right")} title="Move map right">→</button>
                         </div>
-                        <button onClick={() => panMap("down")} title="Move map down">
-                            ↓
-                        </button>
+                        <button onClick={() => panMap("down")} title="Move map down">↓</button>
                     </div>
 
                     <div ref={mapContainerRef} className="route-map" />
@@ -777,141 +755,7 @@ export default function RouteManagement() {
                                         : "Outward Route (Source → Residential Network)"}
                                 </p>
 
-                                {/* Route Details Grid */}
-                                <div style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "1fr 1fr",
-                                    gap: "10px",
-                                    background: "#ffffff",
-                                    padding: "12px",
-                                    borderRadius: "10px",
-                                    border: "1px solid #e2e8f0",
-                                    marginBottom: "16px",
-                                    fontSize: "12.5px"
-                                }}>
-                                    <div>
-                                        <span style={{ display: "block", color: "#64748b", fontSize: "11px" }}>Assigned Vehicle</span>
-                                        <strong style={{ color: "#0f172a" }}>🚌 {aiViewingRoute.vehicleName || aiViewingRoute.vehicleId || "Bus"}</strong>
-                                    </div>
-                                    <div>
-                                        <span style={{ display: "block", color: "#64748b", fontSize: "11px" }}>Passenger Capacity</span>
-                                        <strong style={{ color: "#16a34a" }}>👥 {aiViewingRoute.assignedUsers || 0} / {aiViewingRoute.capacity || 0} seats</strong>
-                                    </div>
-                                    <div>
-                                        <span style={{ display: "block", color: "#64748b", fontSize: "11px" }}>Total Stops</span>
-                                        <strong style={{ color: "#0f172a" }}>📍 {aiViewingRoute.stops?.length || 0} stops</strong>
-                                    </div>
-                                    <div>
-                                        <span style={{ display: "block", color: "#64748b", fontSize: "11px" }}>Road Distance</span>
-                                        <strong style={{ color: "#2563eb" }}>🛣️ {aiViewingRoute.routeDistanceKm ? `${aiViewingRoute.routeDistanceKm} km` : "Optimized"}</strong>
-                                    </div>
-                                </div>
-
-                                {/* Stops Timeline */}
-                                <div style={{ marginBottom: "16px" }}>
-                                    <h4 style={{ margin: "0 0 10px", fontSize: "13px", color: "#334155", fontWeight: "700" }}>
-                                        📍 Stop Progression ({aiViewingRoute.stops?.length || 0} stops)
-                                    </h4>
-
-                                    <div style={{
-                                        maxHeight: "260px",
-                                        overflowY: "auto",
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: "8px",
-                                        paddingRight: "4px"
-                                    }}>
-                                        {/* Outward Source */}
-                                        {!(aiViewingRoute.tripMode === "TO_DESTINATION" || aiViewingRoute.tripMode === "INWARD") && aiViewingRoute.sourceHub && (
-                                            <div style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "10px",
-                                                background: "#eff6ff",
-                                                padding: "8px 10px",
-                                                borderRadius: "8px",
-                                                fontSize: "12px",
-                                                border: "1px solid #dbeafe"
-                                            }}>
-                                                <span style={{ fontSize: "16px" }}>🏫</span>
-                                                <div style={{ flex: 1 }}>
-                                                    <strong style={{ color: "#1e40af" }}>{aiViewingRoute.sourceHub.name || "Source"}</strong>
-                                                    <div style={{ fontSize: "10.5px", color: "#60a5fa" }}>Departure Hub (Start)</div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {aiViewingRoute.stops?.map((stop, idx) => (
-                                            <div key={idx} style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "10px",
-                                                background: "#ffffff",
-                                                padding: "8px 10px",
-                                                borderRadius: "8px",
-                                                fontSize: "12px",
-                                                border: "1px solid #e2e8f0"
-                                            }}>
-                                                <span style={{
-                                                    background: "#2563eb",
-                                                    color: "#fff",
-                                                    width: "22px",
-                                                    height: "22px",
-                                                    borderRadius: "50%",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    fontSize: "11px",
-                                                    fontWeight: "800",
-                                                    flexShrink: 0
-                                                }}>
-                                                    {idx + 1}
-                                                </span>
-                                                <div style={{ flex: 1 }}>
-                                                    <strong style={{ color: "#0f172a" }}>{stop.name}</strong>
-                                                    <div style={{ fontSize: "11px", color: "#64748b" }}>
-                                                        👥 {stop.userCount || stop.userIds?.length || 0} passengers
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-
-                                        {/* Inward Destination */}
-                                        {(aiViewingRoute.tripMode === "TO_DESTINATION" || aiViewingRoute.tripMode === "INWARD") && aiViewingRoute.destinationHub && (
-                                            <div style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "10px",
-                                                background: "#f0fdf4",
-                                                padding: "8px 10px",
-                                                borderRadius: "8px",
-                                                fontSize: "12px",
-                                                border: "1px solid #bbf7d0"
-                                            }}>
-                                                <span style={{ fontSize: "16px" }}>🏁</span>
-                                                <div style={{ flex: 1 }}>
-                                                    <strong style={{ color: "#166534" }}>{aiViewingRoute.destinationHub.name || "Destination"}</strong>
-                                                    <div style={{ fontSize: "10.5px", color: "#4ade80" }}>Arrival Hub (Terminus)</div>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div style={{
-                                    background: "#fffbeb",
-                                    border: "1px solid #fde68a",
-                                    padding: "10px 12px",
-                                    borderRadius: "8px",
-                                    fontSize: "11.5px",
-                                    color: "#92400e",
-                                    marginBottom: "16px"
-                                }}>
-                                    ℹ️ <b>Note:</b> Viewing this AI route does not modify or overwrite manual administrator routes.
-                                </div>
-
-                                {/* Action Buttons */}
-                                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "14px" }}>
                                     <button
                                         type="button"
                                         style={{
@@ -953,12 +797,12 @@ export default function RouteManagement() {
                             </section>
                         ) : (
                             <>
-                                {/* ROUTE INFO */}
+                                {/* 1. ROUTE DETAILS & BUS ALLOCATION */}
                                 <section className="route-card">
                                     <div className="route-title-row">
                                         <div>
-                                            <h3>🛣️ Route Details</h3>
-                                            <p>Create a route and add multiple stops along transit corridors.</p>
+                                            <h3>🛣️ Manual Route Creation</h3>
+                                            <p>Administrator defines route name, vehicle, and ordered route stops.</p>
                                         </div>
 
                                         <button className="new-route-button" onClick={newRoute}>
@@ -966,64 +810,64 @@ export default function RouteManagement() {
                                         </button>
                                     </div>
 
-                                    <label>Route Name / Number</label>
-                                    <input
-                                        value={routeName}
-                                        onChange={(e) => setRouteName(e.target.value)}
-                                        placeholder="Example: Route 1 - Chennai Corridor"
-                                    />
-                                </section>
-
-                                {/* BUS ALLOCATION */}
-                                <section className="route-card bus-allocation-card">
-                                    <div className="section-title">
-                                        <div>
-                                            <h3>🚌 Allocate Bus</h3>
-                                            <p className="help-text">Select the bus that will operate this route.</p>
-                                        </div>
-                                        {selectedVehicle && (
-                                            <span className="allocation-status">Bus Assigned</span>
-                                        )}
+                                    <div style={{ marginBottom: "14px" }}>
+                                        <label>Route Name / Number</label>
+                                        <input
+                                            value={routeName}
+                                            onChange={(e) => setRouteName(e.target.value)}
+                                            placeholder="Example: Route 1 (or R-01, Madurai Morning Route)"
+                                        />
                                     </div>
 
-                                    <label>Select Vehicle</label>
-                                    <select
-                                        value={selectedVehicle}
-                                        onChange={(e) => setSelectedVehicle(e.target.value)}
-                                    >
-                                        <option value="">-- Select Bus --</option>
-                                        {vehicles.map((vehicle) => (
-                                            <option key={vehicle._id} value={vehicle._id}>
-                                                {vehicle.vehicleName} — {vehicle.capacity} seats
-                                            </option>
-                                        ))}
-                                    </select>
-
-                                    {assignedVehicleObj && (
-                                        <div className="selected-bus">
-                                            <span className="bus-icon">🚌</span>
-                                            <div>
-                                                <strong>{assignedVehicleObj.vehicleName}</strong>
-                                                <small>{assignedVehicleObj.capacity} seats capacity</small>
-                                            </div>
+                                    <div>
+                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                            <label style={{ margin: 0 }}>Allocate Bus / Vehicle</label>
+                                            {selectedVehicle && (
+                                                <span className="allocation-status">Bus Assigned</span>
+                                            )}
                                         </div>
-                                    )}
+                                        <select
+                                            value={selectedVehicle}
+                                            onChange={(e) => setSelectedVehicle(e.target.value)}
+                                        >
+                                            <option value="">-- Select Available Scheduled Bus --</option>
+                                            {availableVehicles.map((vehicle) => (
+                                                <option key={vehicle._id} value={vehicle._id}>
+                                                    {vehicle.vehicleName} — {vehicle.capacity} seats
+                                                </option>
+                                            ))}
+                                        </select>
+
+                                        {assignedVehicleObj && (
+                                            <div className="selected-bus">
+                                                <span className="bus-icon">🚌</span>
+                                                <div>
+                                                    <strong>{assignedVehicleObj.vehicleName}</strong>
+                                                    <small>{assignedVehicleObj.capacity} seats capacity</small>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </section>
 
-                                {/* LOCATION SEARCH */}
+                                {/* 2. SINGLE UNIFIED ROUTE STOP BUILDER */}
                                 <section className="route-card">
-                                    <h3>📍 Add Route Location</h3>
+                                    <div className="section-title">
+                                        <h3>📍 Route Stops ({selectedStops.length})</h3>
+                                        <span>{selectedStops.length} stops</span>
+                                    </div>
                                     <p className="help-text">
-                                        Search globally (city, college, hospital, station, airport, landmark), or click directly on the map.
+                                        Search any global location or click directly on the map to add stops to the route sequence.
                                     </p>
 
-                                    <div className="search-row-global">
+                                    {/* SINGLE UNIFIED SEARCH BOX */}
+                                    <div style={{ marginBottom: "12px" }}>
                                         <LocationSearchBox
-                                            placeholder="Search location (Chennai, Tambaram, Airport, Station, College)..."
-                                            selectedLocation={selectedLocation}
-                                            onSelectLocation={(loc) => selectSearchResult(loc)}
+                                            placeholder="Search any location (e.g. Periyar Bus Stand, SIMMAKKAL, Arappalayam)..."
+                                            selectedLocation={newStopCandidate}
+                                            onSelectLocation={handleSelectStopCandidate}
                                             onClear={() => {
-                                                setSelectedLocation(null);
+                                                setNewStopCandidate(null);
                                                 if (temporaryMarkerRef.current) {
                                                     temporaryMarkerRef.current.remove();
                                                     temporaryMarkerRef.current = null;
@@ -1032,106 +876,102 @@ export default function RouteManagement() {
                                         />
                                     </div>
 
-                                    {selectedLocation && (
-                                        <div className="selected-location">
+                                    {/* CANDIDATE STOP ADD ACTION */}
+                                    {newStopCandidate && (
+                                        <div className="selected-location" style={{ marginBottom: "14px" }}>
                                             <div>
-                                                <strong>{selectedLocation.name}</strong>
+                                                <strong>{newStopCandidate.name}</strong>
                                                 <p style={{ margin: "2px 0 4px 0", fontSize: "12px", color: "#64748b" }}>
-                                                    {selectedLocation.address}
+                                                    {newStopCandidate.address}
                                                 </p>
                                                 <small>
-                                                    {Number(selectedLocation.latitude).toFixed(5)}, {Number(selectedLocation.longitude).toFixed(5)}
+                                                    {Number(newStopCandidate.latitude).toFixed(5)}, {Number(newStopCandidate.longitude).toFixed(5)}
                                                 </small>
                                             </div>
 
                                             <div className="location-actions">
-                                                <button onClick={addLocationToRoute}>+ Add Stop</button>
-                                                <button onClick={setDestinationLocation}>Set Destination</button>
+                                                <button type="button" onClick={handleAddStopToRoute}>
+                                                    + Add Stop
+                                                </button>
                                             </div>
                                         </div>
                                     )}
-                                </section>
-
-                                {/* ROUTE STOPS LIST */}
-                                <section className="route-card">
-                                    <div className="section-title">
-                                        <h3>📍 Route Stops ({routeStops.length})</h3>
-                                        <span>{routeStops.length} stops</span>
-                                    </div>
 
                                     {routingLoading && (
                                         <div className="routing-status">Calculating road route...</div>
                                     )}
 
-                                    {routeStops.length === 0 ? (
+                                    {/* UNIFIED ORDERED SEQUENCE */}
+                                    {selectedStops.length === 0 ? (
                                         <div className="empty-stops">
                                             No stops added yet.<br />
-                                            Search for a place above or click on the map to pin stops.
+                                            Search for a location above or click on the map to begin building the route.
                                         </div>
                                     ) : (
-                                        <div className="route-stop-list">
-                                            {routeStops.map((stop, index) => (
-                                                <div className="route-stop" key={`${stop.name}-${index}`}>
-                                                    <span className="stop-number">{index + 1}</span>
+                                        <div className="unified-route-builder">
+                                            {selectedStops.map((stop, index) => {
+                                                const stopNumber = index + 1;
 
-                                                    <div className="stop-info">
-                                                        <strong>{stop.name}</strong>
-                                                        {stop.address && stop.address !== stop.name && (
-                                                            <p style={{ margin: "1px 0", fontSize: "11px", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                                {stop.address}
-                                                            </p>
+                                                return (
+                                                    <div key={`${stop.name}-${index}`}>
+                                                        <div className="unified-route-item is-stop">
+                                                            <div className="unified-route-icon stop-icon">
+                                                                {stopNumber}
+                                                            </div>
+
+                                                            <div className="unified-route-content">
+                                                                <strong>📍 {stop.name}</strong>
+                                                                {stop.address && stop.address !== stop.name && (
+                                                                    <p>{stop.address}</p>
+                                                                )}
+                                                                <span className="unified-role-tag stop-tag">
+                                                                    Stop {stopNumber}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="unified-route-actions">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => moveStop(index, -1)}
+                                                                    disabled={index === 0}
+                                                                    title="Move stop up"
+                                                                >
+                                                                    ↑
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => moveStop(index, 1)}
+                                                                    disabled={index === selectedStops.length - 1}
+                                                                    title="Move stop down"
+                                                                >
+                                                                    ↓
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="remove-btn"
+                                                                    onClick={() => removeStop(index)}
+                                                                    title="Remove stop"
+                                                                >
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        {index < selectedStops.length - 1 && (
+                                                            <div className="unified-route-connector">
+                                                                ↓
+                                                            </div>
                                                         )}
-                                                        <small>
-                                                            {Number(stop.latitude).toFixed(4)}, {Number(stop.longitude).toFixed(4)}
-                                                        </small>
                                                     </div>
-
-                                                    <div className="stop-actions">
-                                                        <button
-                                                            onClick={() => moveStop(index, -1)}
-                                                            disabled={index === 0}
-                                                            title="Move stop up"
-                                                        >
-                                                            ↑
-                                                        </button>
-                                                        <button
-                                                            onClick={() => moveStop(index, 1)}
-                                                            disabled={index === routeStops.length - 1}
-                                                            title="Move stop down"
-                                                        >
-                                                            ↓
-                                                        </button>
-                                                        <button
-                                                            onClick={() => removeStop(index)}
-                                                            title="Remove stop"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     )}
 
-                                    {/* DESTINATION */}
-                                    {destination && (
-                                        <div className="destination-box">
-                                            <span className="stop-number">🏁</span>
-                                            <div className="stop-info">
-                                                <strong>Destination: {destination.name}</strong>
-                                                {destination.address && (
-                                                    <p style={{ margin: "1px 0", fontSize: "11px", color: "#64748b" }}>
-                                                        {destination.address}
-                                                    </p>
-                                                )}
-                                                <small>
-                                                    {Number(destination.latitude).toFixed(4)}, {Number(destination.longitude).toFixed(4)}
-                                                </small>
-                                            </div>
-                                            <button onClick={() => setDestination(null)} title="Remove destination">
-                                                ✕
-                                            </button>
-                                        </div>
+                                    {selectedStops.length === 1 && (
+                                        <p style={{ marginTop: "10px", fontSize: "12px", color: "#f59e0b", fontWeight: "600" }}>
+                                            ⚠️ Please add at least two stops to complete the route.
+                                        </p>
                                     )}
                                 </section>
 
@@ -1149,14 +989,14 @@ export default function RouteManagement() {
                                             : "✓ Save Route"}
                                     </button>
 
-                                    {(editingRoute || routeStops.length > 0) && (
+                                    {(editingRoute || selectedStops.length > 0 || routeName) && (
                                         <button className="clear-route-button" onClick={clearRoute}>
-                                            Clear
+                                            {editingRoute ? "Cancel Edit" : "Clear Form"}
                                         </button>
                                     )}
                                 </div>
 
-                                {/* SAVED ROUTES */}
+                                {/* 3. SAVED ROUTES LIST */}
                                 <section className="route-card">
                                     <div className="section-title">
                                         <h3>Saved Routes ({routes.length})</h3>
@@ -1164,7 +1004,7 @@ export default function RouteManagement() {
                                     </div>
 
                                     {routes.length === 0 ? (
-                                        <div className="empty-stops">No saved routes found.</div>
+                                        <div className="empty-stops">No saved routes found. Create a route above.</div>
                                     ) : (
                                         <div className="saved-routes">
                                             {routes.map((route) => {
@@ -1176,6 +1016,7 @@ export default function RouteManagement() {
                                                     route.assignedVehicle?.capacity ||
                                                     route.capacity ||
                                                     0;
+                                                const source = route.source;
                                                 const stops = Array.isArray(route.stops) ? route.stops : [];
                                                 const dest = route.destination;
 
@@ -1189,16 +1030,21 @@ export default function RouteManagement() {
                                                         </div>
 
                                                         <div className="route-preview">
-                                                            {stops.length === 0 ? (
-                                                                <span>No stops configured</span>
-                                                            ) : (
-                                                                stops.map((stop, sIdx) => (
-                                                                    <span key={`${stop.name}-${sIdx}`}>
-                                                                        {stop.name} →{" "}
-                                                                    </span>
-                                                                ))
+                                                            {source && (
+                                                                <span style={{ color: "#4f46e5", fontWeight: "600" }}>
+                                                                    {source.name} →{" "}
+                                                                </span>
                                                             )}
-                                                            {dest && <strong>🏁 {dest.name}</strong>}
+                                                            {stops.map((stop, sIdx) => (
+                                                                <span key={`${stop.name}-${sIdx}`}>
+                                                                    {stop.name} →{" "}
+                                                                </span>
+                                                            ))}
+                                                            {dest && (
+                                                                <strong style={{ color: "#16a34a" }}>
+                                                                    🏁 {dest.name}
+                                                                </strong>
+                                                            )}
                                                         </div>
 
                                                         <div className="saved-route-actions">

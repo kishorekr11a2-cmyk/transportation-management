@@ -2,6 +2,23 @@ import xlsx from "xlsx";
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 
+// Helper to look up key case-insensitively with alias support
+const getFieldValue = (row, ...keys) => {
+    for (const key of keys) {
+        if (row[key] !== undefined && row[key] !== null) {
+            return row[key].toString().trim();
+        }
+        const lowerKey = key.toLowerCase().replace(/[\s_-]/g, "");
+        const matched = Object.keys(row).find(
+            (k) => k.toLowerCase().replace(/[\s_-]/g, "") === lowerKey
+        );
+        if (matched && row[matched] !== undefined && row[matched] !== null) {
+            return row[matched].toString().trim();
+        }
+    }
+    return "";
+};
+
 export const uploadExcel = async (req, res) => {
     try {
         if (!req.file) {
@@ -12,33 +29,74 @@ export const uploadExcel = async (req, res) => {
         }
 
         const workbook = xlsx.readFile(req.file.path);
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const sheetNames = workbook.SheetNames;
+        if (!sheetNames || sheetNames.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Excel workbook contains no sheets."
+            });
+        }
+
+        const sheet = workbook.Sheets[sheetNames[0]];
         const data = xlsx.utils.sheet_to_json(sheet);
 
-        if (data.length === 0) {
+        if (!data || data.length === 0) {
             return res.status(400).json({
                 success: false,
                 message: "Excel file is empty."
             });
         }
 
-        const validRows = data.filter(
-            row => row.userId && row.name && row.stoppings
+        // ==========================================
+        // 6 REQUIRED COLUMNS VALIDATION
+        // ==========================================
+        const sampleRow = data[0];
+        const rowKeys = Object.keys(sampleRow).map((k) =>
+            k.toLowerCase().replace(/[\s_-]/g, "")
         );
+
+        const REQUIRED_COLUMNS = [
+            { field: "userId", aliases: ["userid", "user_id", "id"] },
+            { field: "name", aliases: ["name", "studentname", "username"] },
+            { field: "stoppings", aliases: ["stoppings", "stopping", "stop", "stoppingarea"] },
+            { field: "city", aliases: ["city"] },
+            { field: "state", aliases: ["state"] },
+            { field: "country", aliases: ["country"] }
+        ];
+
+        for (const reqCol of REQUIRED_COLUMNS) {
+            const hasCol = reqCol.aliases.some((alias) => rowKeys.includes(alias));
+            if (!hasCol) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Missing required column: ${reqCol.field}. Required columns: userId, name, stoppings, city, state, country.`
+                });
+            }
+        }
+
+        const validRows = data.filter((row) => {
+            const userId = getFieldValue(row, "userId", "user_id", "id");
+            const name = getFieldValue(row, "name", "studentName", "userName");
+            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
+            return Boolean(userId && name && stoppings);
+        });
 
         if (validRows.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: "No valid users found in Excel file."
+                message: "No valid user records found in Excel. Each row must have userId, name, and stoppings."
             });
         }
 
         const users = [];
 
         for (const row of validRows) {
-            const userId = row.userId.toString().trim();
-            const name = row.name.toString().trim();
-            const stoppings = row.stoppings.toString().trim();
+            const userId = getFieldValue(row, "userId", "user_id", "id");
+            const name = getFieldValue(row, "name", "studentName", "userName");
+            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
+            const city = getFieldValue(row, "city");
+            const state = getFieldValue(row, "state");
+            const country = getFieldValue(row, "country");
 
             const existingUser = await User.findOne({
                 userId,
@@ -46,7 +104,6 @@ export const uploadExcel = async (req, res) => {
             });
 
             let password;
-
             if (existingUser?.password) {
                 password = existingUser.password;
             } else {
@@ -57,14 +114,16 @@ export const uploadExcel = async (req, res) => {
                 userId,
                 name,
                 stoppings,
+                city,
+                state,
+                country,
                 password,
                 role: "student",
                 travelStatus: "Coming"
             });
         }
 
-        // Remove only old student users.
-        // Admin users are never touched.
+        // Remove only old student users. Admin users are preserved.
         await User.deleteMany({
             role: "student"
         });
@@ -78,7 +137,7 @@ export const uploadExcel = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            message: "Excel data synchronized successfully.",
+            message: `Excel data synchronized successfully. ${users.length} users imported.`,
             totalUsers
         });
 
