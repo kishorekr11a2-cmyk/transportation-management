@@ -25,6 +25,13 @@ const aiPlanSchema = new mongoose.Schema(
             default: "INWARD"
         },
 
+        direction: {
+            type: String,
+            enum: ["OUTWARD", "INWARD"],
+            default: "INWARD",
+            index: true
+        },
+
         source: {
             type: mongoose.Schema.Types.Mixed,
             default: null
@@ -75,14 +82,60 @@ const aiPlanSchema = new mongoose.Schema(
             default: Date.now
         },
 
+        isApproved: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        approvedAt: {
+            type: Date,
+            default: null
+        },
+
         resetAt: {
             type: Date,
             default: null
+        },
+
+        // ── Late-Response Review State ──────────────────────────────
+        // Set to true when a student submits a Coming response AFTER
+        // this plan was approved, requiring admin to review/regenerate.
+        requiresReview: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        hasLateResponses: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        pendingReallocation: {
+            type: Boolean,
+            default: false
+        },
+
+        lastLateResponseAt: {
+            type: Date,
+            default: null
+        },
+
+        affectedDirections: {
+            type: [String],
+            default: []
         }
     },
     {
         timestamps: true
     }
 );
+
+aiPlanSchema.index({ active: 1, status: 1, direction: 1, createdAt: -1 });
+aiPlanSchema.index({ active: 1, status: 1, isApproved: 1, direction: 1 });
+aiPlanSchema.index({ active: 1, isApproved: 1, requiresReview: 1 });
+aiPlanSchema.index({ active: 1, isApproved: 1, hasLateResponses: 1 });
 
 export default mongoose.model("AiPlan", aiPlanSchema);

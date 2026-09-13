@@ -201,41 +201,221 @@
 .status-tag.tag-red { background: #fee2e2; color: #991b1b; }
 .status-tag.tag-amber { background: #fef3c7; color: #92400e; }
 
-.travel-buttons {
+/* Travel Response Buttons & Cards */
+.travel-response-buttons-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 14px;
+    width: 100%;
+}
+
+.travel-response-card {
     display: flex;
-    gap: 12px;
-    margin-top: 10px;
-}
-
-.primary-btn {
-    flex: 1;
-    padding: 12px 18px;
-    border: none;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 600;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
+    min-height: 96px;
+    padding: 16px 20px;
+    background: #ffffff;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 14px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    text-align: left;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.btn-coming {
+.travel-btn-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin-bottom: 6px;
+}
+
+.travel-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 15px;
+    font-weight: 800;
+    flex-shrink: 0;
+    transition: all 0.18s ease;
+}
+
+.travel-btn-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+}
+
+.travel-btn-selected-badge {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.travel-btn-desc {
+    font-size: 13px;
+    color: #64748b;
+    line-height: 1.45;
+    margin: 0;
+    padding-left: 44px;
+    white-space: normal;
+    word-break: break-word;
+}
+
+/* Coming Card (Green Theme) */
+.card-coming .travel-btn-icon {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1.5px solid #bbf7d0;
+}
+
+.card-coming:hover:not(:disabled) {
+    background: #f0fdf4;
+    border-color: #16a34a;
+    box-shadow: 0 4px 14px rgba(22, 163, 74, 0.12);
+}
+
+.card-coming:hover:not(:disabled) .travel-btn-icon {
     background: #16a34a;
     color: #ffffff;
+    border-color: #16a34a;
 }
 
-.btn-coming:hover {
-    background: #15803d;
-    box-shadow: 0 4px 14px rgba(22, 163, 74, 0.3);
+.card-coming.is-selected {
+    background: #f0fdf4;
+    border: 2px solid #16a34a;
+    box-shadow: 0 4px 16px rgba(22, 163, 74, 0.14);
+    cursor: default;
 }
 
-.btn-not-coming {
-    background: #ef4444;
+.card-coming.is-selected .travel-btn-icon {
+    background: #16a34a;
     color: #ffffff;
+    border-color: #16a34a;
 }
 
-.btn-not-coming:hover {
+.card-coming.is-selected .travel-btn-title {
+    color: #15803d;
+}
+
+.card-coming .travel-btn-selected-badge {
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+}
+
+/* Not Coming Card (Red Theme) */
+.card-not-coming .travel-btn-icon {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1.5px solid #fecaca;
+}
+
+.card-not-coming:hover:not(:disabled) {
+    background: #fef2f2;
+    border-color: #dc2626;
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.12);
+}
+
+.card-not-coming:hover:not(:disabled) .travel-btn-icon {
     background: #dc2626;
-    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+    color: #ffffff;
+    border-color: #dc2626;
+}
+
+.card-not-coming.is-selected {
+    background: #fef2f2;
+    border: 2px solid #dc2626;
+    box-shadow: 0 4px 16px rgba(220, 38, 38, 0.14);
+    cursor: default;
+}
+
+.card-not-coming.is-selected .travel-btn-icon {
+    background: #dc2626;
+    color: #ffffff;
+    border-color: #dc2626;
+}
+
+.card-not-coming.is-selected .travel-btn-title {
+    color: #b91c1c;
+}
+
+.card-not-coming .travel-btn-selected-badge {
+    background: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}
+
+/* Unselected & Disabled States */
+.travel-response-card.is-unselected {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    opacity: 0.52;
+    cursor: not-allowed;
+}
+
+.travel-response-card.is-unselected .travel-btn-title,
+.travel-response-card.is-unselected .travel-btn-desc {
+    color: #94a3b8;
+}
+
+.travel-response-card.is-unselected .travel-btn-icon {
+    background: #f1f5f9;
+    color: #94a3b8;
+    border-color: #e2e8f0;
+}
+
+.travel-response-card.is-submitting {
+    border-color: #2563eb;
+    background: #f8fafc;
+    cursor: wait !important;
+}
+
+.travel-response-card.is-submitting .travel-btn-title {
+    color: #2563eb;
+}
+
+.travel-response-card:disabled:not(.is-selected):not(.is-unselected) {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.btn-spinner-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #cbd5e1;
+    border-radius: 50%;
+    border-top-color: #2563eb;
+    animation: btnSpin 0.6s linear infinite;
+    vertical-align: middle;
+}
+
+@keyframes btnSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.travel-response-lock-box {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
 .status-confirmed-box {
@@ -633,6 +813,202 @@
     color: #cbd5e1;
 }
 
+/* ==========================================================================
+   PENDING REALLOCATION STYLES
+   ========================================================================== */
+
+.allocation-badge.badge-pending-realloc {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
+.late-response-flag-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 12px 0 14px 0;
+    text-align: left;
+}
+
+.late-flag-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.late-flag-text strong {
+    font-size: 13px;
+    color: #92400e;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.late-flag-text p {
+    font-size: 12px;
+    color: #b45309;
+    margin: 0;
+    line-height: 1.4;
+}
+
+.bus-pending-reallocation-state {
+    text-align: center;
+    padding: 36px 24px;
+    background: #fffdfa;
+    border-radius: 16px;
+    border: 1.5px dashed #fcd34d;
+}
+
+.realloc-icon-box {
+    font-size: 38px;
+    margin-bottom: 12px;
+}
+
+.bus-pending-reallocation-state h3 {
+    font-size: 19px;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0 0 8px 0;
+}
+
+.realloc-desc {
+    font-size: 14px;
+    color: #334155;
+    max-width: 580px;
+    margin: 0 auto 8px auto;
+    line-height: 1.5;
+}
+
+.realloc-detail {
+    font-size: 13px;
+    color: #64748b;
+    max-width: 580px;
+    margin: 0 auto 18px auto;
+    line-height: 1.5;
+}
+
+.realloc-affected-dirs {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 22px;
+}
+
+.realloc-affected-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #92400e;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.realloc-tags-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.realloc-tag {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.realloc-tag--inward {
+    background: #e0e7ff;
+    color: #3730a3;
+    border: 1px solid #c7d2fe;
+}
+
+.realloc-tag--outward {
+    background: #fae8ff;
+    color: #86198f;
+    border: 1px solid #f5d0fe;
+}
+
+/* Direction-Specific Pending Notice Card */
+.bus-pending-realloc-card {
+    background: #fffdfa;
+    border: 1.5px solid #fde68a;
+    border-left: 4px solid #f59e0b;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+}
+
+.pending-realloc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #fef3c7;
+}
+
+.dir-indicator-label {
+    font-weight: 700;
+    font-size: 14px;
+    color: #1e293b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dir-sub {
+    color: #64748b;
+    font-weight: 400;
+    font-size: 13px;
+}
+
+.pending-realloc-badge {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+
+.pending-realloc-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.pending-realloc-warning-icon {
+    font-size: 22px;
+    flex-shrink: 0;
+}
+
+.pending-realloc-heading {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0 0 4px 0;
+}
+
+.pending-realloc-desc {
+    font-size: 13px;
+    color: #334155;
+    line-height: 1.5;
+    margin: 0 0 4px 0;
+}
+
+.pending-realloc-sub {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+    margin: 0;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     .student-dashboard {
@@ -666,5 +1042,17 @@
     .status-flow-hint {
         flex-direction: column;
         border-radius: 16px;
+    }
+}
+
+@media (max-width: 680px) {
+    .travel-response-buttons-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .travel-btn-desc {
+        padding-left: 0;
+        margin-top: 4px;
     }
 }

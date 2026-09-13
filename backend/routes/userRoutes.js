@@ -7,6 +7,8 @@ import adminMiddleware
 
 import {
     getUsers,
+    getLateResponses,
+    acknowledgeLateNotifications,
     getCurrentUser,
     getUserAllocation,
     updateTravelStatus,
@@ -18,6 +20,39 @@ import {
 
 
 const router = express.Router();
+
+
+// ===============================
+// Get Late Travel Responses (Admin)
+// ===============================
+
+router.get(
+    "/late-travel-responses",
+    authMiddleware,
+    getLateResponses
+);
+
+router.get(
+    "/late-responses",
+    authMiddleware,
+    getLateResponses
+);
+
+// ===============================
+// Acknowledge Late Response Notifications (Admin)
+// ===============================
+
+router.post(
+    "/acknowledge-late-notifications",
+    authMiddleware,
+    acknowledgeLateNotifications
+);
+
+router.post(
+    "/mark-late-notified",
+    authMiddleware,
+    acknowledgeLateNotifications
+);
 
 
 // ===============================

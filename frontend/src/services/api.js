@@ -24,7 +24,7 @@ export const getActiveToken = () => {
             try { sessionStorage.setItem("token", studentToken); } catch {}
             return studentToken;
         }
-    } else if (path.includes("admin") || path.includes("ai-agent") || path.includes("routes") || path.includes("users") || path.includes("schedule") || path.includes("vehicles") || path.includes("excel")) {
+    } else if (path.includes("admin") || path.includes("ai-agent") || path.includes("routes") || path.includes("user") || path.includes("schedule") || path.includes("vehicles") || path.includes("excel")) {
         const adminToken = localStorage.getItem("admin_token") || localStorage.getItem("token");
         if (adminToken) {
             try { sessionStorage.setItem("token", adminToken); } catch {}
@@ -45,9 +45,32 @@ api.interceptors.request.use(
             config.headers.Authorization = `Bearer ${token}`;
         }
 
+        if (import.meta.env?.DEV) {
+            console.log("[API START]", (config.method || "get").toUpperCase(), config.url);
+        }
+
         return config;
     },
-    (error) => Promise.reject(error)
+    (error) => {
+        console.error("[API REQUEST ERROR]", error?.message);
+        return Promise.reject(error);
+    }
+);
+
+// Response Interceptor for timing and clean error propagation
+api.interceptors.response.use(
+    (response) => {
+        if (import.meta.env?.DEV) {
+            console.log("[API END]", response.config?.url, response.status);
+        }
+        return response;
+    },
+    (error) => {
+        if (import.meta.env?.DEV) {
+            console.warn("[API ERROR]", error.config?.url, error.message);
+        }
+        return Promise.reject(error);
+    }
 );
 
 export default api;

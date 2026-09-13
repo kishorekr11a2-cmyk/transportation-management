@@ -53,15 +53,17 @@ const VehicleManagement = () => {
         document.addEventListener("visibilitychange", handleSync);
 
         const pollInterval = setInterval(() => {
-            getVehicles();
-        }, 5000);
+            if (document.visibilityState === "visible" && !showForm && !editId) {
+                getVehicles();
+            }
+        }, 15000);
 
         return () => {
             window.removeEventListener("focus", handleSync);
             document.removeEventListener("visibilitychange", handleSync);
             clearInterval(pollInterval);
         };
-    }, []);
+    }, [showForm, editId]);
 
 
     // ── Input Change ──────────────────────────────────────────

@@ -4,6 +4,7 @@ import adminMiddleware from "../middleware/adminMiddleware.js";
 
 import {
     getAIData,
+    getAIMetrics,
     searchPlaces,
     resolveLocation,
     generateAgentRecommendations,
@@ -14,8 +15,34 @@ import {
     resetAIPlanAndStudents
 } from "../services/aiAgentService.js";
 
+import {
+    regenerateLateResponsePlan,
+    getLateResponseDraft,
+    approveLateResponseDraft,
+    discardLateResponseDraft
+} from "../services/lateResponseRegenerationService.js";
+
 const router =
     express.Router();
+
+/*
+|--------------------------------------------------------------------------
+| AI METRICS (Fast Counts & Capacities)
+|--------------------------------------------------------------------------
+*/
+
+router.get("/metrics", async (req, res) => {
+    try {
+        const metrics = await getAIMetrics();
+        res.json(metrics);
+    } catch (error) {
+        console.error("AI metrics error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Unable to load AI transportation metrics."
+        });
+    }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -30,8 +57,9 @@ router.get(
         res
     ) => {
         try {
+            const metricsOnly = req.query.metricsOnly === "true";
             const data =
-                await getAIData();
+                await getAIData({ metricsOnly });
 
             res.json({
                 success: true,
@@ -242,7 +270,9 @@ router.post(
             const {
                 planType,
                 plan,
-                startingPoint
+                startingPoint,
+                direction,
+                tripMode
             } = req.body;
 
             if (
@@ -263,7 +293,9 @@ router.post(
                 await saveSelectedPlan({
                     planType,
                     plan,
-                    startingPoint
+                    startingPoint,
+                    direction: direction || plan?.direction || tripMode || plan?.tripMode,
+                    tripMode: tripMode || plan?.tripMode
                 });
 
             res.json(
@@ -303,7 +335,7 @@ router.get(
     ) => {
         try {
             const result =
-                await getSelectedPlan();
+                await getSelectedPlan(req.query);
 
             res.json(
                 result
@@ -344,7 +376,7 @@ router.get(
     ) => {
         try {
             const result =
-                await getActiveAIPlan();
+                await getActiveAIPlan(req.query);
 
             res.json(
                 result
@@ -386,8 +418,9 @@ router.post(
         res
     ) => {
         try {
+            const direction = req.body?.direction || req.query?.direction || null;
             const result =
-                await resetGeneratedAIRoute();
+                await resetGeneratedAIRoute({ direction });
 
             res.json(
                 result
@@ -407,6 +440,111 @@ router.post(
                 message:
                     error?.message ||
                     "Unable to reset AI transportation plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| REGENERATE LATE RESPONSE PLAN (Review-Only Draft)
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/regenerate-late-response-plan",
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const direction = req.body?.direction || req.query?.direction || "OUTWARD";
+            const result = await regenerateLateResponsePlan({ direction });
+            res.json(result);
+        } catch (error) {
+            console.error("Regenerate late response plan error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Failed to regenerate route for late responses."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| GET LATE RESPONSE DRAFT (Review State)
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+    "/late-response-draft",
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const direction = req.query?.direction || "OUTWARD";
+            const result = await getLateResponseDraft({ direction });
+            res.json(result);
+        } catch (error) {
+            console.error("Get late response draft error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Failed to fetch late response draft."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| APPROVE LATE RESPONSE PLAN (Commits Draft to Active Plan & Allocates)
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/approve-late-response-plan",
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const { direction, draftId } = req.body || {};
+            const result = await approveLateResponseDraft({
+                direction: direction || "OUTWARD",
+                draftId
+            });
+            res.json(result);
+        } catch (error) {
+            console.error("Approve late response plan error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Failed to approve regenerated transportation plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| DISCARD LATE RESPONSE DRAFT
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/discard-late-response-draft",
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const { direction } = req.body || {};
+            const result = await discardLateResponseDraft({
+                direction: direction || "OUTWARD"
+            });
+            res.json(result);
+        } catch (error) {
+            console.error("Discard late response draft error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Failed to discard draft plan."
             });
         }
     }

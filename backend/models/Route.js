@@ -73,11 +73,28 @@ const routeSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Vehicle",
             default: null
+        },
+
+        roadGeometry: {
+            type: Array,
+            default: []
+        },
+
+        direction: {
+            type: String,
+            enum: ["INWARD", "OUTWARD"],
+            default: "INWARD",
+            index: true
         }
     },
     {
         timestamps: true
     }
 );
+
+// Performance Indexes for route lookups and sorting
+routeSchema.index({ assignedVehicle: 1 });
+routeSchema.index({ direction: 1, createdAt: -1 });
+routeSchema.index({ createdAt: -1 });
 
 export default mongoose.model("Route", routeSchema);

@@ -153,8 +153,8 @@
 
 .user-metrics-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+    gap: 14px;
     max-width: 1320px;
     margin: 0 auto 28px auto;
 }
@@ -168,12 +168,18 @@
     align-items: center;
     gap: 14px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .metric-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+}
+
+.metric-card.active-filter-card {
+    border-color: #f59e0b !important;
+    background: #fffdfa;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18) !important;
 }
 
 .metric-icon-box {
@@ -213,6 +219,19 @@
     color: #0f172a;
     line-height: 1.2;
     margin-top: 2px;
+}
+
+.metric-loading-inline {
+    font-size: 16px;
+    font-weight: 700;
+    color: #94a3b8;
+    letter-spacing: 0.5px;
+    animation: metricPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes metricPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
 }
 
 /* ==========================================================================
@@ -629,6 +648,65 @@
     color: #b45309;
     border: 1px solid #fef3c7;
     font-weight: 700;
+}
+
+.tag-pending-reallocation {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.late-indicator-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 1px 6px;
+    width: fit-content;
+}
+
+.affected-dirs-list {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 3px;
+    flex-wrap: wrap;
+}
+
+.affected-dir-tag {
+    font-size: 9.5px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+}
+
+.affected-dir-tag--inward {
+    background: #e0e7ff;
+    color: #3730a3;
+    border: 1px solid #c7d2fe;
+}
+
+.affected-dir-tag--outward {
+    background: #fae8ff;
+    color: #86198f;
+    border: 1px solid #f5d0fe;
+}
+
+.late-response-time-sub {
+    font-size: 10.5px;
+    color: #64748b;
+    font-weight: 500;
+    margin-top: 2px;
 }
 
 .tag-not-applicable {
@@ -1072,7 +1150,223 @@
 }
 
 /* ==========================================================================
-   9. RESPONSIVE BREAKPOINTS
+   9. LATE TRAVEL RESPONSE POPUP & METRIC STYLES (5-SECOND NOTIFICATION)
+   ========================================================================== */
+
+.late-response-popup-container {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 99999;
+    width: 390px;
+    max-width: calc(100vw - 32px);
+    cursor: pointer;
+    animation: latePopupSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes latePopupSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-16px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.late-response-popup-card {
+    background: #ffffff;
+    border: 1.5px solid #fde68a;
+    border-left: 5px solid #f59e0b;
+    border-radius: 14px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.late-response-popup-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px -4px rgba(245, 158, 11, 0.2), 0 10px 14px -6px rgba(0, 0, 0, 0.1);
+}
+
+.late-response-popup-header {
+    display: flex;
+    gap: 12px;
+    padding: 16px 18px 12px;
+    align-items: flex-start;
+}
+
+.late-response-popup-icon-box {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: #fef3c7;
+    color: #d97706;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(217, 119, 6, 0.15);
+}
+
+.late-response-popup-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.late-response-popup-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.late-response-popup-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0;
+    letter-spacing: -0.2px;
+    font-family: 'Outfit', sans-serif;
+}
+
+.late-response-popup-close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+    line-height: 1;
+}
+
+.late-response-popup-close-btn:hover {
+    color: #0f172a;
+    background: #f1f5f9;
+}
+
+.late-response-popup-desc {
+    font-size: 13px;
+    color: #475569;
+    margin: 4px 0 8px;
+    line-height: 1.45;
+}
+
+.late-response-popup-desc strong {
+    color: #0f172a;
+}
+
+.late-response-popup-action-row {
+    display: flex;
+    align-items: center;
+}
+
+.late-response-popup-action-link {
+    font-size: 13px;
+    font-weight: 700;
+    color: #2563eb;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.late-response-popup-card:hover .late-response-popup-action-link {
+    color: #1d4ed8;
+    transform: translateX(2px);
+}
+
+.late-response-progress-track {
+    width: 100%;
+    height: 3.5px;
+    background: #fef3c7;
+    overflow: hidden;
+}
+
+.late-response-progress-bar {
+    height: 100%;
+    background: #f59e0b;
+    width: 100%;
+    animation: lateCountdown 5s linear forwards;
+}
+
+@keyframes lateCountdown {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0%;
+    }
+}
+
+/* Metric Card: Late Responses */
+.metric-card.metric-late-response {
+    border-left: 4px solid #f59e0b;
+}
+
+.metric-card.metric-late-response:hover {
+    box-shadow: 0 6px 20px rgba(245, 158, 11, 0.18);
+}
+
+/* Dedicated Late Response Table Styling */
+.row-late-responder {
+    background: #fffdf5 !important;
+}
+
+.row-late-responder:hover {
+    background: #fef3c7 !important;
+}
+
+.late-time-display {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.late-time-val {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+}
+
+.late-time-subtag {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #b45309;
+    background: #fef3c7;
+    padding: 1px 6px;
+    border-radius: 4px;
+    display: inline-block;
+    width: fit-content;
+    letter-spacing: 0.03em;
+}
+
+.late-time-subtag.approved-subtag {
+    color: #047857;
+    background: #d1fae5;
+}
+
+.seat-assigned-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    color: #1d4ed8;
+    background: #dbeafe;
+    padding: 2px 6px;
+    border-radius: 6px;
+    margin-top: 2px;
+    white-space: nowrap;
+}
+
+/* ==========================================================================
+   10. RESPONSIVE BREAKPOINTS
    ========================================================================== */
 
 @media (max-width: 1200px) {

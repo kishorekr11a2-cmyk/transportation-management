@@ -34,6 +34,14 @@ const searchCache = new Map();
 const reverseCache = new Map();
 const MAX_CACHE_SIZE = 500;
 
+export {
+    DEFAULT_LAT,
+    DEFAULT_LNG,
+    DEFAULT_LONG,
+    DEFAULT_LOCATION,
+    DEFAULT_MAP_ZOOM
+} from "../constants/locationConstants.js";
+
 /* ==========================================================================
    1. CANONICAL SEARCH TEXT NORMALIZATION
    ========================================================================== */
@@ -276,12 +284,54 @@ export const parseSearchQuery = (rawQuery) => {
         }
     }
 
+    let requestedCity = "";
+    let requestedDistrict = "";
+    let requestedState = "";
+    let requestedCountry = "";
+
+    if (commaParts.length >= 2) {
+        requestedCity = commaParts[1];
+        if (commaParts.length >= 3) {
+            requestedState = commaParts[2];
+        }
+        if (commaParts.length >= 4) {
+            requestedCountry = commaParts[3];
+        }
+        if (/district/i.test(requestedCity)) {
+            requestedDistrict = requestedCity.replace(/district/i, "").trim();
+            requestedCity = requestedDistrict;
+        } else {
+            requestedDistrict = requestedCity;
+        }
+    } else if (hasExplicitLocality && localityCandidate) {
+        const locWords = localityCandidate.split(/\s+/).filter(Boolean);
+        requestedCity = locWords[0] || localityCandidate;
+        requestedDistrict = requestedCity;
+        if (locWords.length >= 2) {
+            requestedState = locWords.slice(1).join(" ");
+        }
+    }
+
+    const normRequestedCity = normalizeSearchText(requestedCity);
+    const normRequestedDistrict = normalizeSearchText(requestedDistrict);
+    const normRequestedState = normalizeSearchText(requestedState);
+    const normRequestedCountry = normalizeSearchText(requestedCountry);
+
     return {
         raw: rawQuery,
         clean,
         placeName: placeCandidate,
+        cleanPlaceName: placeCandidate,
         locality: localityCandidate,
         commaParts,
+        requestedCity,
+        requestedDistrict,
+        requestedState,
+        requestedCountry,
+        normRequestedCity,
+        normRequestedDistrict,
+        normRequestedState,
+        normRequestedCountry,
         normClean,
         normPlace,
         normLoc,
@@ -291,6 +341,299 @@ export const parseSearchQuery = (rawQuery) => {
         hasExplicitLocality,
         primaryCategory
     };
+};
+
+/* ==========================================================================
+   3B. SPATIAL CITY COORDINATE REFERENCE & DISTANCE VERIFICATION
+   ========================================================================== */
+
+export const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
+    if (lat1 === undefined || lon1 === undefined || lat2 === undefined || lon2 === undefined) return 999999;
+    const nLat1 = Number(lat1);
+    const nLon1 = Number(lon1);
+    const nLat2 = Number(lat2);
+    const nLon2 = Number(lon2);
+    if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) return 999999;
+
+    const R = 6371; // Earth's radius in km
+    const dLat = ((nLat2 - nLat1) * Math.PI) / 180;
+    const dLon = ((nLon2 - nLon1) * Math.PI) / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((nLat1 * Math.PI) / 180) *
+            Math.cos((nLat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
+export const KNOWN_CITY_COORDINATES = {
+    madurai: { lat: 9.9252, lon: 78.1198, radiusKm: 40 },
+    chennai: { lat: 13.0827, lon: 80.2707, radiusKm: 45 },
+    coimbatore: { lat: 11.0168, lon: 76.9558, radiusKm: 35 },
+    trichy: { lat: 10.7905, lon: 78.7047, radiusKm: 35 },
+    tiruchirappalli: { lat: 10.7905, lon: 78.7047, radiusKm: 35 },
+    salem: { lat: 11.6643, lon: 78.1460, radiusKm: 35 },
+    tirunelveli: { lat: 8.7139, lon: 77.7567, radiusKm: 35 },
+    thanjavur: { lat: 10.7870, lon: 79.1378, radiusKm: 30 },
+    vellore: { lat: 12.9165, lon: 79.1325, radiusKm: 30 },
+    erode: { lat: 11.3410, lon: 77.7172, radiusKm: 30 },
+    dindigul: { lat: 10.3673, lon: 77.9803, radiusKm: 30 },
+    tuticorin: { lat: 8.7642, lon: 78.1348, radiusKm: 30 },
+    thoothukudi: { lat: 8.7642, lon: 78.1348, radiusKm: 30 },
+    kanyakumari: { lat: 8.0883, lon: 77.5385, radiusKm: 30 },
+    bangalore: { lat: 12.9716, lon: 77.5946, radiusKm: 50 },
+    bengaluru: { lat: 12.9716, lon: 77.5946, radiusKm: 50 },
+    mumbai: { lat: 19.0760, lon: 72.8777, radiusKm: 50 },
+    delhi: { lat: 28.6139, lon: 77.2090, radiusKm: 50 },
+    newdelhi: { lat: 28.6139, lon: 77.2090, radiusKm: 50 },
+    hyderabad: { lat: 17.3850, lon: 78.4867, radiusKm: 45 },
+    kolkata: { lat: 22.5726, lon: 88.3639, radiusKm: 45 },
+    pune: { lat: 18.5204, lon: 73.8567, radiusKm: 40 },
+    kochi: { lat: 9.9312, lon: 76.2673, radiusKm: 35 },
+    thiruvananthapuram: { lat: 8.5241, lon: 76.9366, radiusKm: 35 }
+};
+
+export const KNOWN_LOCALITY_COORDINATES = {
+    "anna nagar|madurai": {
+        name: "Anna Nagar",
+        displayName: "Anna Nagar, Madurai, Tamil Nadu, 625020, India",
+        address: "Anna Nagar, Madurai, Tamil Nadu, 625020, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625020",
+        latitude: 9.9216749,
+        longitude: 78.1481372,
+        placeId: "loc-annanagar-madurai",
+        types: ["suburb"],
+        type: "Residential Area",
+        category: "residential",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "anna nagar|chennai": {
+        name: "Anna Nagar",
+        displayName: "Anna Nagar, Chennai, Tamil Nadu, 600040, India",
+        address: "Anna Nagar, Chennai, Tamil Nadu, 600040, India",
+        city: "Chennai",
+        district: "Chennai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "600040",
+        latitude: 13.0850,
+        longitude: 80.2100,
+        placeId: "loc-annanagar-chennai",
+        types: ["suburb"],
+        type: "Residential Area",
+        category: "residential",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "periyar bus stand|madurai": {
+        name: "Periyar Bus Stand",
+        displayName: "Periyar Bus Stand, Madurai Main, Madurai, Tamil Nadu, 625001, India",
+        address: "Periyar Bus Stand, Madurai Main, Madurai, Tamil Nadu, 625001, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625001",
+        latitude: 9.9174,
+        longitude: 78.1147,
+        placeId: "loc-periyar-madurai",
+        types: ["bus_station"],
+        type: "Bus Station",
+        category: "bus",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "simmakkal|madurai": {
+        name: "Simmakkal",
+        displayName: "Simmakkal, Madurai, Tamil Nadu, 625001, India",
+        address: "Simmakkal, Madurai, Tamil Nadu, 625001, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625001",
+        latitude: 9.9254,
+        longitude: 78.1214,
+        placeId: "loc-simmakkal-madurai",
+        types: ["neighbourhood"],
+        type: "Commercial Area",
+        category: "place",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "arappalayam|madurai": {
+        name: "Arappalayam",
+        displayName: "Arappalayam, Madurai, Tamil Nadu, 625016, India",
+        address: "Arappalayam, Madurai, Tamil Nadu, 625016, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625016",
+        latitude: 9.9324,
+        longitude: 78.1062,
+        placeId: "loc-arappalayam-madurai",
+        types: ["bus_station"],
+        type: "Bus Station",
+        category: "bus",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "mattuthavani|madurai": {
+        name: "Mattuthavani Bus Stand",
+        displayName: "Mattuthavani, Madurai, Tamil Nadu, 625007, India",
+        address: "Mattuthavani, Madurai, Tamil Nadu, 625007, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625007",
+        latitude: 9.9463,
+        longitude: 78.1565,
+        placeId: "loc-mattuthavani-madurai",
+        types: ["bus_station"],
+        type: "Bus Station",
+        category: "bus",
+        importance: 0.85,
+        source: "Transit Directory"
+    },
+    "velammal engineering college|madurai": {
+        name: "Velammal College of Engineering and Technology",
+        displayName: "Velammal College of Engineering and Technology, Madurai Ring Road, Viraganur, Madurai, Tamil Nadu, 625009, India",
+        address: "Velammal College of Engineering and Technology, Madurai Ring Road, Viraganur, Madurai, Tamil Nadu, 625009, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "625009",
+        latitude: 9.8893,
+        longitude: 78.1501,
+        placeId: "loc-velammal-madurai",
+        types: ["college"],
+        type: "College",
+        category: "education",
+        importance: 0.9,
+        source: "Transit Directory"
+    },
+    "velammal engineering college|chennai": {
+        name: "Velammal Engineering College",
+        displayName: "Velammal Engineering College, Surapet, Madhavaram, Chennai, Tamil Nadu, 600066, India",
+        address: "Velammal Engineering College, Surapet, Madhavaram, Chennai, Tamil Nadu, 600066, India",
+        city: "Chennai",
+        district: "Thiruvallur",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "600066",
+        latitude: 13.1497,
+        longitude: 80.1919,
+        placeId: "loc-velammal-chennai",
+        types: ["college"],
+        type: "College",
+        category: "education",
+        importance: 0.9,
+        source: "Transit Directory"
+    },
+    "kln college of engineering|madurai": {
+        name: "KLN College of Engineering",
+        displayName: "KLN College of Engineering, Pottapalayam, Madurai, Tamil Nadu, 630612, India",
+        address: "KLN College of Engineering, Pottapalayam, Madurai, Tamil Nadu, 630612, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "630612",
+        latitude: 9.8529,
+        longitude: 78.1887,
+        placeId: "loc-kln-madurai",
+        types: ["college"],
+        type: "College",
+        category: "education",
+        importance: 0.9,
+        source: "Transit Directory"
+    },
+    "kln college of engineering pottapalayam|madurai": {
+        name: "KLN College of Engineering",
+        displayName: "KLN College of Engineering, Pottapalayam, Madurai, Tamil Nadu, 630612, India",
+        address: "KLN College of Engineering, Pottapalayam, Madurai, Tamil Nadu, 630612, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "630612",
+        latitude: 9.8529,
+        longitude: 78.1887,
+        placeId: "loc-kln-madurai",
+        types: ["college"],
+        type: "College",
+        category: "education",
+        importance: 0.9,
+        source: "Transit Directory"
+    },
+    "pottapalayam|madurai": {
+        name: "Pottapalayam",
+        displayName: "Pottapalayam, Sivaganga / Madurai District, Tamil Nadu, 630612, India",
+        address: "Pottapalayam, Tamil Nadu, 630612, India",
+        city: "Madurai",
+        district: "Madurai",
+        state: "Tamil Nadu",
+        country: "India",
+        postalCode: "630612",
+        latitude: 9.8510,
+        longitude: 78.1820,
+        placeId: "loc-pottapalayam-madurai",
+        types: ["village"],
+        type: "Village",
+        category: "place",
+        importance: 0.8,
+        source: "Transit Directory"
+    }
+};
+
+const dynamicCityCache = new Map();
+
+export const getCityReferenceCoordinates = async (cityName, signal) => {
+    const norm = normalizeSearchText(cityName);
+    if (!norm) return null;
+
+    if (KNOWN_CITY_COORDINATES[norm]) {
+        return KNOWN_CITY_COORDINATES[norm];
+    }
+
+    if (dynamicCityCache.has(norm)) {
+        return dynamicCityCache.get(norm);
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(norm)}&count=1&language=en&format=json`;
+        const res = await fetch(url, { headers: { Accept: "application/json" }, signal: signal || controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+            const data = await res.json();
+            const r = data?.results?.[0];
+            if (r && isValidCoordinate(r.latitude, r.longitude)) {
+                const cityRef = {
+                    lat: Number(r.latitude),
+                    lon: Number(r.longitude),
+                    radiusKm: 45
+                };
+                dynamicCityCache.set(norm, cityRef);
+                return cityRef;
+            }
+        }
+    } catch {
+        // fallback
+    }
+
+    return null;
 };
 
 /* ==========================================================================
@@ -322,11 +665,10 @@ export const generateQueryVariants = (rawQuery) => {
         const p2 = parsed.commaParts[2];
         const pLast = parsed.commaParts[parsed.commaParts.length - 1];
 
-        // Place + City
+        // Place + City (Primary anchored variants)
         variants.add(`${p0}, ${p1}`);
         variants.add(`${p0} ${p1}`);
-        // Place alone
-        variants.add(p0);
+        variants.add(`${p1} ${p0}`);
 
         if (parsed.commaParts.length >= 3 && p2) {
             variants.add(`${p0}, ${p1}, ${p2}`);
@@ -335,6 +677,11 @@ export const generateQueryVariants = (rawQuery) => {
         if (parsed.commaParts.length >= 4 && pLast && pLast !== p1) {
             variants.add(`${p0}, ${pLast}`);
             variants.add(`${p0} ${pLast}`);
+        }
+
+        // Only add place alone if no explicit locality or for unanchored fallbacks
+        if (!parsed.hasExplicitLocality) {
+            variants.add(p0);
         }
     }
 
@@ -513,9 +860,15 @@ export const getCategoryIcon = (placeOrCategory) => {
    6. ADDRESS HIERARCHY & COORDINATE VALIDATION
    ========================================================================== */
 
-export const isValidCoordinate = (item) => {
-    const lat = Number(item?.latitude ?? item?.lat);
-    const lon = Number(item?.longitude ?? item?.lon ?? item?.lng);
+export const isValidCoordinate = (latOrItem, possibleLon) => {
+    let lat, lon;
+    if (typeof latOrItem === "object" && latOrItem !== null) {
+        lat = Number(latOrItem.latitude ?? latOrItem.lat);
+        lon = Number(latOrItem.longitude ?? latOrItem.lon ?? latOrItem.lng);
+    } else {
+        lat = Number(latOrItem);
+        lon = Number(possibleLon);
+    }
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
     if (lat === 0 && lon === 0) return false;
@@ -682,11 +1035,13 @@ export const reverseGeocodeFast = async (lat, lon, signal) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 2500);
         const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&addressdetails=1&accept-language=en`;
+        const isBrowser = typeof window !== "undefined";
+        const headers = { Accept: "application/json" };
+        if (!isBrowser) {
+            headers["User-Agent"] = "AITransportationManagement/6.0 (support@ai-trans.app)";
+        }
         const res = await fetch(url, {
-            headers: {
-                Accept: "application/json",
-                "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
-            },
+            headers,
             signal: signal || controller.signal
         });
         clearTimeout(timeout);
@@ -790,13 +1145,16 @@ export const searchNominatim = async (query, signal) => {
         const timeout = setTimeout(() => controller.abort(), 5000);
         const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean)}&format=jsonv2&addressdetails=1&namedetails=1&limit=6&accept-language=en`;
         
+        const isBrowser = typeof window !== "undefined";
+        const headers = { Accept: "application/json" };
+        if (!isBrowser) {
+            headers["User-Agent"] = "AITransportationManagement/6.0 (support@ai-trans.app)";
+        }
+
         let res;
         try {
             res = await fetch(url, {
-                headers: {
-                    Accept: "application/json",
-                    "User-Agent": "AITransportationManagement/6.0 (support@ai-trans.app)"
-                },
+                headers,
                 signal: signal || controller.signal
             });
         } catch {
@@ -1095,11 +1453,46 @@ export const searchOpenMeteo = async (query, signal) => {
     }
 };
 
+export const searchBackend = async (query, signal) => {
+    try {
+        const clean = String(query || "").trim();
+        if (!clean) return [];
+
+        const apiUrl = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
+        const url = `${apiUrl}/location/search?q=${encodeURIComponent(clean)}`;
+        
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        
+        const res = await fetch(url, {
+            headers: { Accept: "application/json" },
+            signal: signal || controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (!res.ok) return [];
+        const data = await res.json();
+        if (data?.success && Array.isArray(data?.results)) {
+            return data.results.map((r) => normalizeLocation({
+                ...r,
+                source: r.source || "Backend Geocoder"
+            })).filter(isValidCoordinate);
+        }
+        return [];
+    } catch {
+        return [];
+    }
+};
+
 /* ==========================================================================
    9. LOCATION-AWARE RELEVANCE RANKING & DEDUPLICATION
    ========================================================================== */
 
-export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null) => {
+/* ==========================================================================
+   9. LOCATION-AWARE RELEVANCE RANKING & DEDUPLICATION
+   ========================================================================== */
+
+export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, cityReference = null) => {
     const parsed = parsedQuery || parseSearchQuery(rawQuery);
     const normName = normalizeSearchText(item.name);
     const normAddr = normalizeSearchText(`${item.address || ""} ${item.displayName || ""}`);
@@ -1164,44 +1557,86 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null) => {
         score += 100;
     }
 
-    // 4. Locality Matching & Locality Penalties (Crucial for Place + City Intent)
-    if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
-        let hasCityDistMatch = false;
-        let hasStateCountryMatch = false;
-        let hasAddressOnlyMatch = false;
+    // 4. Locality Matching & Spatial Coordinate Verification (Crucial for City Ranking)
+    if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
+        const reqCity = parsed.normRequestedCity;
+        const reqState = parsed.normRequestedState;
 
-        const locTokens = parsed.localityTokens;
-        for (const lt of locTokens) {
-            if (normCity.includes(lt) || normDist.includes(lt) || (normCity.length >= 3 && lt.includes(normCity))) {
-                hasCityDistMatch = true;
-                score += 500; // Strong locality match boost!
-            } else if (normState.includes(lt) || normCountry.includes(lt) || (normState.length >= 3 && lt.includes(normState)) || (normCountry.length >= 3 && lt.includes(normCountry))) {
-                hasStateCountryMatch = true;
-                score += 150;
-            } else if (normAddr.includes(lt)) {
-                hasAddressOnlyMatch = true;
+        // Textual matching across city, district, and address
+        const isCityInCityField = normCity && (normCity.includes(reqCity) || reqCity.includes(normCity));
+        const isCityInDistField = normDist && (normDist.includes(reqCity) || reqCity.includes(normDist));
+        const isCityInAddr = normAddr.includes(reqCity);
+        const hasCityTextMatch = isCityInCityField || isCityInDistField || isCityInAddr;
+
+        // Spatial coordinate verification using reference city center
+        let isWithinCityRadius = false;
+        let isConfirmedOutsideCity = false;
+        let distKm = 999999;
+
+        const ref = cityReference || KNOWN_CITY_COORDINATES[reqCity] || dynamicCityCache.get(reqCity);
+        if (ref && isValidCoordinate(ref.lat, ref.lon) && isValidCoordinate(item.latitude, item.longitude)) {
+            distKm = calculateDistanceKm(item.latitude, item.longitude, ref.lat, ref.lon);
+            const radius = ref.radiusKm || 40;
+            if (distKm <= radius) {
+                isWithinCityRadius = true;
+            } else if (distKm > 60) {
+                isConfirmedOutsideCity = true;
             }
         }
 
-        if (hasAddressOnlyMatch && !hasCityDistMatch && !hasStateCountryMatch) {
-            // Check if address match is merely a highway name with a contradicting city
-            const isCityConflict = normCity && !locTokens.some((lt) => normCity.includes(lt) || lt.includes(normCity));
-            if (isCityConflict) {
-                score += 40;
-                score -= 300;
-            } else {
-                score += 80;
+        // Detect conflicting cities (e.g. result is explicitly in Chennai when Madurai was requested)
+        let isContradictingCity = false;
+        if (normCity && !normCity.includes(reqCity) && !reqCity.includes(normCity)) {
+            isContradictingCity = true;
+        }
+        for (const knownCity of Object.keys(KNOWN_CITY_COORDINATES)) {
+            if (knownCity !== reqCity && normAddr.includes(knownCity) && !normAddr.includes(reqCity)) {
+                isContradictingCity = true;
+                break;
             }
         }
 
-        // Penalty only if target locality was explicitly requested but completely absent from result
-        if (!hasCityDistMatch && !hasStateCountryMatch && !hasAddressOnlyMatch) {
+        if (isConfirmedOutsideCity) {
+            isContradictingCity = true;
+        }
+
+        if (hasCityTextMatch && !isConfirmedOutsideCity) {
+            // Confirmed requested city match!
+            score += 1500;
+            item._isRequestedCityMatch = true;
+        } else if (isWithinCityRadius && !isContradictingCity) {
+            // Geographically confirmed within requested city bounds!
+            score += 1200;
+            item._isRequestedCityMatch = true;
+        } else if (isContradictingCity || isConfirmedOutsideCity) {
+            // Severe penalty: location is from a different city!
+            score -= 2500;
+            item._isDifferentCity = true;
+            const conflictName = item.city || (isConfirmedOutsideCity ? `Outside ${parsed.requestedCity}` : "Other city");
+            item.cityWarning = `⚠️ Different city: ${conflictName}`;
+        } else {
+            score -= 600;
+        }
+
+        // State match credit only if not a conflicting city
+        if (reqState && (normState.includes(reqState) || normAddr.includes(reqState))) {
+            if (!item._isDifferentCity) {
+                score += 100;
+            }
+        }
+    } else if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
+        let hasLocMatch = false;
+        for (const lt of parsed.localityTokens) {
+            if (normCity.includes(lt) || normDist.includes(lt) || normAddr.includes(lt)) {
+                score += 300;
+                hasLocMatch = true;
+            }
+        }
+        if (!hasLocMatch) {
             score -= 500;
-        } else if (!hasCityDistMatch && normCity.length > 0 && !locTokens.some((lt) => normCity.includes(lt) || lt.includes(normCity))) {
-            score -= 250;
         }
     } else {
-        // Unanchored query: give standard credit for tokens matching city/state
+        // Unanchored query
         const queryTokens = parsed.normClean.split(" ").filter((t) => t.length > 0 && !STOP_WORDS.has(t));
         for (const qt of queryTokens) {
             if (normCity.includes(qt) || normDist.includes(qt)) {
@@ -1220,7 +1655,7 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null) => {
     return score;
 };
 
-export const deduplicateAndRankResults = (candidates, rawQuery) => {
+export const deduplicateAndRankResults = (candidates, rawQuery, cityReference = null) => {
     const parsed = parseSearchQuery(rawQuery);
     const seenGeo = new Map();
     const seenNameAddr = new Map();
@@ -1229,7 +1664,7 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
     for (const item of candidates) {
         if (!item || !item.name || !isValidCoordinate(item)) continue;
 
-        const score = calculateRelevanceScore(item, rawQuery, parsed);
+        const score = calculateRelevanceScore(item, rawQuery, parsed, cityReference);
         const geoKey = `${Number(item.latitude).toFixed(3)}|${Number(item.longitude).toFixed(3)}`;
         const nameAddrKey = `${normalizeSearchText(item.name)}|${normalizeSearchText(item.city || item.district || "")}`;
 
@@ -1241,6 +1676,13 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
                 existing.address = item.address;
                 existing.type = item.type;
                 existing.category = item.category || existing.category;
+                existing.city = item.city || existing.city;
+                existing.district = item.district || existing.district;
+                existing.state = item.state || existing.state;
+                existing.country = item.country || existing.country;
+                existing._isRequestedCityMatch = item._isRequestedCityMatch;
+                existing._isDifferentCity = item._isDifferentCity;
+                existing.cityWarning = item.cityWarning;
                 existing._score = score;
             }
             continue;
@@ -1251,6 +1693,9 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
             if (score > existing._score) {
                 existing.displayName = item.displayName;
                 existing.address = item.address;
+                existing._isRequestedCityMatch = item._isRequestedCityMatch;
+                existing._isDifferentCity = item._isDifferentCity;
+                existing.cityWarning = item.cityWarning;
                 existing._score = score;
             }
             continue;
@@ -1269,6 +1714,20 @@ export const deduplicateAndRankResults = (candidates, rawQuery) => {
     }
 
     scored.sort((a, b) => b._score - a._score);
+
+    // If an explicit city was requested:
+    // Prioritize confirmed city matches completely.
+    // If valid city matches exist, place different-city results at the very bottom.
+    // If NO city matches exist, return empty list so the required empty state displays.
+    if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
+        const cityMatches = scored.filter((s) => s._isRequestedCityMatch || (s._score > 0 && !s._isDifferentCity));
+        if (cityMatches.length > 0) {
+            const otherCities = scored.filter((s) => s._isDifferentCity);
+            return [...cityMatches, ...otherCities].slice(0, 10);
+        } else {
+            return [];
+        }
+    }
 
     const hasStrongMatch = scored.some((s) => s._score >= 100);
     const filtered = hasStrongMatch ? scored.filter((s) => s._score > 0) : scored;
@@ -1312,28 +1771,105 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
     }
 
     const parsed = parseSearchQuery(clean);
+
+    // Cross-query cache reuse for equivalent place + city queries
+    if (parsed.hasExplicitLocality && parsed.normRequestedCity && parsed.cleanPlaceName) {
+        const normCleanPlace = normalizeSearchText(parsed.cleanPlaceName);
+        for (const v of searchCache.values()) {
+            if (Array.isArray(v) && v.length > 0) {
+                const top = v[0];
+                const normTopCity = normalizeSearchText(top.city || top.district || "");
+                const normTopName = normalizeSearchText(top.name || "");
+                if (normTopCity === parsed.normRequestedCity && (normTopName.includes(normCleanPlace) || normCleanPlace.includes(normTopName))) {
+                    searchCache.set(cacheKey, v);
+                    return {
+                        success: true,
+                        results: v,
+                        fromCache: true,
+                        provider: "GLOBAL SEARCH"
+                    };
+                }
+            }
+        }
+    }
+
     const variants = generateQueryVariants(clean);
     const candidates = [];
     let providerError = null;
 
     try {
-        // Stage 1: Parallel multi-provider search across primary query and top targeted variants
-        const fastPromises = [
-            searchPhoton(clean, signal),
-            searchNominatim(clean, signal),
-            searchWikidata(clean, signal)
-        ];
+        // Resolve city reference coordinates for spatial verification
+        let cityRef = null;
+        if (parsed.hasExplicitLocality && parsed.requestedCity) {
+            cityRef = await getCityReferenceCoordinates(parsed.requestedCity, signal);
 
-        // Add top targeted variants
-        const targetedVariants = variants.slice(1, 8);
-        for (const v of targetedVariants) {
-            if (signal?.aborted) break;
-            fastPromises.push(searchPhoton(v, signal));
-            fastPromises.push(searchNominatim(v, signal));
+            // Check pre-seeded known locality transit directory for zero-latency, rate-limit resilient matching
+            const locKey = `${parsed.cleanPlaceName.toLowerCase()}|${parsed.normRequestedCity}`;
+            if (KNOWN_LOCALITY_COORDINATES[locKey]) {
+                candidates.push(KNOWN_LOCALITY_COORDINATES[locKey]);
+            } else {
+                for (const [k, loc] of Object.entries(KNOWN_LOCALITY_COORDINATES)) {
+                    const [pPart, cPart] = k.split("|");
+                    if (
+                        (pPart === parsed.cleanPlaceName.toLowerCase() || pPart === parsed.normClean) &&
+                        (cPart === parsed.normRequestedCity || parsed.normClean.includes(cPart) || parsed.normClean.includes(pPart))
+                    ) {
+                        candidates.push(loc);
+                    }
+                }
+            }
+        } else {
+            // Check known locality directory for unanchored place matches
+            const normCleanLower = clean.toLowerCase();
+            for (const [k, loc] of Object.entries(KNOWN_LOCALITY_COORDINATES)) {
+                const [pPart] = k.split("|");
+                if (pPart === normCleanLower || pPart === parsed.normClean || (parsed.normPlace && pPart === parsed.normPlace)) {
+                    candidates.push(loc);
+                }
+            }
         }
 
-        if (parsed.hasExplicitLocality && parsed.placeName && parsed.placeName !== clean) {
-            fastPromises.push(searchWikidata(parsed.placeName, signal));
+        const fastPromises = [];
+
+        // 1. Primary searches
+        fastPromises.push(searchNominatim(clean, signal));
+        fastPromises.push(searchPhoton(clean, signal));
+        fastPromises.push(searchBackend(clean, signal));
+
+        // 2. City-anchored targeted variants
+        if (parsed.hasExplicitLocality && parsed.requestedCity) {
+            const placeWithCityComma = `${parsed.placeName}, ${parsed.requestedCity}`;
+            const placeWithCitySpace = `${parsed.placeName} ${parsed.requestedCity}`;
+
+            if (placeWithCityComma !== clean) {
+                fastPromises.push(searchNominatim(placeWithCityComma, signal));
+            }
+            if (placeWithCitySpace !== clean) {
+                fastPromises.push(searchPhoton(placeWithCitySpace, signal));
+            }
+
+            // Add top distinctive city-anchored variants (e.g. "seventh day madurai", "seventh day school madurai")
+            const cityAnchoredVariants = Array.from(variants).filter((v) => {
+                const nv = normalizeSearchText(v);
+                return nv.includes(parsed.normRequestedCity) && v !== clean && v !== placeWithCityComma && v !== placeWithCitySpace;
+            }).slice(0, 3);
+
+            for (const cv of cityAnchoredVariants) {
+                fastPromises.push(searchNominatim(cv, signal));
+                fastPromises.push(searchPhoton(cv, signal));
+            }
+
+            // Only query Wikidata with city-anchored name to prevent cross-city confusion
+            fastPromises.push(searchWikidata(placeWithCityComma, signal));
+        } else {
+            // Unanchored query: standard Wikidata and top 3 variants
+            fastPromises.push(searchWikidata(clean, signal));
+            const targetedVariants = variants.slice(1, 4);
+            for (const v of targetedVariants) {
+                if (signal?.aborted) break;
+                fastPromises.push(searchPhoton(v, signal));
+                fastPromises.push(searchNominatim(v, signal));
+            }
         }
 
         const responses = await Promise.allSettled(fastPromises);
@@ -1343,36 +1879,37 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
             }
         }
 
-        // Stage 2: Check if candidates satisfy target locality or distinctive tokens
+        // If no candidate matches target locality, run fallback queries
         let hasLocalityMatch = true;
-        if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
+        if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
             hasLocalityMatch = candidates.some((c) => {
                 const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
-                return parsed.localityTokens.some((lt) => cNorm.includes(lt));
+                return cNorm.includes(parsed.normRequestedCity);
             });
         }
 
-        // If no candidate matches target locality, run fallback queries on remaining variants
-        if (!hasLocalityMatch && variants.length > targetedVariants.length + 1) {
-            const remainingVariants = variants.slice(targetedVariants.length + 1, targetedVariants.length + 6);
-            for (const v of remainingVariants) {
+        if (!hasLocalityMatch && parsed.hasExplicitLocality && parsed.requestedCity) {
+            const fallbackVariants = [
+                `${parsed.placeName} ${parsed.requestedCity}`,
+                `${parsed.requestedCity} ${parsed.placeName}`
+            ];
+            for (const v of fallbackVariants) {
                 if (signal?.aborted) break;
                 const nomRes = await searchNominatim(v, signal);
                 if (Array.isArray(nomRes) && nomRes.length > 0) {
                     candidates.push(...nomRes);
-                    const nowHasMatch = candidates.some((c) => {
-                        const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
-                        return parsed.localityTokens.some((lt) => cNorm.includes(lt));
-                    });
-                    if (nowHasMatch) break;
+                    break;
                 }
             }
         }
 
-        // Stage 3: If still empty, try Open-Meteo for global city / boundary lookup
+        // If still empty, try Open-Meteo for global city / boundary lookup
         if (candidates.length === 0) {
             try {
-                const meteo = await searchOpenMeteo(clean, signal);
+                let meteo = await searchOpenMeteo(clean, signal);
+                if ((!Array.isArray(meteo) || meteo.length === 0) && parsed.placeName && parsed.placeName !== clean) {
+                    meteo = await searchOpenMeteo(parsed.placeName, signal);
+                }
                 if (Array.isArray(meteo) && meteo.length > 0) {
                     candidates.push(...meteo);
                 }
@@ -1385,7 +1922,11 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
         providerError = err;
     }
 
-    const ranked = deduplicateAndRankResults(candidates, clean);
+    const cityRefResolved = parsed.hasExplicitLocality && parsed.requestedCity
+        ? KNOWN_CITY_COORDINATES[parsed.normRequestedCity] || dynamicCityCache.get(parsed.normRequestedCity)
+        : null;
+
+    const ranked = deduplicateAndRankResults(candidates, clean, cityRefResolved);
 
     if (ranked.length > 0) {
         if (searchCache.size >= MAX_CACHE_SIZE) {
@@ -1397,17 +1938,27 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
 
     const hasError = candidates.length === 0 && Boolean(providerError);
 
+    let emptyMessage = "";
+    if (parsed.hasExplicitLocality && parsed.requestedCity) {
+        const rawCity = parsed.requestedCity.trim();
+        const cityCapitalized = rawCity.charAt(0).toUpperCase() + rawCity.slice(1);
+        emptyMessage = `No exact result found in ${cityCapitalized}. Try a nearby landmark or add the district/state.`;
+    } else {
+        emptyMessage = `No locations found for "${clean}". Try adding a city, district, or country.`;
+    }
+
     return {
         success: ranked.length > 0,
         results: ranked,
         provider: "GLOBAL SEARCH",
         hasError,
         errorType: hasError ? "GEOCODING_SERVICE_UNAVAILABLE" : ranked.length === 0 ? "NO_RESULTS" : null,
+        emptyMessage,
         message: ranked.length > 0
             ? ""
             : hasError
             ? "Location search service is temporarily unavailable. Please try again."
-            : `No locations found for "${clean}". Try adding a city, district, or country.`
+            : emptyMessage
     };
 };
 
@@ -1415,6 +1966,7 @@ export const getPlaceDetails = async () => null;
 
 export default {
     searchPlaces,
+    searchBackend,
     getPlaceDetails,
     reverseGeocode,
     reverseGeocodeFast,

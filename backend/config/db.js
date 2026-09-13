@@ -27,22 +27,30 @@ const connectDB = async () => {
     }
 
     try {
+        console.log("[DB] Connecting to MongoDB...");
         const conn = await mongoose.connect(mongoUri, {
-            serverSelectionTimeoutMS: 5000,
-            connectTimeoutMS: 5000
+            serverSelectionTimeoutMS: 15000,  // 15s — more forgiving on slow networks
+            connectTimeoutMS: 15000,
+            socketTimeoutMS: 45000,
+            heartbeatFrequencyMS: 10000,
+            retryWrites: true,
+            w: "majority"
         });
 
         lastDbError = null;
+        console.log("[DB] MongoDB connected");
         console.log("✅ MongoDB Connected:", conn.connection.host);
         console.log("📂 Database:", conn.connection.name);
         return conn;
     } catch (error) {
         lastDbError = error;
         console.error("❌ MongoDB Connection Failed:", error.message);
+        console.error("💡 Fix: Whitelist your IP in MongoDB Atlas → Network Access → Add 0.0.0.0/0");
         // Do not crash server process on startup; allow health endpoints to report status
         return null;
     }
 };
+
 
 mongoose.connection.on("disconnected", () => {
     console.warn("⚠️ MongoDB disconnected");

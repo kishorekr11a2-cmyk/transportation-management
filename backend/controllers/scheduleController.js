@@ -15,12 +15,13 @@ const adminOnly = (req, res) => {
 };
 
 export const getSchedules = async (req, res) => {
+    const tStart = Date.now();
     try {
         if (!adminOnly(req, res)) return;
 
         const [vehicles, schedules] = await Promise.all([
-            Vehicle.find().sort({ vehicleName: 1 }),
-            Schedule.find().populate("vehicle").sort({ createdAt: -1 })
+            Vehicle.find().sort({ vehicleName: 1 }).lean(),
+            Schedule.find().populate("vehicle").sort({ createdAt: -1 }).lean()
         ]);
 
         // Map schedules by vehicle ID
@@ -31,6 +32,8 @@ export const getSchedules = async (req, res) => {
                 scheduleMap.set(vId, s);
             }
         });
+
+        console.log(`[PERFORMANCE] schedules API query: ${Date.now() - tStart} ms`);
 
         res.status(200).json({
             success: true,

@@ -36,7 +36,7 @@ const MANDATORY_14_BENCHMARK_TESTS = [
 
 describe("Universal Global Location Search Verification Suite", { concurrency: 1, timeout: 600000 }, () => {
     beforeEach(async () => {
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, 600));
     });
 
     describe("1. Exact Screenshot Bug Test (Seventh Day Adventist Matric Higher Secondary School, madurai)", () => {
@@ -458,6 +458,97 @@ describe("Universal Global Location Search Verification Suite", { concurrency: 1
             assert.ok(destState.destination);
             assert.equal(destState.tripMode, "TO_DESTINATION");
             assert.equal(destState.activeEndpoint, "destination");
+        });
+    });
+
+    describe("11. City & Region Specificity Verification (Anna Nagar Madurai vs Chennai)", () => {
+        it("should accurately parse query into place name, city, district, state, country", () => {
+            const parsed = parseSearchQuery("Anna Nagar, Madurai, Tamil Nadu, India");
+            assert.equal(parsed.cleanPlaceName.toLowerCase(), "anna nagar");
+            assert.equal(parsed.requestedCity.toLowerCase(), "madurai");
+            assert.equal(parsed.requestedState.toLowerCase(), "tamil nadu");
+            assert.equal(parsed.requestedCountry.toLowerCase(), "india");
+        });
+
+        it("should return Madurai location as #1 result for 'Anna Nagar, Madurai, Tamil Nadu'", async () => {
+            const res = await searchPlaces("Anna Nagar, Madurai, Tamil Nadu");
+            assert.equal(res.success, true);
+            assert.ok(res.results.length > 0, "Must return at least one result");
+
+            const top = res.results[0];
+            const fullAddress = `${top.name} ${top.address || ""} ${top.city || ""}`.toLowerCase();
+            assert.ok(
+                fullAddress.includes("madurai"),
+                `Top result must be in Madurai, got: ${top.name}, ${top.address}`
+            );
+
+            // Verify latitude/longitude is in Madurai (lat ~ 9.92, lon ~ 78.14), NOT Chennai (lat ~ 13.08, lon ~ 80.21)
+            assert.ok(
+                top.latitude > 9.5 && top.latitude < 10.3,
+                `Top result latitude should be in Madurai region (9.5-10.3), got ${top.latitude}`
+            );
+            assert.ok(
+                top.longitude > 77.8 && top.longitude < 78.5,
+                `Top result longitude should be in Madurai region (77.8-78.5), got ${top.longitude}`
+            );
+
+            // Assert top result is NOT in Chennai
+            assert.ok(
+                !fullAddress.includes("chennai"),
+                "Top result must not be in Chennai"
+            );
+        });
+
+        it("should rank Madurai result first for 'Anna Nagar, Madurai'", async () => {
+            const res = await searchPlaces("Anna Nagar, Madurai");
+            assert.equal(res.success, true);
+            assert.ok(res.results.length > 0);
+
+            const top = res.results[0];
+            assert.ok(
+                top.latitude > 9.5 && top.latitude < 10.3,
+                `Top result latitude should be in Madurai region, got ${top.latitude}`
+            );
+        });
+
+        it("should return city-specific emptyMessage when no results exist in the requested city", async () => {
+            const res = await searchPlaces("NonExistentMonument123XYZ, Madurai");
+            assert.equal(res.success, false);
+            assert.equal(res.results.length, 0);
+            assert.equal(
+                res.emptyMessage,
+                "No exact result found in Madurai. Try a nearby landmark or add the district/state."
+            );
+        });
+
+        it("should properly score and rank candidates based on requested city", () => {
+            const candidates = [
+                {
+                    name: "Anna Nagar",
+                    address: "Anna Nagar, Chennai, Tamil Nadu, India",
+                    city: "Chennai",
+                    state: "Tamil Nadu",
+                    country: "India",
+                    latitude: 13.085,
+                    longitude: 80.21
+                },
+                {
+                    name: "Anna Nagar",
+                    address: "Anna Nagar, Madurai, Tamil Nadu, India",
+                    city: "Madurai",
+                    state: "Tamil Nadu",
+                    country: "India",
+                    latitude: 9.9216,
+                    longitude: 78.148
+                }
+            ];
+
+            const ranked = deduplicateAndRankResults(candidates, "Anna Nagar, Madurai, Tamil Nadu");
+            assert.ok(ranked.length > 0);
+            assert.equal(ranked[0].city, "Madurai", "Madurai candidate must be ranked #1");
+            if (ranked.length > 1) {
+                assert.ok(ranked[1].cityWarning, "Different city candidate should have cityWarning");
+            }
         });
     });
 });

@@ -17,6 +17,8 @@ import mapLocationRoutes from "./routes/mapLocationRoutes.js";
 import aiAgentRoutes from "./routes/aiAgentRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 
+import { getAIMetrics } from "./services/aiAgentService.js";
+
 dotenv.config();
 
 const app = express();
@@ -39,12 +41,44 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Performance Timing Middleware for Key Admin & Data APIs
+app.use((req, res, next) => {
+    const isTargetEndpoint =
+        req.path.startsWith("/api/admin/dashboard") ||
+        req.path.startsWith("/api/users") ||
+        req.path.startsWith("/api/vehicles") ||
+        req.path.startsWith("/api/routes") ||
+        req.path.startsWith("/api/ai-agent") ||
+        req.path.startsWith("/api/schedules");
+
+    if (isTargetEndpoint) {
+        const start = Date.now();
+        res.on("finish", () => {
+            console.log(`[PERFORMANCE] ${req.method} ${req.originalUrl}: ${Date.now() - start} ms`);
+        });
+    }
+    next();
+});
+
 app.use(
     "/uploads",
     express.static(path.join(__dirname, "uploads"))
 );
 
 connectDB();
+
+app.get("/api/admin/dashboard/metrics", async (req, res) => {
+    try {
+        const metrics = await getAIMetrics();
+        res.json(metrics);
+    } catch (error) {
+        console.error("Dashboard metrics error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Unable to load dashboard metrics."
+        });
+    }
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -114,6 +148,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
+    console.log(`[SERVER] Running on port ${PORT}`);
     console.log(
         `🚀 Server running on port ${PORT}`
     );

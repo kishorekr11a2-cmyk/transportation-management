@@ -2,7 +2,8 @@ import {
     useEffect,
     useState,
     useMemo,
-    useCallback
+    useCallback,
+    useRef
 } from "react";
 
 import { useNavigate } from "react-router-dom";
@@ -13,9 +14,22 @@ import "../css/UserManagement.css";
 function UserManagement() {
     const navigate = useNavigate();
 
-    // Data states
-    const [users, setUsers] = useState([]);
-    const [loading, setLoading] = useState(true);
+    // Data states with instant session hydration
+    const [users, setUsers] = useState(() => {
+        try {
+            const cached = sessionStorage.getItem("cached_users");
+            return cached ? JSON.parse(cached) : [];
+        } catch {
+            return [];
+        }
+    });
+    const [loading, setLoading] = useState(() => {
+        try {
+            return !sessionStorage.getItem("cached_users");
+        } catch {
+            return true;
+        }
+    });
     const [fetchError, setFetchError] = useState(null);
 
     // Search and Filter states
@@ -23,6 +37,14 @@ function UserManagement() {
     const [statusFilter, setStatusFilter] = useState("All");
     const [stopFilter, setStopFilter] = useState("All");
     const [allocationFilter, setAllocationFilter] = useState("All");
+
+    // Late Travel Response Alert & Filter states
+    const [showLatePopup, setShowLatePopup] = useState(false);
+    const [latePopupCount, setLatePopupCount] = useState(0);
+    const [planApprovalTimes, setPlanApprovalTimes] = useState({ INWARD: null, OUTWARD: null });
+    const popupTimerRef = useRef(null);
+    const hasCheckedPopupOnMountRef = useRef(false);
+    const pendingAckKeysRef = useRef([]);
 
     // Modal states
     const [showResetModal, setShowResetModal] = useState(false);
@@ -43,39 +65,168 @@ function UserManagement() {
     });
 
     // =========================================================
-    // 1. Fetch Users
+    // 1. Fetch Users & Detect Late Coming Responses
     // =========================================================
     const fetchUsers = useCallback(async (showSpinner = false) => {
         try {
+            console.log("[LateResponse] User Management loaded");
             if (showSpinner) {
                 setLoading(true);
                 setFetchError(null);
             }
-            const response = await api.get("/users");
-            setUsers(response.data || []);
+
+            console.log("[LateResponse] Fetching users and late responses from API...");
+            const [usersRes, lateRes] = await Promise.all([
+                api.get("/users"),
+                api.get("/users/late-travel-responses").catch((err) => {
+                    console.warn("[LateResponse] Primary endpoint /users/late-travel-responses status:", err?.response?.status || err?.message);
+                    return api.get("/users/late-responses").catch((err2) => {
+                        console.error("[LateResponse] Fallback endpoint /users/late-responses status:", err2?.response?.status || err2?.message);
+                        return null;
+                    });
+                })
+            ]);
+
+            const userData = usersRes?.data || [];
+            console.log(`[LateResponse] Users loaded: ${userData.length}`);
+            setUsers(userData);
+            try {
+                sessionStorage.setItem("cached_users", JSON.stringify(userData));
+            } catch {
+                // Ignore storage limits
+            }
+
+            const lateData = lateRes?.data;
+            const inwardApproved = Boolean(lateData?.summary?.planApprovalTimes?.INWARD);
+            const outwardApproved = Boolean(lateData?.summary?.planApprovalTimes?.OUTWARD);
+            const approvedPlansCount = (inwardApproved ? 1 : 0) + (outwardApproved ? 1 : 0);
+            console.log(`[LateResponse] Approved plans loaded: ${approvedPlansCount}`, {
+                INWARD: lateData?.summary?.planApprovalTimes?.INWARD || "Not Approved",
+                OUTWARD: lateData?.summary?.planApprovalTimes?.OUTWARD || "Not Approved"
+            });
+
+            if (lateData?.summary?.planApprovalTimes) {
+                setPlanApprovalTimes(lateData.summary.planApprovalTimes);
+            }
+
+            // Qualifying late Coming students count from API or user records
+            const apiLateUsers = lateData?.users || lateData?.lateResponses || [];
+            const dbLateCount = Number.isInteger(lateData?.count)
+            // Double check against loaded userData: Only genuinely unallocated late responses
+            const localLateStudents = userData.filter((u) => {
+                const isAllocated = Boolean(
+                    u.travelStatus === "Coming" &&
+                    (u.isAllocated ?? (u.allocationStatus === "Assigned" || u.allocatedBus?.isAllocated || u.assignedVehicle))
+                );
+                const isUnallocated = Boolean(u.travelStatus === "Coming" && !isAllocated);
+                return isUnallocated && (
+                    Boolean(u.isLateResponse) ||
+                    Boolean(u.lateResponseDetected) ||
+                    u.allocationStatus === "Pending Reallocation" ||
+                    Boolean(u.requiresReallocation)
+                );
+            });
+
+            const lateCount = Number.isInteger(lateData?.count) ? lateData.count : localLateStudents.length;
+            console.log(`[LateResponse] Total unresolved Late Coming students: ${lateCount}`);
+
+            // Notification Deduplication: Only notify newly unnotified late response events!
+            const unnotifiedCount = Number.isInteger(lateData?.unnotifiedCount) ? lateData.unnotifiedCount : 0;
+            const unnotifiedKeys = Array.isArray(lateData?.unnotifiedEventKeys) ? lateData.unnotifiedEventKeys : [];
+
+            console.log(`[LateResponse] Newly unnotified late events: ${unnotifiedCount} (keys: ${unnotifiedKeys.length})`);
+
+            if (unnotifiedCount > 0 && unnotifiedKeys.length > 0) {
+                console.log("[LateResponse] Notification popup triggered for newly detected events");
+                setLatePopupCount(unnotifiedCount);
+                setShowLatePopup(true);
+                pendingAckKeysRef.current = unnotifiedKeys;
+
+                // Immediately persist acknowledgment to MongoDB so page refresh / tab switch / polling will NOT repeat popup
+                api.post("/users/acknowledge-late-notifications", { eventKeys: unnotifiedKeys })
+                    .then(() => {
+                        console.log(`[LateResponse] Successfully marked ${unnotifiedKeys.length} event(s) as notified in MongoDB`);
+                    })
+                    .catch((ackErr) => {
+                        console.warn("[LateResponse] Notification acknowledgment sync warning:", ackErr?.message);
+                    });
+
+                // Exactly 5-second display timer with safe cleanup
+                if (popupTimerRef.current) {
+                    clearTimeout(popupTimerRef.current);
+                }
+                popupTimerRef.current = setTimeout(() => {
+                    console.log("[LateResponse] Notification auto-dismissed after 5 seconds");
+                    setShowLatePopup(false);
+                    popupTimerRef.current = null;
+                }, 5000);
+            } else {
+                console.log("[LateResponse] Notification triggered: false (events already notified or none exist)");
+                setShowLatePopup(false);
+            }
+
             setFetchError(null);
         } catch (error) {
-            console.error("Fetch Users Error:", error);
+            console.error("[LateResponse] Fetch Users Error:", error);
             const msg = error.response?.data?.message || "Failed to load users from database";
             setFetchError(msg);
             if (showSpinner) {
                 toast.error(msg);
             }
         } finally {
-            if (showSpinner) {
-                setLoading(false);
-            }
+            setLoading(false);
         }
     }, []);
 
+    // Popup interaction handlers
+    const handleDismissPopup = (e) => {
+        if (e) e.stopPropagation();
+        if (popupTimerRef.current) {
+            clearTimeout(popupTimerRef.current);
+            popupTimerRef.current = null;
+        }
+        setShowLatePopup(false);
+        if (pendingAckKeysRef.current && pendingAckKeysRef.current.length > 0) {
+            api.post("/users/acknowledge-late-notifications", { eventKeys: pendingAckKeysRef.current }).catch(() => {});
+            pendingAckKeysRef.current = [];
+        }
+    };
+
+    const handleReviewLateResponses = () => {
+        if (popupTimerRef.current) {
+            clearTimeout(popupTimerRef.current);
+            popupTimerRef.current = null;
+        }
+        setShowLatePopup(false);
+        if (pendingAckKeysRef.current && pendingAckKeysRef.current.length > 0) {
+            api.post("/users/acknowledge-late-notifications", { eventKeys: pendingAckKeysRef.current }).catch(() => {});
+            pendingAckKeysRef.current = [];
+        }
+        // Activate Late Coming Responses section/filter
+        setAllocationFilter("Late Coming Responses");
+        setStatusFilter("All");
+        setStopFilter("All");
+        setSearchQuery("");
+
+        // Smoothly scroll to the table
+        setTimeout(() => {
+            const tableCard = document.getElementById("user-table-card");
+            if (tableCard) {
+                tableCard.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        }, 60);
+    };
+
     // =========================================================
-    // 2. Lifecycle & Real-Time Sync
+    // 2. Lifecycle & Real-Time Sync & Timer Cleanup
     // =========================================================
     useEffect(() => {
-        fetchUsers(true);
+        let isMounted = true;
+        const hasCache = users && users.length > 0;
+        fetchUsers(!hasCache);
 
         const handleSync = () => {
-            if (document.visibilityState === "visible") {
+            if (document.visibilityState === "visible" && isMounted && !resettingGlobal && !deletingUser && !addingUser) {
                 fetchUsers(false);
             }
         };
@@ -84,13 +235,20 @@ function UserManagement() {
         document.addEventListener("visibilitychange", handleSync);
 
         const pollInterval = setInterval(() => {
-            fetchUsers(false);
-        }, 5000);
+            if (document.visibilityState === "visible" && isMounted && !resettingGlobal && !deletingUser && !addingUser) {
+                fetchUsers(false);
+            }
+        }, 15000);
 
         return () => {
+            isMounted = false;
             window.removeEventListener("focus", handleSync);
             document.removeEventListener("visibilitychange", handleSync);
             clearInterval(pollInterval);
+            if (popupTimerRef.current) {
+                clearTimeout(popupTimerRef.current);
+                popupTimerRef.current = null;
+            }
         };
     }, [fetchUsers]);
 
@@ -102,6 +260,9 @@ function UserManagement() {
         let notComingCount = 0;
         let pendingCount = 0;
         let allocatedCount = 0;
+        let unallocatedCount = 0;
+        let lateComingCount = 0;
+        let normalUnallocatedCount = 0;
 
         users.forEach((user) => {
             const status = user.travelStatus || "Pending";
@@ -109,17 +270,33 @@ function UserManagement() {
             else if (status === "Not Coming") notComingCount++;
             else pendingCount++;
 
-            const isUserAllocated =
+            const isAllocated = Boolean(
                 status === "Coming" &&
-                Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName);
+                (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId))
+            );
 
-            if (isUserAllocated) {
+            const isUnallocated = Boolean(status === "Coming" && !isAllocated);
+
+            const isLateComing = Boolean(
+                status === "Coming" &&
+                (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+            );
+
+            if (isAllocated) {
                 allocatedCount++;
+            }
+            if (isLateComing) {
+                lateComingCount++;
+            }
+            if (isUnallocated) {
+                unallocatedCount++;
+                if (!isLateComing) {
+                    normalUnallocatedCount++;
+                }
             }
         });
 
         const totalUsers = users.length;
-        const unallocatedCount = Math.max(0, comingCount - allocatedCount);
 
         return {
             totalUsers,
@@ -127,7 +304,9 @@ function UserManagement() {
             notComingCount,
             pendingCount,
             allocatedCount,
-            unallocatedCount
+            unallocatedCount,
+            lateComingCount,
+            normalUnallocatedCount
         };
     }, [users]);
 
@@ -169,6 +348,8 @@ function UserManagement() {
             user.state,
             user.country,
             user.travelStatus,
+            user.previousTravelStatus,
+            user.lateResponseDetected ? "Late Response" : "",
             user.role,
             user.assignedVehicle,
             user.assignedRoute,
@@ -177,6 +358,7 @@ function UserManagement() {
             user.allocatedBus?.vehicleNumber,
             user.allocatedBus?.routeCode,
             user.allocatedBus?.routeName,
+            ...(Array.isArray(user.affectedDirections) ? user.affectedDirections : []),
             // Combined geographic string
             [user.stoppings, user.city, user.state, user.country].filter(Boolean).join(", ")
         ];
@@ -196,9 +378,22 @@ function UserManagement() {
 
             // 2. Travel Status Filter
             if (statusFilter !== "All") {
-                const userStatus = user.travelStatus || "Pending";
-                if (userStatus !== statusFilter) {
-                    return false;
+                if (statusFilter === "Late Coming Responses") {
+                    const isAllocated = Boolean(
+                        user.travelStatus === "Coming" &&
+                        (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName))
+                    );
+                    const isUnallocated = Boolean(user.travelStatus === "Coming" && !isAllocated);
+                    const isLateComing = Boolean(
+                        isUnallocated &&
+                        (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+                    );
+                    if (!isLateComing) return false;
+                } else {
+                    const userStatus = user.travelStatus || "Pending";
+                    if (userStatus !== statusFilter) {
+                        return false;
+                    }
                 }
             }
 
@@ -212,12 +407,28 @@ function UserManagement() {
 
             // 4. Allocation Filter
             if (allocationFilter !== "All") {
-                const isAllocated =
+                const isAllocated = Boolean(
                     user.travelStatus === "Coming" &&
-                    Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName);
+                    (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName))
+                );
+                const isUnallocated = Boolean(user.travelStatus === "Coming" && !isAllocated);
+                const isLateComing = Boolean(
+                    isUnallocated &&
+                    (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+                );
 
-                if (allocationFilter === "Allocated" && !isAllocated) return false;
-                if (allocationFilter === "Unallocated" && (isAllocated || user.travelStatus !== "Coming")) return false;
+                if (allocationFilter === "Allocated") {
+                    if (!isAllocated) return false;
+                } else if (allocationFilter === "Unallocated") {
+                    // MUST SHOW ALL UNALLOCATED STUDENTS (both Type 1 and Type 2!)
+                    if (!isUnallocated) return false;
+                } else if (allocationFilter === "Normal Unallocated") {
+                    // Show only Type 2 (Normal Unallocated due to capacity/route limits)
+                    if (!isUnallocated || isLateComing) return false;
+                } else if (allocationFilter === "Late Coming Responses") {
+                    // Show only Type 1 (Late Coming Responses)
+                    if (!isLateComing) return false;
+                }
             }
 
             return true;
@@ -378,23 +589,40 @@ function UserManagement() {
         return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
     };
 
+    // Helper to format timestamps cleanly for late response display
+    const formatDateTime = (dateVal) => {
+        if (!dateVal) return "—";
+        try {
+            const d = new Date(dateVal);
+            if (isNaN(d.getTime())) return "—";
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' (' + d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ')';
+        } catch {
+            return "—";
+        }
+    };
+
+    // Helper to retrieve the matching plan approval timestamp for a user
+    const getPlanApprovalTimeForUser = (user) => {
+        const dirs = Array.isArray(user.affectedDirections) ? user.affectedDirections : [];
+        if (dirs.includes("INWARD") && planApprovalTimes?.INWARD) {
+            return formatDateTime(planApprovalTimes.INWARD);
+        }
+        if (dirs.includes("OUTWARD") && planApprovalTimes?.OUTWARD) {
+            return formatDateTime(planApprovalTimes.OUTWARD);
+        }
+        if (planApprovalTimes?.INWARD) return formatDateTime(planApprovalTimes.INWARD);
+        if (planApprovalTimes?.OUTWARD) return formatDateTime(planApprovalTimes.OUTWARD);
+        return "Before Response";
+    };
+
+    // View mode flag: is current view showing Late Coming Responses?
+    const isLateView = allocationFilter === "Late Coming Responses" || statusFilter === "Late Coming Responses";
+
     // =========================================================
     // 7. Render Views
     // =========================================================
 
-    if (loading) {
-        return (
-            <div className="user-page-container">
-                <div className="user-loading-state">
-                    <div className="modern-spinner"></div>
-                    <h3>Loading Transportation Users</h3>
-                    <p>Fetching real-time passenger responses & stopping data...</p>
-                </div>
-            </div>
-        );
-    }
-
-    if (fetchError && users.length === 0) {
+    if (fetchError && users.length === 0 && !loading) {
         return (
             <div className="user-page-container">
                 <button className="user-back-btn" onClick={() => navigate(-1)}>
@@ -414,6 +642,52 @@ function UserManagement() {
 
     return (
         <div className="user-page-container">
+            {/* Floating Late Travel Response Notification Popup (5-Second Auto-Dismiss) */}
+            {showLatePopup && (
+                <aside
+                    id="late-travel-response-popup"
+                    className="late-response-popup-container"
+                    onClick={handleReviewLateResponses}
+                    role="alert"
+                    aria-live="assertive"
+                    title="Click to review late travel responses"
+                >
+                    <div className="late-response-popup-card">
+                        <div className="late-response-popup-header">
+                            <div className="late-response-popup-icon-box">
+                                <span className="late-popup-icon">⏰</span>
+                            </div>
+                            <div className="late-response-popup-body">
+                                <div className="late-response-popup-title-row">
+                                    <h4 className="late-response-popup-title">⏰ Late Travel Responses</h4>
+                                    <button
+                                        type="button"
+                                        className="late-response-popup-close-btn"
+                                        onClick={handleDismissPopup}
+                                        aria-label="Dismiss late travel response notification"
+                                        title="Dismiss notification"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <p className="late-response-popup-desc">
+                                    <strong>{latePopupCount}</strong> {latePopupCount === 1 ? "student" : "students"} submitted Coming after transportation allocation.
+                                </p>
+                                <div className="late-response-popup-action-row">
+                                    <span className="late-response-popup-action-link">
+                                        Review Late Responses →
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        {/* 5-second countdown progress bar */}
+                        <div className="late-response-progress-track">
+                            <div className="late-response-progress-bar"></div>
+                        </div>
+                    </div>
+                </aside>
+            )}
+
             {/* Top Navigation */}
             <div className="user-top-nav">
                 <button className="user-back-btn" onClick={() => navigate(-1)}>
@@ -463,7 +737,11 @@ function UserManagement() {
                     <div className="metric-icon-box">👥</div>
                     <div className="metric-info">
                         <span className="metric-title">Total Users</span>
-                        <span className="metric-number">{summary.totalUsers}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.totalUsers}</span>
+                        )}
                     </div>
                 </div>
 
@@ -471,7 +749,11 @@ function UserManagement() {
                     <div className="metric-icon-box">🟢</div>
                     <div className="metric-info">
                         <span className="metric-title">Coming</span>
-                        <span className="metric-number">{summary.comingCount}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.comingCount}</span>
+                        )}
                     </div>
                 </div>
 
@@ -479,7 +761,11 @@ function UserManagement() {
                     <div className="metric-icon-box">🟡</div>
                     <div className="metric-info">
                         <span className="metric-title">Pending</span>
-                        <span className="metric-number">{summary.pendingCount}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.pendingCount}</span>
+                        )}
                     </div>
                 </div>
 
@@ -487,7 +773,11 @@ function UserManagement() {
                     <div className="metric-icon-box">🔴</div>
                     <div className="metric-info">
                         <span className="metric-title">Not Coming</span>
-                        <span className="metric-number">{summary.notComingCount}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.notComingCount}</span>
+                        )}
                     </div>
                 </div>
 
@@ -495,15 +785,64 @@ function UserManagement() {
                     <div className="metric-icon-box">🚌</div>
                     <div className="metric-info">
                         <span className="metric-title">Allocated</span>
-                        <span className="metric-number">{summary.allocatedCount}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.allocatedCount}</span>
+                        )}
                     </div>
                 </div>
 
-                <div className="metric-card metric-unallocated">
+                <div
+                    className={`metric-card metric-unallocated ${allocationFilter === "Unallocated" ? "active-filter-card" : ""}`}
+                    onClick={() => {
+                        if (allocationFilter === "Unallocated") {
+                            setAllocationFilter("All");
+                        } else {
+                            setAllocationFilter("Unallocated");
+                            setStatusFilter("All");
+                        }
+                    }}
+                    style={{ cursor: "pointer" }}
+                    title="Click to view all unallocated students (both normal capacity shortages and late responses)"
+                >
                     <div className="metric-icon-box">⚠️</div>
                     <div className="metric-info">
                         <span className="metric-title">Unallocated</span>
-                        <span className="metric-number">{summary.unallocatedCount}</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number">{summary.unallocatedCount}</span>
+                        )}
+                    </div>
+                </div>
+
+                <div
+                    className={`metric-card metric-late-response ${isLateView ? "active-filter-card" : ""}`}
+                    onClick={() => {
+                        if (isLateView) {
+                            setAllocationFilter("All");
+                            setStatusFilter("All");
+                        } else {
+                            setAllocationFilter("Late Coming Responses");
+                            setStatusFilter("All");
+                            setStopFilter("All");
+                            setSearchQuery("");
+                        }
+                    }}
+                    style={{ cursor: "pointer" }}
+                    title="Click to view late travel responses submitted after route allocation"
+                >
+                    <div className="metric-icon-box" style={{ background: "#fef3c7", color: "#d97706" }}>⏰</div>
+                    <div className="metric-info">
+                        <span className="metric-title">Late Responses</span>
+                        {loading && (!users || users.length === 0) ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-number" style={{ color: summary.lateComingCount > 0 ? "#d97706" : "inherit" }}>
+                                {summary.lateComingCount}
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>
@@ -548,6 +887,7 @@ function UserManagement() {
                         >
                             <option value="All">All Status</option>
                             <option value="Coming">🟢 Coming</option>
+                            <option value="Late Coming Responses">⏰ Late Coming Responses ({summary.lateComingCount})</option>
                             <option value="Pending">🟡 Pending</option>
                             <option value="Not Coming">🔴 Not Coming</option>
                         </select>
@@ -583,8 +923,10 @@ function UserManagement() {
                             aria-label="Filter by allocation status"
                         >
                             <option value="All">All Allocations</option>
-                            <option value="Allocated">✓ Allocated</option>
-                            <option value="Unallocated">⚠️ Unallocated</option>
+                            <option value="Allocated">✓ Allocated ({summary.allocatedCount})</option>
+                            <option value="Unallocated">⚠️ Unallocated - All ({summary.unallocatedCount})</option>
+                            <option value="Normal Unallocated">⚠️ Normal Unallocated ({summary.normalUnallocatedCount})</option>
+                            <option value="Late Coming Responses">⏰ Late Coming Responses ({summary.lateComingCount})</option>
                         </select>
                     </div>
 
@@ -625,25 +967,51 @@ function UserManagement() {
             </div>
 
             {/* User Table Card */}
-            <div className="user-table-card">
+            <div id="user-table-card" className="user-table-card">
                 <div className="table-responsive-container">
                     <table className="modern-user-table">
                         <thead>
-                            <tr>
-                                <th style={{ width: "50px" }}>#</th>
-                                <th style={{ width: "120px" }}>User ID</th>
-                                <th>Name</th>
-                                <th>Stopping Area</th>
-                                <th style={{ width: "140px" }}>Travel Status</th>
-                                <th style={{ width: "170px" }}>Bus Allocation</th>
-                                <th style={{ width: "120px", textAlign: "right" }}>Actions</th>
-                            </tr>
+                            {isLateView ? (
+                                <tr>
+                                    <th style={{ width: "45px" }}>#</th>
+                                    <th style={{ width: "110px" }}>User ID</th>
+                                    <th>Student Name</th>
+                                    <th>Stopping Area</th>
+                                    <th style={{ width: "130px" }}>Travel Status</th>
+                                    <th style={{ width: "110px" }}>Direction</th>
+                                    <th style={{ width: "170px" }}>Response Submitted</th>
+                                    <th style={{ width: "170px" }}>Plan Approved</th>
+                                    <th style={{ width: "150px" }}>Allocation</th>
+                                    <th style={{ width: "160px" }}>Bus / Route / Seat</th>
+                                    <th style={{ width: "90px", textAlign: "right" }}>Actions</th>
+                                </tr>
+                            ) : (
+                                <tr>
+                                    <th style={{ width: "50px" }}>#</th>
+                                    <th style={{ width: "120px" }}>User ID</th>
+                                    <th>Name</th>
+                                    <th>Stopping Area</th>
+                                    <th style={{ width: "140px" }}>Travel Status</th>
+                                    <th style={{ width: "170px" }}>Bus Allocation</th>
+                                    <th style={{ width: "120px", textAlign: "right" }}>Actions</th>
+                                </tr>
+                            )}
                         </thead>
 
                         <tbody>
-                            {filteredUsers.length === 0 ? (
+                            {users.length === 0 && loading ? (
                                 <tr>
-                                    <td colSpan="7">
+                                    <td colSpan={isLateView ? 11 : 7}>
+                                        <div className="table-empty-state">
+                                            <div className="modern-spinner" style={{ margin: "1.5rem auto" }}></div>
+                                            <h4 style={{ color: "#38bdf8" }}>Loading Transportation Users</h4>
+                                            <p>Fetching real-time passenger responses & stopping data...</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : filteredUsers.length === 0 ? (
+                                <tr>
+                                    <td colSpan={isLateView ? 11 : 7}>
                                         <div className="table-empty-state">
                                             {users.length === 0 ? (
                                                 <>
@@ -656,6 +1024,21 @@ function UserManagement() {
                                                         onClick={() => navigate("/excel-upload")}
                                                     >
                                                         📄 Upload Excel File
+                                                    </button>
+                                                </>
+                                            ) : isLateView ? (
+                                                <>
+                                                    <div className="empty-state-icon">⏰</div>
+                                                    <h4>No Late Travel Responses Found</h4>
+                                                    <p>
+                                                        There are no students who submitted or changed their status to Coming after route allocation.
+                                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        className="btn-empty-clear"
+                                                        onClick={handleClearFilters}
+                                                    >
+                                                        View All Students
                                                     </button>
                                                 </>
                                             ) : (
@@ -683,15 +1066,153 @@ function UserManagement() {
                                     const status = user.travelStatus || "Pending";
                                     const isAllocated =
                                         status === "Coming" &&
-                                        Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName);
+                                        Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId || user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned");
 
                                     const busName = isAllocated
-                                        ? user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || "BUS-Assigned"
+                                        ? user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || user.manualBusId || "BUS-Assigned"
                                         : null;
 
                                     const routeCode = isAllocated
-                                        ? user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || "Route"
+                                        ? user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || user.manualRouteId || "Route"
                                         : null;
+
+                                    if (isLateView) {
+                                        return (
+                                            <tr key={user._id || user.userId} className="row-late-responder">
+                                                {/* # Index */}
+                                                <td className="col-index">{index + 1}</td>
+
+                                                {/* User ID */}
+                                                <td>
+                                                    <span className="user-id-badge">{user.userId}</span>
+                                                </td>
+
+                                                {/* Student Name */}
+                                                <td>
+                                                    <div className="user-name-cell">
+                                                        <div className="user-avatar-circle">
+                                                            {getInitials(user.name)}
+                                                        </div>
+                                                        <div className="user-name-details">
+                                                            <span className="user-full-name">{user.name}</span>
+                                                            <span className="user-role-tag">{user.role || "student"}</span>
+                                                        </div>
+                                                    </div>
+                                                </td>
+
+                                                {/* Stopping Area */}
+                                                <td>{renderStoppingArea(user)}</td>
+
+                                                {/* Travel Status */}
+                                                <td>
+                                                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                                        <span className="user-status-pill status-coming">
+                                                            <span className="status-dot"></span>
+                                                            Coming
+                                                        </span>
+                                                        <span className="late-indicator-badge" title="Submitted Coming after route plan approval">
+                                                            ⏰ Late Response
+                                                        </span>
+                                                    </div>
+                                                </td>
+
+                                                {/* Relevant Direction */}
+                                                <td>
+                                                    <div className="affected-dirs-list">
+                                                        {Array.isArray(user.affectedDirections) && user.affectedDirections.length > 0 ? (
+                                                            user.affectedDirections.map((dir) => (
+                                                                <span key={dir} className={`affected-dir-tag affected-dir-tag--${dir.toLowerCase()}`}>
+                                                                    {dir}
+                                                                </span>
+                                                            ))
+                                                        ) : user.allocatedBus?.direction ? (
+                                                            <span className={`affected-dir-tag affected-dir-tag--${user.allocatedBus.direction.toLowerCase()}`}>
+                                                                {user.allocatedBus.direction}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="affected-dir-tag affected-dir-tag--inward">INWARD</span>
+                                                        )}
+                                                    </div>
+                                                </td>
+
+                                                {/* Response Submitted Time */}
+                                                <td>
+                                                    <div className="late-time-display">
+                                                        <span className="late-time-val">
+                                                            {formatDateTime(user.lateResponseAt || user.travelResponseSubmittedAt || user.lastTravelResponseAt || user.updatedAt)}
+                                                        </span>
+                                                        <span className="late-time-subtag">After Approval</span>
+                                                    </div>
+                                                </td>
+
+                                                {/* Plan Approved Time */}
+                                                <td>
+                                                    <div className="late-time-display">
+                                                        <span className="late-time-val">{getPlanApprovalTimeForUser(user)}</span>
+                                                        <span className="late-time-subtag approved-subtag">Plan Approved</span>
+                                                    </div>
+                                                </td>
+
+                                                {/* Allocation Status */}
+                                                <td>
+                                                    <div className="allocation-info-cell">
+                                                        {user.allocationStatus === "Re-assigned" ? (
+                                                            <span className="allocation-tag tag-reassigned" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#eab308", border: "1px solid rgba(234, 179, 8, 0.3)" }}>
+                                                                🔄 Re-assigned
+                                                            </span>
+                                                        ) : isAllocated ? (
+                                                            <span className="allocation-tag tag-allocated" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
+                                                                ✓ Allocated
+                                                            </span>
+                                                        ) : (
+                                                            <span className="allocation-tag tag-pending-reallocation" title="Late travel response. Bus allocation safely withheld pending route regeneration.">
+                                                                ⏳ Pending Reallocation
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
+
+                                                {/* Bus / Route / Seat */}
+                                                <td>
+                                                    {isAllocated ? (
+                                                        <div className="allocation-info-cell">
+                                                            <span className="bus-assigned-badge">🚌 {busName}</span>
+                                                            {routeCode && <span className="route-assigned-badge">🛣️ {routeCode}</span>}
+                                                            {user.allocatedBus?.seatNumber && (
+                                                                <span className="seat-assigned-badge">💺 #{user.allocatedBus.seatNumber}</span>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="allocation-tag tag-not-applicable">— Not Assigned</span>
+                                                    )}
+                                                </td>
+
+                                                {/* Actions */}
+                                                <td style={{ textAlign: "right" }}>
+                                                    <div className="user-actions-cell">
+                                                        <button
+                                                            type="button"
+                                                            className="action-btn btn-reset-single"
+                                                            onClick={() => handleResetSingleUser(user.userId || user._id)}
+                                                            title="Reset travel status to Pending"
+                                                            aria-label={`Reset travel status for ${user.name}`}
+                                                        >
+                                                            🔄
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="action-btn btn-delete-single"
+                                                            onClick={() => setUserToDelete(user)}
+                                                            title="Delete user"
+                                                            aria-label={`Delete user ${user.name}`}
+                                                        >
+                                                            🗑️
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    }
 
                                     return (
                                         <tr key={user._id || user.userId}>
@@ -721,19 +1242,42 @@ function UserManagement() {
 
                                             {/* Travel Status */}
                                             <td>
-                                                <span
-                                                    className={`user-status-pill status-${(status || "pending")
-                                                        .toLowerCase()
-                                                        .replace(/\s+/g, "-")}`}
-                                                >
-                                                    <span className="status-dot"></span>
-                                                    {status}
-                                                </span>
+                                                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                                    <span
+                                                        className={`user-status-pill status-${(status || "pending")
+                                                            .toLowerCase()
+                                                            .replace(/\s+/g, "-")}`}
+                                                    >
+                                                        <span className="status-dot"></span>
+                                                        {status}
+                                                    </span>
+                                                    {Boolean(user.isLateResponse || user.lateResponseDetected) && (
+                                                        <span className="late-indicator-badge" title="Travel status changed to Coming after route plan approval">
+                                                            ⚠️ Late Response
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
 
                                             {/* Allocation */}
                                             <td>
-                                                {isAllocated ? (
+                                                {user.allocationStatus === "Re-assigned" ? (
+                                                    <div className="allocation-info-cell">
+                                                        <span className="allocation-tag tag-reassigned" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#eab308", border: "1px solid rgba(234, 179, 8, 0.3)" }}>
+                                                            🔄 Re-assigned
+                                                        </span>
+                                                        {busName && (
+                                                            <span className="bus-assigned-badge">
+                                                                🚌 {busName}
+                                                            </span>
+                                                        )}
+                                                        {routeCode && (
+                                                            <span className="route-assigned-badge">
+                                                                🛣️ {routeCode}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ) : isAllocated ? (
                                                     <div className="allocation-info-cell">
                                                         <span className="bus-assigned-badge">
                                                             🚌 {busName}
@@ -741,6 +1285,26 @@ function UserManagement() {
                                                         {routeCode && (
                                                             <span className="route-assigned-badge">
                                                                 🛣️ {routeCode}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ) : (user.allocationStatus === "Pending Reallocation" || user.requiresReallocation) ? (
+                                                    <div className="allocation-info-cell">
+                                                        <span className="allocation-tag tag-pending-reallocation" title="Late travel response detected. Bus allocation safely withheld pending route regeneration.">
+                                                            ⏳ Pending Reallocation
+                                                        </span>
+                                                        {Array.isArray(user.affectedDirections) && user.affectedDirections.length > 0 && (
+                                                            <div className="affected-dirs-list">
+                                                                {user.affectedDirections.map((dir) => (
+                                                                    <span key={dir} className={`affected-dir-tag affected-dir-tag--${dir.toLowerCase()}`}>
+                                                                        {dir}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {user.lateResponseAt && (
+                                                            <span className="late-response-time-sub">
+                                                                Late: {new Date(user.lateResponseAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                             </span>
                                                         )}
                                                     </div>

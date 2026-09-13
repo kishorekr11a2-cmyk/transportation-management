@@ -53,10 +53,11 @@ const ScheduleManagement = () => {
     };
 
     useEffect(() => {
+        let isMounted = true;
         loadData(true);
 
         const handleSync = () => {
-            if (document.visibilityState === "visible") {
+            if (document.visibilityState === "visible" && isMounted && !updatingId) {
                 loadData(false);
             }
         };
@@ -65,10 +66,13 @@ const ScheduleManagement = () => {
         document.addEventListener("visibilitychange", handleSync);
 
         const pollInterval = setInterval(() => {
-            loadData(false);
-        }, 5000);
+            if (document.visibilityState === "visible" && isMounted && !updatingId) {
+                loadData(false);
+            }
+        }, 15000);
 
         return () => {
+            isMounted = false;
             window.removeEventListener("focus", handleSync);
             document.removeEventListener("visibilitychange", handleSync);
             clearInterval(pollInterval);
@@ -189,13 +193,12 @@ const ScheduleManagement = () => {
             setLoading(true);
             await Promise.all(
                 vehicles.map((v) =>
-                    axios.post(
-                        `${API_URL}/schedules`,
+                    api.post(
+                        "/schedules",
                         {
                             vehicle: v._id,
                             availability: status
-                        },
-                        getConfig()
+                        }
                     )
                 )
             );
@@ -226,7 +229,7 @@ const ScheduleManagement = () => {
                     <button
                         type="button"
                         className="refresh-btn"
-                        onClick={loadData}
+                        onClick={() => loadData(true)}
                         disabled={loading}
                     >
                         <FiRefreshCw className={loading ? "spin" : ""} />
@@ -242,7 +245,11 @@ const ScheduleManagement = () => {
                         <FiTruck />
                     </div>
                     <div className="sched-metric-data">
-                        <span className="metric-val">{metrics.total}</span>
+                        {loading && vehicles.length === 0 ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-val">{metrics.total}</span>
+                        )}
                         <span className="metric-lbl">Total Vehicles</span>
                     </div>
                 </div>
@@ -252,7 +259,11 @@ const ScheduleManagement = () => {
                         <FiCheckCircle />
                     </div>
                     <div className="sched-metric-data">
-                        <span className="metric-val text-success">{metrics.available}</span>
+                        {loading && vehicles.length === 0 ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-val text-success">{metrics.available}</span>
+                        )}
                         <span className="metric-lbl">Available for Trips</span>
                     </div>
                 </div>
@@ -262,7 +273,11 @@ const ScheduleManagement = () => {
                         <FiXCircle />
                     </div>
                     <div className="sched-metric-data">
-                        <span className="metric-val text-danger">{metrics.notAvailable}</span>
+                        {loading && vehicles.length === 0 ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-val text-danger">{metrics.notAvailable}</span>
+                        )}
                         <span className="metric-lbl">Not Available</span>
                     </div>
                 </div>
@@ -272,7 +287,11 @@ const ScheduleManagement = () => {
                         <FiLayers />
                     </div>
                     <div className="sched-metric-data">
-                        <span className="metric-val">{metrics.availableCapacity}</span>
+                        {loading && vehicles.length === 0 ? (
+                            <span className="metric-loading-inline">Loading...</span>
+                        ) : (
+                            <span className="metric-val">{metrics.availableCapacity}</span>
+                        )}
                         <span className="metric-lbl">Available Seats</span>
                     </div>
                 </div>

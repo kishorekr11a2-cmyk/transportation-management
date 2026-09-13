@@ -88,6 +88,16 @@ export default function OptimizationResultSummary({
     const capacityShortage = aiPlan?.capacityShortage || summary?.capacityShortage || (availableSeats < totalComing);
     const unallocatedUsers = Number(aiPlan?.unassignedUsers ?? summary?.unallocatedUsers ?? 0);
 
+    const rawTripMode = aiPlan?.tripMode || plan?.tripMode || "INWARD";
+    const canonicalDirection = (rawTripMode === "FROM_SOURCE" || rawTripMode === "OUTWARD" || aiPlan?.direction === "OUTWARD" || plan?.direction === "OUTWARD")
+        ? "OUTWARD"
+        : "INWARD";
+
+    const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
+        ? aiPlan.buses.every((b) => b.isRoadVerified === true)
+        : false;
+    const roadValidationText = isRoadVerified ? "OSRM Verified" : "Calibrated Fallback (Network Unavailable)";
+
     return (
         <div className="optimization-result-summary-card">
             {/* Header Banner */}
@@ -97,17 +107,22 @@ export default function OptimizationResultSummary({
                         {isCertified ? <FiCheckCircle /> : <FiAlertTriangle />}
                     </div>
                     <div>
-                        <span className={`opt-complete-tag ${isCertified ? "tag-success" : "tag-warning"}`}>
-                            {isCertified ? "OPTIMIZATION ENGINE SUCCESS" : "OPTIMIZATION REQUIRES REVIEW"}
-                        </span>
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+                            <span className={`opt-complete-tag ${isCertified ? "tag-success" : "tag-warning"}`}>
+                                {isCertified ? "OPTIMIZATION ENGINE SUCCESS" : "OPTIMIZATION REQUIRES REVIEW"}
+                            </span>
+                            <span className="opt-complete-tag" style={{ background: canonicalDirection === "OUTWARD" ? "#f3e8ff" : "#e0f2fe", color: canonicalDirection === "OUTWARD" ? "#6b21a8" : "#0369a1" }}>
+                                {canonicalDirection === "OUTWARD" ? "Outward Plan" : "Inward Plan"}
+                            </span>
+                        </div>
                         <h2>
                             {isCertified
-                                ? "AI Route Optimization Complete"
+                                ? (canonicalDirection === "OUTWARD" ? "AI Outward Plan" : "AI Inward Plan")
                                 : (capacityShortage ? "Insufficient Available Vehicle Capacity" : "AI Route Plan Generated with Warnings")}
                         </h2>
                         <p className="opt-result-subtext">
                             {isCertified
-                                ? `The rule-based AI engine allocated continuous road routes for all ${usersCovered} confirmed passengers across ${busesAllocated} available vehicles (${allocatedSeats} total seats, ${unusedSeats} unused seats).`
+                                ? `The independent AI engine allocated continuous road routes for all ${usersCovered} confirmed passengers across ${busesAllocated} available vehicles (${allocatedSeats} total seats, ${unusedSeats} unused seats).`
                                 : `Demand of ${totalComing} confirmed passengers requires review (${unallocatedUsers > 0 ? `${unallocatedUsers} passengers unallocated due to vehicle capacity limits` : "Review constraints"}).`}
                         </p>
                     </div>
@@ -294,6 +309,11 @@ export default function OptimizationResultSummary({
                 <div className="highlight-pill">
                     <span className="highlight-check">✓</span>
                     <span>2-Opt continuous road progression verified</span>
+                </div>
+
+                <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`} id="pill-road-validation">
+                    <span className="highlight-check">{isRoadVerified ? "✓" : "⚠️"}</span>
+                    <span>Road Validation: <strong>{roadValidationText}</strong></span>
                 </div>
             </div>
 

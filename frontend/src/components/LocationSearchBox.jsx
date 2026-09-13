@@ -4,7 +4,7 @@ import {
     normalizeLocation,
     isValidCoordinate,
     getCategoryIcon
-} from "../services/locationSearchService";
+} from "../services/googleMapsService";
 import "../css/LocationSearchBox.css";
 
 const MIN_QUERY_LENGTH = 2;
@@ -292,9 +292,12 @@ export default function LocationSearchBox({
 
     return (
         <div className={`location-search-box ${className}`}>
-            <div className="location-search-input-wrapper">
-                <span className="location-search-icon" aria-hidden="true">
-                    🔍
+            <div className="location-search-input-wrapper search-input-wrapper">
+                <span className="location-search-icon search-input-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
                 </span>
 
                 <input
@@ -312,7 +315,8 @@ export default function LocationSearchBox({
                             setShowDropdown(true);
                         }
                     }}
-                    className="location-search-input"
+                    className="location-search-input search-input"
+                    style={{ padding: "14px 52px 14px 48px", boxSizing: "border-box" }}
                 />
 
                 {loading && (
@@ -324,7 +328,7 @@ export default function LocationSearchBox({
                 {!loading && query.length > 0 && (
                     <button
                         type="button"
-                        className="location-search-clear"
+                        className="location-search-clear search-input-clear"
                         onClick={handleClear}
                         aria-label="Clear location search"
                     >
@@ -379,12 +383,42 @@ export default function LocationSearchBox({
                                             </span>
                                         )}
 
-                                        <div className="location-result-meta" style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "3px" }}>
+                                        <div className="location-result-meta" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", marginTop: "4px" }}>
                                             <span className="location-result-type">
                                                 {place.type || "Place"}
                                             </span>
+                                            {(place.city || place.district || place.state) && (
+                                                <span
+                                                    className="location-result-city-badge"
+                                                    style={{
+                                                        fontSize: "11px",
+                                                        color: "#0f172a",
+                                                        background: "#f1f5f9",
+                                                        padding: "1px 6px",
+                                                        borderRadius: "4px",
+                                                        fontWeight: "600"
+                                                    }}
+                                                >
+                                                    🏙️ {[place.city || place.district, place.state, place.country].filter(Boolean).join(", ")}
+                                                </span>
+                                            )}
+                                            {place.cityWarning && (
+                                                <span
+                                                    className="location-result-warning"
+                                                    style={{
+                                                        fontSize: "11px",
+                                                        color: "#b91c1c",
+                                                        background: "#fee2e2",
+                                                        padding: "1px 6px",
+                                                        borderRadius: "4px",
+                                                        fontWeight: "600"
+                                                    }}
+                                                >
+                                                    {place.cityWarning}
+                                                </span>
+                                            )}
                                             {place.latitude !== undefined && place.longitude !== undefined && (
-                                                <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                                                <span style={{ fontSize: "11px", color: "#64748b" }}>
                                                     📍 {Number(place.latitude).toFixed(5)}, {Number(place.longitude).toFixed(5)}
                                                 </span>
                                             )}
@@ -400,10 +434,9 @@ export default function LocationSearchBox({
                         emptyMessage && (
                             <div className="location-search-no-results">
                                 <span className="no-results-icon">📍</span>
-                                <p>
-                                    No locations found for "<strong>{query.trim()}</strong>"
+                                <p className="no-results-text" style={{ margin: "4px 0 0", color: "#475569", fontSize: "13px", lineHeight: "1.4" }}>
+                                    {emptyMessage}
                                 </p>
-                                <small>Try adding a city, district, or country.</small>
                             </div>
                         )}
 

@@ -4,22 +4,29 @@ import { uploadExcel } from "../controllers/excelController.js";
 
 const router = express.Router();
 
-// Store uploaded files inside uploads folder
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, "uploads/");
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + "-" + file.originalname);
+// Use fast in-memory buffer storage (avoids disk I/O, missing folder crashes, and file lockups)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 20 * 1024 * 1024 // 20MB
     }
 });
 
-const upload = multer({ storage });
-
-// Upload Excel
+// Upload Excel with error handling wrapper to ensure requests never hang
 router.post(
     "/upload",
-    upload.single("file"),
+    (req, res, next) => {
+        upload.single("file")(req, res, (err) => {
+            if (err) {
+                console.error("Multer file upload error:", err);
+                return res.status(400).json({
+                    success: false,
+                    message: err.message || "Failed to parse uploaded file."
+                });
+            }
+            next();
+        });
+    },
     uploadExcel
 );
 

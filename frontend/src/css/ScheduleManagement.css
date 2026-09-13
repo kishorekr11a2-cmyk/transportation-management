@@ -147,6 +147,19 @@
     color: #dc2626;
 }
 
+.metric-loading-inline {
+    font-size: 16px;
+    font-weight: 700;
+    color: #94a3b8;
+    letter-spacing: 0.5px;
+    animation: metricPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes metricPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
 .metric-lbl {
     font-size: 12px;
     color: #64748b;

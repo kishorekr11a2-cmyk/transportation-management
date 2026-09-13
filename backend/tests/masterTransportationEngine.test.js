@@ -319,4 +319,56 @@ test("MASTER PROMPT: Real-World Transportation Route Optimization Engine Verific
         assert.equal(activeBuilderStops[1].name, "Simmakkal");
         assert.equal(activeBuilderStops[2].name, "Arappalayam");
     });
+
+    // =========================================================================
+    // TEST K: Dual Optimization & Physical Bus Continuity (Outward End == Inward Start)
+    // =========================================================================
+    await t.test("TEST K: Dual Optimization & Physical Bus Continuity (Outward End == Inward Start)", async () => {
+        const sourceHub = { name: "KLN College", latitude: 9.8515, longitude: 78.1882 };
+        const destinationHub = { name: "KLN College", latitude: 9.8515, longitude: 78.1882 };
+
+        const testStops = [
+            { name: "Vandiyur", latitude: 9.910, longitude: 78.160, userCount: 20, userIds: Array.from({ length: 20 }, (_, i) => `u_v_${i}`) },
+            { name: "Mattuthavani", latitude: 9.944, longitude: 78.156, userCount: 30, userIds: Array.from({ length: 30 }, (_, i) => `u_m_${i}`) }
+        ];
+
+        const vehicles = [
+            { _id: "v1", vehicleName: "Bus Alpha", capacity: 60 }
+        ];
+
+        const plan = await buildAIPlan({
+            sourceHub,
+            destinationHub,
+            tripMode: "FROM_SOURCE",
+            resolvedStops: testStops,
+            availableVehicles: vehicles,
+            rawVehicles: vehicles,
+            totalComingUsers: 50,
+            allUsersCount: 50
+        });
+
+        assert.ok(plan);
+        assert.equal(plan.buses.length, 1);
+        const bus = plan.buses[0];
+
+        // 1. Both outward and inward objects must be populated
+        assert.ok(bus.outward, "bus.outward must exist");
+        assert.ok(bus.inward, "bus.inward must exist");
+
+        // 2. Bus Continuity: inward start == outward last stop
+        assert.equal(bus.inwardStartLocation?.name, bus.outward.lastOutwardStop?.name);
+        assert.equal(bus.inward.startLocation?.name, bus.outward.lastOutwardStop?.name);
+
+        // 3. Outward ends at last outward stop (NOT a shed)
+        assert.notEqual(bus.outward.lastOutwardStop?.name, "Shed");
+
+        // 4. Inward ends at Destination
+        assert.equal(bus.inward.destination?.name, "KLN College");
+
+        // 5. Total available capacity must be defined and equal to available vehicle capacity
+        assert.equal(plan.availableTotalCapacity, 60);
+
+        // 6. Route relation must be classified
+        assert.ok(["Same", "Partially Shared", "Different"].includes(bus.routeRelation));
+    });
 });

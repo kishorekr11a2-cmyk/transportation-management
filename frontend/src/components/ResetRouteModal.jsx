@@ -4,9 +4,12 @@ export default function ResetRouteModal({
     isOpen,
     onClose,
     onConfirm,
-    isResetting = false
+    isResetting = false,
+    direction = null
 }) {
     if (!isOpen) return null;
+
+    const dirLabel = direction === "OUTWARD" ? "Outward" : direction === "INWARD" ? "Inward" : "";
 
     return (
         <div
@@ -33,9 +36,9 @@ export default function ResetRouteModal({
                         <FiAlertTriangle />
                     </div>
                     <div>
-                        <h2>Reset AI Generated Route?</h2>
+                        <h2>Reset {dirLabel ? `${dirLabel} ` : ""}AI Generated Route?</h2>
                         <span className="ai-modal-subtitle">
-                            Confirmation required before clearing recommendation
+                            Confirmation required before clearing {dirLabel ? `${dirLabel.toLowerCase()} ` : ""}recommendation
                         </span>
                     </div>
                 </div>
@@ -43,7 +46,7 @@ export default function ResetRouteModal({
                 {/* Modal Body */}
                 <div className="ai-modal-body">
                     <p className="ai-modal-lead">
-                        This will remove the currently generated AI recommendation.
+                        This will remove the currently generated {dirLabel ? `${dirLabel} ` : ""}AI recommendation and associated student allocations. {dirLabel ? `The opposite direction (if independently approved) remains completely untouched.` : ""}
                     </p>
                     <div className="ai-modal-safe-callout">
                         <span className="safe-badge">✓ SAFE ACTION</span>

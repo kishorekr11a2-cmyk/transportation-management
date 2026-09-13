@@ -52,10 +52,7 @@ function StudentLogin() {
             localStorage.setItem("userId", response.data.user.userId);
 
             toast.success("Login Successful");
-
-            setTimeout(() => {
-                navigate("/student-dashboard");
-            }, 800);
+            navigate("/student-dashboard");
 
         } catch (error) {
 
