@@ -12,6 +12,7 @@ import {
   MdRoute,
   MdCalendarMonth,
   MdUploadFile,
+  MdLogout
 } from "react-icons/md";
 import { TbBrandOpenai } from "react-icons/tb";
 import api from "../services/api";
@@ -28,6 +29,18 @@ const AdminDashboard = () => {
   // regardless of what the underlying DB record's name field contains.
   const adminDisplayId   = "ADMIN";
   const adminDisplayRole = "Administrator";
+
+  const handleLogout = () => {
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem("admin_token");
+      localStorage.removeItem("admin_user");
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      localStorage.removeItem("role");
+    } catch (e) {}
+    navigate("/");
+  };
 
   const [lateData, setLateData] = useState({
     lateComingResponsesCount: 0,
@@ -107,7 +120,7 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        <div className="dash-header__right">
+        <div className="dash-header__right" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div className="dash-admin-badge">
             <div className="dash-admin-avatar" aria-hidden="true">
               A
@@ -117,6 +130,29 @@ const AdminDashboard = () => {
               <span className="dash-admin-role">{adminDisplayRole}</span>
             </div>
           </div>
+          <button
+            type="button"
+            className="dash-logout-btn"
+            onClick={handleLogout}
+            title="Log Out"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #e2e8f0",
+              background: "#ffffff",
+              color: "#ef4444",
+              fontWeight: "600",
+              fontSize: "13px",
+              cursor: "pointer",
+              transition: "all 0.2s ease"
+            }}
+          >
+            <MdLogout size={16} />
+            Logout
+          </button>
         </div>
       </header>
 

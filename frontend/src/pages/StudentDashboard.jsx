@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import api from "../services/api";
 import "../css/StudentDashboard.css";
 
 const StudentDashboard = () => {
+    const navigate = useNavigate();
     const [student, setStudent] = useState(() => {
         try {
             const raw = sessionStorage.getItem("user") || localStorage.getItem("student_user") || localStorage.getItem("user");
@@ -23,6 +25,19 @@ const StudentDashboard = () => {
     const [updating, setUpdating] = useState(false);
     const [submittingStatus, setSubmittingStatus] = useState(null);
     const isSubmittingRef = useRef(false);
+
+    const handleLogout = () => {
+        try {
+            sessionStorage.clear();
+            localStorage.removeItem("student_token");
+            localStorage.removeItem("student_user");
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
+            localStorage.removeItem("userId");
+            localStorage.removeItem("role");
+        } catch (e) {}
+        navigate("/");
+    };
 
     const loadStudentData = async (showSpinner = false) => {
         try {
@@ -343,15 +358,57 @@ const StudentDashboard = () => {
 
     return (
         <div className="student-dashboard">
-            <div className="student-header">
-                <div>
-                    <h1>Welcome, {student.name}</h1>
-                    <p className="student-subtitle">Transport Member Portal & Route Allocation</p>
+            <div className="student-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                    <button
+                        type="button"
+                        onClick={() => navigate(-1)}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "8px 14px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1",
+                            background: "#ffffff",
+                            color: "#475569",
+                            fontWeight: "600",
+                            fontSize: "13px",
+                            cursor: "pointer"
+                        }}
+                    >
+                        ← Back
+                    </button>
+                    <div>
+                        <h1>Welcome, {student.name}</h1>
+                        <p className="student-subtitle">Transport Member Portal & Route Allocation</p>
+                    </div>
                 </div>
-                <div className="header-status-badge">
-                    <span className={`status-pill ${student.travelStatus?.toLowerCase().replace(/\s+/g, '-') || 'pending'}`}>
-                        ● {student.travelStatus || "Status Pending"}
-                    </span>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div className="header-status-badge">
+                        <span className={`status-pill ${student.travelStatus?.toLowerCase().replace(/\s+/g, '-') || 'pending'}`}>
+                            ● {student.travelStatus || "Status Pending"}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleLogout}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "8px 14px",
+                            borderRadius: "8px",
+                            border: "1px solid #fee2e2",
+                            background: "#ffffff",
+                            color: "#ef4444",
+                            fontWeight: "600",
+                            fontSize: "13px",
+                            cursor: "pointer"
+                        }}
+                    >
+                        Logout
+                    </button>
                 </div>
             </div>
 
