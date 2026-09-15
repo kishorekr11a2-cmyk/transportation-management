@@ -92,6 +92,16 @@ const userSchema = new mongoose.Schema(
             default: false
         },
 
+        lateResponse: {
+            type: Boolean,
+            default: false
+        },
+
+        isLateResponse: {
+            type: Boolean,
+            default: false
+        },
+
         lateResponseAt: {
             type: Date,
             default: null
@@ -159,11 +169,6 @@ const userSchema = new mongoose.Schema(
             default: false
         },
 
-        responseDeadline: {
-            type: Date,
-            default: null
-        },
-
         approvedPlanType: {
             type: String,
             default: null,
@@ -208,6 +213,23 @@ const userSchema = new mongoose.Schema(
         aiAllocation: {
             type: mongoose.Schema.Types.Mixed,
             default: null
+        },
+
+        submittedPlanVersion: {
+            type: Number,
+            default: null
+        },
+
+        submittedApprovalEventId: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
+        lateResponseEventId: {
+            type: String,
+            default: null,
+            trim: true
         }
     },
     {
@@ -221,8 +243,9 @@ userSchema.index({ role: 1, travelStatus: 1 });
 userSchema.index({ role: 1, allocationStatus: 1 });
 userSchema.index({ role: 1, lateResponseDetected: 1 });
 userSchema.index({ role: 1, isLateResponse: 1 });
+userSchema.index({ role: 1, submittedPlanVersion: 1 });
+userSchema.index({ role: 1, submittedApprovalEventId: 1 });
 userSchema.index({ role: 1, travelResponseSubmittedAt: 1 });
-userSchema.index({ role: 1, responseDeadline: 1 });
 userSchema.index({ role: 1, requiresReallocation: 1 });
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ role: 1, "allocatedBus.direction": 1 });

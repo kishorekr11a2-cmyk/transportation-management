@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
  * Test Suite: Manual Route Approval, Late Response Marking, and Bus Allocation Decoupling
  * 
  * Validates the 12 Success Criteria:
- * 1. User submits before deadline -> Coming, no late-response label.
- * 2. User submits after deadline -> Coming plus Late Response.
+ * 1. User submits before plan approval -> Coming, no late-response label.
+ * 2. User submits after plan approval -> Coming plus Late Response.
  * 3. Late user approved through AI route -> AI behavior remains correct.
  * 4. Late user approved through Manual Route -> late-response label remains visible.
  * 5. Manual Route approval -> no automatic reassignment.
@@ -16,32 +16,30 @@ import assert from 'node:assert/strict';
  * 9. Refresh page -> late-response status and manual allocation remain.
  * 10. Open a new tab -> same data remains.
  * 11. AI Agent Reset -> does not delete manual route allocation or response timestamp.
- * 12. User Management Reset -> clears allocation, new response recalculates against deadline.
+ * 12. User Management Reset -> clears allocation, new response recalculates against current approved plan.
  */
 
 describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
 
-    const DEADLINE = new Date("2026-09-13T10:00:00.000Z");
+    const PLAN_APPROVED_AT = new Date("2026-09-13T10:00:00.000Z");
 
-    // Helper: evaluate travel response submission against deadline
-    function evaluateSubmission({ travelStatus, responseSubmittedAt, deadline = DEADLINE, allocatedUserIds = new Set() }) {
+    // Helper: evaluate travel response submission against current approved plan
+    function evaluateSubmission({ travelStatus, responseSubmittedAt, planApprovedAt = PLAN_APPROVED_AT, allocatedUserIds = new Set() }) {
         if (travelStatus !== "Coming") {
             return {
                 travelStatus,
                 isLateResponse: false,
-                lateResponseDetected: false,
-                responseDeadline: null
+                lateResponseDetected: false
             };
         }
 
-        const isAfterDeadline = responseSubmittedAt.getTime() > deadline.getTime();
-        const isLate = isAfterDeadline && !allocatedUserIds.has("USR1001");
+        const isAfterPlanApproval = responseSubmittedAt.getTime() > planApprovedAt.getTime();
+        const isLate = isAfterPlanApproval && !allocatedUserIds.has("USR1001");
 
         return {
             travelStatus: "Coming",
             isLateResponse: isLate,
-            lateResponseDetected: isLate,
-            responseDeadline: isLate ? deadline : null
+            lateResponseDetected: isLate
         };
     }
 
@@ -78,12 +76,12 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
         };
     }
 
-    // Case 1: User submits before deadline -> Coming, no late-response label
-    it("1. User submits before deadline -> Coming, no late-response label", () => {
+    // Case 1: User submits before plan approval -> Coming, no late-response label
+    it("1. User submits before plan approval -> Coming, no late-response label", () => {
         const submission = evaluateSubmission({
             travelStatus: "Coming",
             responseSubmittedAt: new Date("2026-09-13T09:30:00.000Z"),
-            deadline: DEADLINE
+            planApprovedAt: PLAN_APPROVED_AT
         });
 
         assert.equal(submission.travelStatus, "Coming");
@@ -94,18 +92,17 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
         assert.equal(sanitized.showLateResponseBadge, false);
     });
 
-    // Case 2: User submits after deadline -> Coming plus Late Response
-    it("2. User submits after deadline -> Coming plus Late Response", () => {
+    // Case 2: User submits after plan approval -> Coming plus Late Response
+    it("2. User submits after plan approval -> Coming plus Late Response", () => {
         const submission = evaluateSubmission({
             travelStatus: "Coming",
             responseSubmittedAt: new Date("2026-09-13T10:15:00.000Z"),
-            deadline: DEADLINE
+            planApprovedAt: PLAN_APPROVED_AT
         });
 
         assert.equal(submission.travelStatus, "Coming");
         assert.equal(submission.isLateResponse, true);
         assert.equal(submission.lateResponseDetected, true);
-        assert.ok(submission.responseDeadline);
 
         const sanitized = sanitizeUserForManagement(submission);
         assert.equal(sanitized.showLateResponseBadge, true);
@@ -120,7 +117,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             isLateResponse: true,
             lateResponseDetected: true,
             travelResponseSubmittedAt: new Date("2026-09-13T10:15:00.000Z"),
-            responseDeadline: DEADLINE,
             allocationStatus: "Pending Reallocation"
         };
 
@@ -154,7 +150,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             isLateResponse: true,
             lateResponseDetected: true,
             travelResponseSubmittedAt: new Date("2026-09-13T10:20:00.000Z"),
-            responseDeadline: DEADLINE,
             allocationStatus: "Pending Reallocation"
         };
 
@@ -271,7 +266,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             travelStatus: "Coming",
             isLateResponse: true,
             lateResponseDetected: true,
-            responseDeadline: DEADLINE,
             approvedPlanType: "MANUAL",
             manualRouteId: "MR-01",
             manualBusId: "TN-58-1111",
@@ -293,7 +287,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             travelStatus: "Coming",
             isLateResponse: true,
             lateResponseDetected: true,
-            responseDeadline: DEADLINE,
             approvedPlanType: "MANUAL",
             manualRouteId: "MR-01",
             manualBusId: "TN-58-1111",
@@ -314,7 +307,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             isLateResponse: true,
             lateResponseDetected: true,
             travelResponseSubmittedAt: new Date("2026-09-13T10:15:00.000Z"),
-            responseDeadline: DEADLINE,
             approvedPlanType: "MANUAL",
             manualRouteId: "MR-01",
             manualBusId: "TN-58-1111",
@@ -344,8 +336,8 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
         assert.ok(afterAiReset.travelResponseSubmittedAt, "travelResponseSubmittedAt must be preserved");
     });
 
-    // Case 12: User Management Reset -> clears allocation, new response recalculates against deadline
-    it("12. User Management Reset -> clears allocation, new response recalculates against deadline", () => {
+    // Case 12: User Management Reset -> clears allocation, new response recalculates against current approved plan
+    it("12. User Management Reset -> clears allocation, new response recalculates against current approved plan", () => {
         const userBeforeReset = {
             userId: "USR1001",
             travelStatus: "Coming",
@@ -369,7 +361,6 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
             approvedPlanType: null,
             isLateResponse: false,
             lateResponseDetected: false,
-            responseDeadline: null,
             travelResponseSubmittedAt: null
         };
 
@@ -381,11 +372,11 @@ describe("Manual Route Approval & Late Response Integrity Test Suite", () => {
         const newResponse = evaluateSubmission({
             travelStatus: "Coming",
             responseSubmittedAt: new Date("2026-09-13T10:30:00.000Z"),
-            deadline: DEADLINE
+            planApprovedAt: PLAN_APPROVED_AT
         });
 
         assert.equal(newResponse.travelStatus, "Coming");
-        assert.equal(newResponse.isLateResponse, true, "New response submitted after deadline must recalculate as late response");
+        assert.equal(newResponse.isLateResponse, true, "New response submitted after plan approval must recalculate as late response");
         assert.equal(newResponse.lateResponseDetected, true);
     });
 });

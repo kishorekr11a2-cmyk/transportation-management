@@ -227,7 +227,7 @@ describe('Late Travel Response Deduplication & Resolution Test Suite', () => {
         assert.equal(firstEval.unnotifiedEventKeys.length, 1);
 
         const eventKey = firstEval.unnotifiedEventKeys[0];
-        assert.ok(eventKey.startsWith('lr_std-late-01_OUTWARD_'));
+        assert.ok(eventKey.includes('std-late-01') && eventKey.includes('OUTWARD'));
 
         // Simulate acknowledgment in MongoDB
         student.lateResponseNotifiedEventKeys = [eventKey];

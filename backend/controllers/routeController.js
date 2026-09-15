@@ -422,13 +422,30 @@ export const deleteRoute = async (req, res) => {
 
 export const getManualPlan = async (req, res) => {
     try {
-        const direction = req.query.direction || "INWARD";
-        const canonicalDirection = (String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
+        let direction = req.query.direction;
+        let latestSubmittedDirection = null;
+
+        if (mongoose.connection?.db) {
+            const sub = await mongoose.connection.db.collection("manual_plan_submissions")
+                .find({ isSubmitted: true })
+                .sort({ submittedAt: -1 })
+                .limit(1)
+                .toArray();
+            if (sub && sub.length > 0 && sub[0].direction) {
+                latestSubmittedDirection = sub[0].direction;
+            }
+        }
+
+        const canonicalDirection = direction
+            ? ((String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD")
+            : (latestSubmittedDirection || "INWARD");
+
         const plan = await buildManualTransportationPlan({ direction: canonicalDirection });
 
         res.json({
             success: true,
             direction: canonicalDirection,
+            latestSubmittedDirection,
             plan
         });
     } catch (error) {

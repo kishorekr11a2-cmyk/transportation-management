@@ -376,6 +376,9 @@ export default function RouteManagement() {
                 const msg = res.message || `Admin manual ${activePlanDirection} plan confirmed and submitted! Open AI Route Management to review and approve.`;
                 setSuccessMessage(msg);
                 toast.success(msg);
+                try {
+                    localStorage.setItem("active_manual_plan_direction", activePlanDirection);
+                } catch (e) {}
                 await Promise.all([loadDataSilently(), fetchManualPlan(activePlanDirection)]);
             }
         } catch (err) {
@@ -1016,11 +1019,11 @@ export default function RouteManagement() {
                                 </span>
                             ) : manualPlan?.isSubmitted ? (
                                 <span>
-                                    ✓ <strong>Plan Confirmed &amp; Submitted:</strong> Assigned routes are ready in <strong>AI Route Management</strong> for admin review and final approval.
+                                    ✓ <strong>Plan Confirmed &amp; Submitted:</strong> Confirmed {activePlanDirection} Manual Plan Submitted. Ready for admin review and final approval.
                                 </span>
                             ) : (
                                 <span>
-                                    📋 <strong>Saved Routes:</strong> Click <strong>"✓ OK"</strong> to confirm and submit these {activePlanDirection} routes to <strong>AI Route Management</strong> for approval.
+                                    Click <strong>"✓ OK"</strong> to confirm and submit these {activePlanDirection} routes for approval.
                                 </span>
                             )}
                         </div>
@@ -1377,6 +1380,9 @@ export default function RouteManagement() {
                                     <div className="section-title">
                                         <h3>Saved Routes ({loading ? "..." : filteredRoutes.length})</h3>
                                         <span>{loading ? "..." : routes.length} total</span>
+                                    </div>
+                                    <div className="saved-routes-hint" style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 10px 0" }}>
+                                        Click "✓ OK" to confirm and submit these {activePlanDirection} routes for approval.
                                     </div>
 
                                     {/* Direction Filter Tabs */}

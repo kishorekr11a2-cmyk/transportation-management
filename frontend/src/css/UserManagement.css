@@ -235,6 +235,147 @@
 }
 
 /* ==========================================================================
+   3B. JOURNEY DIRECTION TABS (ALL / INWARD / OUTWARD)
+   ========================================================================== */
+
+.user-direction-tabs-bar {
+    max-width: 1320px;
+    margin: 0 auto 14px auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.user-dir-tabs-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    padding: 5px 6px;
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.user-dir-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 18px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #64748b;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    white-space: nowrap;
+}
+
+.user-dir-tab:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+}
+
+.user-dir-tab.active {
+    background: #1e293b;
+    color: #ffffff;
+    border-color: #1e293b;
+    box-shadow: 0 2px 8px rgba(30, 41, 59, 0.2);
+}
+
+.user-dir-tab.active.inward {
+    background: #059669;
+    color: #ffffff;
+    border-color: #059669;
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
+}
+
+.user-dir-tab.active.outward {
+    background: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.user-dir-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.user-dir-text {
+    font-weight: 700;
+}
+
+.user-dir-count {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+.direction-scope-pill {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+}
+
+/* Dual Direction Allocation Display */
+.dual-allocation-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dir-alloc-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.dir-pill-inward {
+    font-size: 10.5px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+    white-space: nowrap;
+}
+
+.dir-pill-outward {
+    font-size: 10.5px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+    white-space: nowrap;
+}
+
+.pickup-time-badge,
+.drop-time-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: #f8fafc;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+/* ==========================================================================
    4. SEARCH & FILTER TOOLBAR
    ========================================================================== */
 
@@ -410,6 +551,11 @@
 .counter-zero {
     color: #ef4444;
     font-weight: 700;
+}
+
+.counter-loading {
+    color: #2563eb;
+    font-weight: 600;
 }
 
 .filter-active-indicator {

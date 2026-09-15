@@ -25,10 +25,23 @@ const lateResponseEventSchema = new mongoose.Schema(
             trim: true
         },
 
+        planVersion: {
+            type: Number,
+            default: 1,
+            index: true
+        },
+
+        approvalEventId: {
+            type: String,
+            default: null,
+            index: true,
+            trim: true
+        },
+
         direction: {
             type: String,
-            required: true,
-            enum: ["INWARD", "OUTWARD"],
+            required: false,
+            default: null,
             trim: true
         },
 
@@ -75,6 +88,8 @@ const lateResponseEventSchema = new mongoose.Schema(
         status: {
             type: String,
             enum: [
+                "ACTIVE",
+                "RESOLVED",
                 "Pending",
                 "DETECTED",
                 "NOTIFIED",
@@ -83,11 +98,15 @@ const lateResponseEventSchema = new mongoose.Schema(
                 "AWAITING_APPROVAL",
                 "ALLOCATED",
                 "Processed",
-                "Resolved",
-                "RESOLVED"
+                "Resolved"
             ],
-            default: "Pending",
+            default: "ACTIVE",
             index: true
+        },
+
+        isNotified: {
+            type: Boolean,
+            default: false
         },
 
         notifiedAt: {
@@ -97,6 +116,11 @@ const lateResponseEventSchema = new mongoose.Schema(
 
         resolvedAt: {
             type: Date,
+            default: null
+        },
+
+        resolutionReason: {
+            type: String,
             default: null
         },
 
@@ -130,8 +154,12 @@ const lateResponseEventSchema = new mongoose.Schema(
     }
 );
 
+lateResponseEventSchema.index({ userId: 1, approvalEventId: 1 });
 lateResponseEventSchema.index({ direction: 1 });
+lateResponseEventSchema.index({ status: 1, direction: 1 });
 lateResponseEventSchema.index({ userId: 1, direction: 1 });
+lateResponseEventSchema.index({ userId: 1, approvalEventId: 1, direction: 1 });
+lateResponseEventSchema.index({ userId: 1, planVersion: 1, direction: 1 });
 lateResponseEventSchema.index({ userId: 1, planId: 1, direction: 1 });
 lateResponseEventSchema.index({ planId: 1, status: 1 });
 lateResponseEventSchema.index({ notifiedAt: 1 });

@@ -45,9 +45,6 @@ const AdminDashboard = () => {
   const [lateData, setLateData] = useState({
     lateComingResponsesCount: 0,
     pendingReallocationUsersCount: 0,
-    affectedDirections: [],
-    inwardCount: 0,
-    outwardCount: 0,
     users: [],
   });
   const [showInspectModal, setShowInspectModal] = useState(false);
@@ -59,9 +56,6 @@ const AdminDashboard = () => {
         setLateData({
           lateComingResponsesCount: res.data.lateComingResponsesCount || 0,
           pendingReallocationUsersCount: res.data.pendingReallocationUsersCount || 0,
-          affectedDirections: res.data.affectedDirections || [],
-          inwardCount: res.data.inwardCount || 0,
-          outwardCount: res.data.outwardCount || 0,
           users: res.data.users || [],
         });
       }
@@ -211,20 +205,6 @@ const AdminDashboard = () => {
                 <span className="dash-late-chip__val dash-late-chip__val--danger">
                   {lateData.pendingReallocationUsersCount}
                 </span>
-              </div>
-              <div className="dash-late-chip">
-                <span className="dash-late-chip__label">Affected Direction(s)</span>
-                <div className="dash-late-chip__dirs">
-                  {lateData.affectedDirections && lateData.affectedDirections.length > 0 ? (
-                    lateData.affectedDirections.map((dir) => (
-                      <span key={dir} className={`dash-dir-tag dash-dir-tag--${dir.toLowerCase()}`}>
-                        {dir} ({dir === "INWARD" ? lateData.inwardCount : lateData.outwardCount})
-                      </span>
-                    ))
-                  ) : (
-                    <span className="dash-dir-tag dash-dir-tag--none">None</span>
-                  )}
-                </div>
               </div>
             </div>
           </div>
@@ -418,14 +398,13 @@ const AdminDashboard = () => {
                       <th>Name</th>
                       <th>Stopping Area</th>
                       <th>Response Time</th>
-                      <th>Affected Direction</th>
                       <th>Allocation Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {lateData.users.length === 0 ? (
                       <tr>
-                        <td colSpan="6" style={{ textAlign: "center", padding: "2rem" }}>
+                        <td colSpan="5" style={{ textAlign: "center", padding: "2rem" }}>
                           No pending reallocation students found.
                         </td>
                       </tr>
@@ -436,16 +415,9 @@ const AdminDashboard = () => {
                           <td className="dash-uname"><strong>{u.name}</strong></td>
                           <td>{u.stoppings || "Not Specified"}</td>
                           <td className="dash-time">
-                            {u.lateResponseAt
-                              ? new Date(u.lateResponseAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                            {u.lateResponseAt || u.travelResponseSubmittedAt || u.responseSubmittedAt
+                              ? new Date(u.lateResponseAt || u.travelResponseSubmittedAt || u.responseSubmittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
                               : "Recently"}
-                          </td>
-                          <td>
-                            {(u.affectedDirections || []).map((dir) => (
-                              <span key={dir} className={`dash-dir-tag dash-dir-tag--${dir.toLowerCase()}`}>
-                                {dir}
-                              </span>
-                            ))}
                           </td>
                           <td>
                             <span className="dash-status-pending-realloc">

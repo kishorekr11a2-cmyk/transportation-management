@@ -150,6 +150,13 @@ export const studentLogin = async (req, res) => {
         );
 
         const allocatedBus = await getUserAllocatedBus(student);
+        const isAllocated = Boolean(allocatedBus?.isAllocated || allocatedBus?.inward?.isAllocated || allocatedBus?.outward?.isAllocated);
+        const effectiveTravelStatus = isAllocated
+            ? ((student.travelStatus && student.travelStatus !== "Pending") ? student.travelStatus : "Coming")
+            : (student.travelStatus || "Pending");
+        const effectiveAllocationStatus = isAllocated
+            ? "Assigned"
+            : (student.allocationStatus || "Not Assigned");
 
         res.status(200).json({
             success: true,
@@ -160,9 +167,12 @@ export const studentLogin = async (req, res) => {
                 userId: student.userId,
                 name: student.name,
                 stoppings: student.stoppings || "",
-                travelStatus: student.travelStatus || "Pending",
+                travelStatus: effectiveTravelStatus,
+                allocationStatus: effectiveAllocationStatus,
                 role: student.role,
-                allocatedBus
+                allocatedBus,
+                isAllocated,
+                isSubmissionLocked: isAllocated
             }
         });
     } catch (error) {

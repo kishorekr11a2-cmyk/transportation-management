@@ -82,6 +82,19 @@ const aiPlanSchema = new mongoose.Schema(
             default: Date.now
         },
 
+        planVersion: {
+            type: Number,
+            default: 1,
+            index: true
+        },
+
+        approvalEventId: {
+            type: String,
+            default: null,
+            index: true,
+            trim: true
+        },
+
         isApproved: {
             type: Boolean,
             default: false,

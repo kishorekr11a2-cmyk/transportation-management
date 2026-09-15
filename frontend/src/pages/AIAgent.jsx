@@ -14,7 +14,8 @@ import {
     resetManualPlan,
     saveSelectedPlan,
     getSelectedPlan,
-    fetchLateResponses
+    fetchLateResponses,
+    getLateResponseDraft
 } from "../services/aiAgentService";
 import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
@@ -297,6 +298,10 @@ export default function AIAgent() {
         useState(null);
 
     const [manualPlanDirection, setManualPlanDirection] = useState(() => {
+        try {
+            const stored = localStorage.getItem("active_manual_plan_direction");
+            if (stored === "INWARD" || stored === "OUTWARD") return stored;
+        } catch (e) {}
         return planDirectionTab || "INWARD";
     });
 
@@ -532,7 +537,11 @@ export default function AIAgent() {
     const loadManualRoutes = async (targetDirection = null) => {
         try {
             setManualRoutesLoading(true);
-            const currentDir = targetDirection || manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+            let storedDir = null;
+            try {
+                storedDir = localStorage.getItem("active_manual_plan_direction");
+            } catch (e) {}
+            const currentDir = targetDirection || manualPlanDirection || storedDir || planDirectionTab || "INWARD";
 
             const [routesRes, planRes] = await Promise.allSettled([
                 getManualRoutes(),
@@ -548,7 +557,11 @@ export default function AIAgent() {
                 setManualRoutes(filtered);
             }
             if (planRes.status === "fulfilled" && planRes.value?.success) {
-                setManualPlanData(planRes.value.plan);
+                const p = planRes.value.plan;
+                setManualPlanData(p);
+                if (p?.direction) {
+                    setManualPlanDirection(p.direction);
+                }
             }
         } catch (error) {
             console.error(
@@ -567,8 +580,28 @@ export default function AIAgent() {
         setManualPlanDirection(newDir);
         setPlanDirectionTab(newDir);
         setTripMode(newDir === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION");
+        try {
+            localStorage.setItem("active_manual_plan_direction", newDir);
+        } catch (e) {}
         loadManualRoutes(newDir);
         loadLastSelection(newDir);
+    };
+
+    const loadLateResponseDraft = async (targetDirection = null) => {
+        try {
+            const currentDir = targetDirection || manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+            const [draftRes] = await Promise.allSettled([
+                getLateResponseDraft({ direction: currentDir }),
+                fetchLateResponses()
+            ]);
+            if (draftRes.status === "fulfilled" && draftRes.value?.success && draftRes.value?.draft) {
+                return draftRes.value.draft;
+            }
+            return null;
+        } catch (error) {
+            console.warn("Unable to load late response draft:", error?.message || error);
+            return null;
+        }
     };
 
     // Automatically synchronize manual plan and late response draft whenever selected direction changes
@@ -2956,38 +2989,89 @@ export default function AIAgent() {
                                 <p>
                                     Unified manual routes &amp; passenger seat allocation engine from Route Management.
                                 </p>
+
+                                {/* Direction Selector for Admin Manual Plan */}
+                                <div className="manual-plan-direction-pills" style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleManualDirectionChange("INWARD")}
+                                        style={{
+                                            padding: "5px 12px",
+                                            borderRadius: "16px",
+                                            fontSize: "12px",
+                                            fontWeight: "700",
+                                            cursor: "pointer",
+                                            border: "1px solid",
+                                            borderColor: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#0284c7" : "#cbd5e1",
+                                            background: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#0284c7" : "#f8fafc",
+                                            color: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#ffffff" : "#475569"
+                                        }}
+                                    >
+                                        🟢 INWARD Plan
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleManualDirectionChange("OUTWARD")}
+                                        style={{
+                                            padding: "5px 12px",
+                                            borderRadius: "16px",
+                                            fontSize: "12px",
+                                            fontWeight: "700",
+                                            cursor: "pointer",
+                                            border: "1px solid",
+                                            borderColor: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#7c3aed" : "#cbd5e1",
+                                            background: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#7c3aed" : "#f8fafc",
+                                            color: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#ffffff" : "#475569"
+                                        }}
+                                    >
+                                        🔵 OUTWARD Plan
+                                    </button>
+                                </div>
                             </div>
 
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                                <span className="admin-badge">
-                                    👨‍💼 ADMIN MANUAL
-                                </span>
-                                <span style={{
-                                    padding: "4px 10px",
-                                    borderRadius: "20px",
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                    <span className="admin-badge">
+                                        👨‍💼 ADMIN MANUAL
+                                    </span>
+                                    <span style={{
+                                        padding: "4px 10px",
+                                        borderRadius: "20px",
+                                        fontSize: "12px",
+                                        fontWeight: "700",
+                                        background: "#f1f5f9",
+                                        color: "#334155",
+                                        border: "1px solid #cbd5e1"
+                                    }}>
+                                        Plan Type: Manual
+                                    </span>
+                                    <span style={{
+                                        padding: "4px 10px",
+                                        borderRadius: "20px",
+                                        fontSize: "12px",
+                                        fontWeight: "700",
+                                        background: manualPlanData?.isApproved ? "#dcfce7" : (manualPlanData?.isSubmitted ? "#eff6ff" : "#fef3c7"),
+                                        color: manualPlanData?.isApproved ? "#15803d" : (manualPlanData?.isSubmitted ? "#1d4ed8" : "#b45309"),
+                                        border: `1px solid ${manualPlanData?.isApproved ? "#bbf7d0" : (manualPlanData?.isSubmitted ? "#bfdbfe" : "#fde68a")}`
+                                    }}>
+                                        {manualPlanData?.isApproved
+                                            ? `✓ ${manualPlanData?.direction || manualPlanDirection} Approved & Active in MongoDB`
+                                            : (manualPlanData?.isSubmitted
+                                                ? `${manualPlanData?.direction || manualPlanDirection} Submitted`
+                                                : `${manualPlanData?.direction || manualPlanDirection} Not Submitted`)}
+                                    </span>
+                                </div>
+                                <div style={{
                                     fontSize: "12px",
-                                    fontWeight: "700",
-                                    background: "#f1f5f9",
-                                    color: "#334155",
-                                    border: "1px solid #cbd5e1"
-                                }}>
-                                    Plan Type: Manual
-                                </span>
-                                <span style={{
-                                    padding: "4px 10px",
-                                    borderRadius: "20px",
-                                    fontSize: "12px",
-                                    fontWeight: "700",
-                                    background: manualPlanData?.isApproved ? "#dcfce7" : (manualPlanData?.isSubmitted ? "#eff6ff" : "#fef3c7"),
-                                    color: manualPlanData?.isApproved ? "#15803d" : (manualPlanData?.isSubmitted ? "#1d4ed8" : "#b45309"),
-                                    border: `1px solid ${manualPlanData?.isApproved ? "#bbf7d0" : (manualPlanData?.isSubmitted ? "#bfdbfe" : "#fde68a")}`
+                                    fontWeight: "600",
+                                    color: manualPlanData?.isApproved ? "#15803d" : (manualPlanData?.isSubmitted ? "#1d4ed8" : "#b45309")
                                 }}>
                                     {manualPlanData?.isApproved
-                                        ? `✓ ${manualPlanDirection} Approved & Active in MongoDB`
+                                        ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Approved & Active`
                                         : (manualPlanData?.isSubmitted
-                                            ? `✓ ${manualPlanDirection} Confirmed via OK (Ready for Approval)`
-                                            : `⏳ ${manualPlanDirection} Not Submitted (Click OK in Route Management)`)}
-                                </span>
+                                            ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Submitted`
+                                            : `Click OK in Route Management`)}
+                                </div>
                             </div>
 
                         </div>
@@ -3054,11 +3138,11 @@ export default function AIAgent() {
                                 <span style={{ fontSize: "42px", display: "block", marginBottom: "10px" }}>📋</span>
 
                                 <h3 style={{ color: "#0f172a", fontSize: "18px", fontWeight: "700", margin: "8px 0" }}>
-                                    No Confirmed {manualPlanDirection} Manual Plan Submitted Yet
+                                    No Confirmed {manualPlanData?.direction || manualPlanDirection} Manual Plan Submitted Yet
                                 </h3>
 
                                 <p style={{ color: "#64748b", fontSize: "14px", maxWidth: "520px", margin: "0 auto 18px", lineHeight: "1.5" }}>
-                                    In <strong>Route Management</strong>, create your {manualPlanDirection} routes, allocate buses to them, and click <strong>"✓ OK"</strong>. Once confirmed, only the assigned routes will appear here for admin review and final approval.
+                                    In <strong>Route Management</strong>, select <strong>{manualPlanData?.direction || manualPlanDirection}</strong>, create routes, allocate buses to them, and click <strong>"✓ OK"</strong>. Once confirmed, only the assigned routes will appear here for admin review and final approval.
                                 </p>
 
                                 <button
@@ -3084,11 +3168,11 @@ export default function AIAgent() {
                                 <span>🛣️</span>
 
                                 <h3>
-                                    No routes with assigned buses found for {manualPlanDirection}
+                                    No routes with assigned buses found for {manualPlanData?.direction || manualPlanDirection}
                                 </h3>
 
                                 <p>
-                                    Create and assign buses to your {manualPlanDirection} routes in Route Management, then click "✓ OK" to submit.
+                                    Create and assign buses to your {manualPlanData?.direction || manualPlanDirection} routes in Route Management, then click "✓ OK" to submit.
                                 </p>
 
                                 <button
@@ -3259,28 +3343,29 @@ export default function AIAgent() {
                                     manualRoutesLoading ||
                                     manualPlanApproving ||
                                     manualPlanData?.isApproved ||
+                                    !manualPlanData?.isSubmitted ||
                                     displayedManualRoutes.length === 0
                                 }
                                 style={{
                                     flex: "1",
                                     minWidth: "240px",
                                     padding: "12px 20px",
-                                    background: manualPlanData?.isApproved ? "#ecfdf5" : "#059669",
+                                    background: manualPlanData?.isApproved ? "#ecfdf5" : (!manualPlanData?.isSubmitted ? "#94a3b8" : "#059669"),
                                     color: manualPlanData?.isApproved ? "#047857" : "#ffffff",
                                     border: manualPlanData?.isApproved ? "1px solid #a7f3d0" : "none",
                                     borderRadius: "10px",
                                     fontWeight: "700",
                                     fontSize: "14px",
-                                    cursor: (manualPlanData?.isApproved || displayedManualRoutes.length === 0) ? "default" : "pointer",
-                                    boxShadow: manualPlanData?.isApproved ? "none" : "0 4px 14px rgba(5, 150, 105, 0.3)",
+                                    cursor: (manualPlanData?.isApproved || !manualPlanData?.isSubmitted || displayedManualRoutes.length === 0) ? "default" : "pointer",
+                                    boxShadow: (manualPlanData?.isApproved || !manualPlanData?.isSubmitted) ? "none" : "0 4px 14px rgba(5, 150, 105, 0.3)",
                                     transition: "all 0.2s ease"
                                 }}
                             >
                                 {manualPlanApproving
-                                    ? `⏳ Publishing & Allocating ${manualPlanDirection} Plan...`
+                                    ? `⏳ Publishing & Allocating ${manualPlanData?.direction || manualPlanDirection} Plan...`
                                     : manualPlanData?.isApproved
-                                    ? `✓ ${manualPlanDirection} Manual Plan Approved & Active in MongoDB`
-                                    : `✓ Approve ${manualPlanDirection} Manual Transportation Plan`}
+                                    ? `✓ ${manualPlanData?.direction || manualPlanDirection} Manual Plan Approved & Active in MongoDB`
+                                    : `✓ Approve ${manualPlanData?.direction || manualPlanDirection} Manual Transportation Plan`}
                             </button>
 
                             {/* PROMINENT REVIEW-ONLY AI RECOMMENDATION BUTTON */}

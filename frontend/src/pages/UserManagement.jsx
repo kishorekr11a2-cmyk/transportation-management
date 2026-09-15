@@ -49,6 +49,7 @@ function UserManagement() {
     // Modal states
     const [showResetModal, setShowResetModal] = useState(false);
     const [resettingGlobal, setResettingGlobal] = useState(false);
+    const [resettingUserIds, setResettingUserIds] = useState(new Set());
     const [userToDelete, setUserToDelete] = useState(null);
     const [deletingUser, setDeletingUser] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -67,7 +68,11 @@ function UserManagement() {
     // =========================================================
     // 1. Fetch Users & Detect Late Coming Responses
     // =========================================================
+    const isFetchingUsersRef = useRef(false);
+
     const fetchUsers = useCallback(async (showSpinner = false) => {
+        if (isFetchingUsersRef.current) return;
+        isFetchingUsersRef.current = true;
         try {
             console.log("[LateResponse] User Management loaded");
             if (showSpinner) {
@@ -76,25 +81,31 @@ function UserManagement() {
             }
 
             console.log("[LateResponse] Fetching users and late responses from API...");
-            const [usersRes, lateRes] = await Promise.all([
-                api.get("/users"),
-                api.get("/users/late-travel-responses").catch((err) => {
-                    console.warn("[LateResponse] Primary endpoint /users/late-travel-responses status:", err?.response?.status || err?.message);
-                    return api.get("/users/late-responses").catch((err2) => {
-                        console.error("[LateResponse] Fallback endpoint /users/late-responses status:", err2?.response?.status || err2?.message);
-                        return null;
-                    });
-                })
-            ]);
 
-            const userData = usersRes?.data || [];
-            console.log(`[LateResponse] Users loaded: ${userData.length}`);
-            setUsers(userData);
-            try {
-                sessionStorage.setItem("cached_users", JSON.stringify(userData));
-            } catch {
-                // Ignore storage limits
-            }
+            // Hydrate users as soon as /users returns, without waiting for late responses endpoint
+            const usersPromise = api.get("/users")
+                .then((res) => {
+                    const userData = res?.data || [];
+                    console.log(`[LateResponse] Users loaded: ${userData.length}`);
+                    setUsers(userData);
+                    setLoading(false);
+                    try {
+                        sessionStorage.setItem("cached_users", JSON.stringify(userData));
+                    } catch {
+                        // Ignore storage limits
+                    }
+                    return userData;
+                });
+
+            const latePromise = api.get("/users/late-travel-responses").catch((err) => {
+                console.warn("[LateResponse] Primary endpoint /users/late-travel-responses status:", err?.response?.status || err?.message);
+                return api.get("/users/late-responses").catch((err2) => {
+                    console.error("[LateResponse] Fallback endpoint /users/late-responses status:", err2?.response?.status || err2?.message);
+                    return null;
+                });
+            });
+
+            const [userData, lateRes] = await Promise.all([usersPromise, latePromise]);
 
             const lateData = lateRes?.data;
             const inwardApproved = Boolean(lateData?.summary?.planApprovalTimes?.INWARD);
@@ -111,19 +122,12 @@ function UserManagement() {
 
             // Qualifying late Coming students count from API or user records
             const apiLateUsers = lateData?.users || lateData?.lateResponses || [];
-            const dbLateCount = Number.isInteger(lateData?.count)
-            // Double check against loaded userData: Only genuinely unallocated late responses
+            const dbLateCount = Number.isInteger(lateData?.count) ? lateData.count : 0;
+            // Double check against loaded userData: Only genuinely late responses
             const localLateStudents = userData.filter((u) => {
-                const isAllocated = Boolean(
+                return Boolean(
                     u.travelStatus === "Coming" &&
-                    (u.isAllocated ?? (u.allocationStatus === "Assigned" || u.allocatedBus?.isAllocated || u.assignedVehicle))
-                );
-                const isUnallocated = Boolean(u.travelStatus === "Coming" && !isAllocated);
-                return isUnallocated && (
-                    Boolean(u.isLateResponse) ||
-                    Boolean(u.lateResponseDetected) ||
-                    u.allocationStatus === "Pending Reallocation" ||
-                    Boolean(u.requiresReallocation)
+                    (u.lateResponse || u.isLateResponse || u.lateResponseDetected || u.allocationStatus === "Pending Reallocation" || u.requiresReallocation)
                 );
             });
 
@@ -160,7 +164,7 @@ function UserManagement() {
                     setShowLatePopup(false);
                     popupTimerRef.current = null;
                 }, 5000);
-            } else {
+            } else if (!popupTimerRef.current) {
                 console.log("[LateResponse] Notification triggered: false (events already notified or none exist)");
                 setShowLatePopup(false);
             }
@@ -174,6 +178,7 @@ function UserManagement() {
                 toast.error(msg);
             }
         } finally {
+            isFetchingUsersRef.current = false;
             setLoading(false);
         }
     }, []);
@@ -253,7 +258,7 @@ function UserManagement() {
     }, [fetchUsers]);
 
     // =========================================================
-    // 3. Dynamic Summary Metrics (Based on Unfiltered DB Data)
+    // 3. Dynamic Summary Metrics (Based on Direction & DB Data)
     // =========================================================
     const summary = useMemo(() => {
         let comingCount = 0;
@@ -270,17 +275,26 @@ function UserManagement() {
             else if (status === "Not Coming") notComingCount++;
             else pendingCount++;
 
-            const isAllocated = Boolean(
-                status === "Coming" &&
-                (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId))
-            );
-
-            const isUnallocated = Boolean(status === "Coming" && !isAllocated);
-
             const isLateComing = Boolean(
                 status === "Coming" &&
-                (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+                (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
             );
+
+            // Allocation determination
+            const isAllocated = !isLateComing && status === "Coming" && Boolean(
+                user.isAllocated ?? (
+                    user.allocationStatus === "Assigned" ||
+                    user.allocationStatus === "Re-assigned" ||
+                    user.allocatedBus?.isAllocated ||
+                    user.allocatedBus?.inward?.isAllocated ||
+                    user.allocatedBus?.outward?.isAllocated ||
+                    user.assignedVehicle ||
+                    user.allocatedBus?.vehicleName ||
+                    user.manualBusId
+                )
+            );
+
+            const isUnallocated = !isAllocated;
 
             if (isAllocated) {
                 allocatedCount++;
@@ -379,14 +393,9 @@ function UserManagement() {
             // 2. Travel Status Filter
             if (statusFilter !== "All") {
                 if (statusFilter === "Late Coming Responses") {
-                    const isAllocated = Boolean(
-                        user.travelStatus === "Coming" &&
-                        (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName))
-                    );
-                    const isUnallocated = Boolean(user.travelStatus === "Coming" && !isAllocated);
                     const isLateComing = Boolean(
-                        isUnallocated &&
-                        (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+                        user.travelStatus === "Coming" &&
+                        (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
                     );
                     if (!isLateComing) return false;
                 } else {
@@ -407,15 +416,16 @@ function UserManagement() {
 
             // 4. Allocation Filter
             if (allocationFilter !== "All") {
-                const isAllocated = Boolean(
-                    user.travelStatus === "Coming" &&
-                    (user.isAllocated ?? (user.allocationStatus === "Assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName))
-                );
-                const isUnallocated = Boolean(user.travelStatus === "Coming" && !isAllocated);
                 const isLateComing = Boolean(
-                    isUnallocated &&
-                    (user.isLateResponse ?? (user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation))
+                    user.travelStatus === "Coming" &&
+                    (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
                 );
+                const isAllocated = !isLateComing && user.travelStatus === "Coming" && Boolean(
+                    user.isAllocated ?? (
+                        user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId
+                    )
+                );
+                const isUnallocated = !isAllocated;
 
                 if (allocationFilter === "Allocated") {
                     if (!isAllocated) return false;
@@ -456,6 +466,9 @@ function UserManagement() {
 
             if (response.data?.success) {
                 localStorage.removeItem("active_ai_plan");
+                try {
+                    sessionStorage.removeItem("cached_users");
+                } catch {}
 
                 setUsers((prevUsers) =>
                     prevUsers.map((u) => ({
@@ -463,16 +476,32 @@ function UserManagement() {
                         travelStatus: "Pending",
                         assignedVehicle: null,
                         assignedRoute: null,
-                        allocationStatus: "Not Assigned",
-                        allocatedBus: null
+                        allocationStatus: "Unallocated",
+                        allocatedBus: null,
+                        isAllocated: false,
+                        isUnallocated: true,
+                        isLateResponse: false,
+                        lateResponseDetected: false,
+                        requiresReallocation: false,
+                        manualRouteId: null,
+                        manualBusId: null,
+                        routeId: null,
+                        busId: null,
+                        planVersion: null,
+                        submittedPlanVersion: null,
+                        submittedApprovalEventId: null,
+                        lateResponseEventId: null
                     }))
                 );
 
                 toast.success(
                     response.data.message ||
-                    "Travel status cycle reset successfully. All user responses and allocations have been cleared."
+                    "All student travel statuses and allocations were reset successfully."
                 );
                 setShowResetModal(false);
+
+                // Authoritative refresh of all user data and summary counts from backend
+                await fetchUsers();
             }
         } catch (error) {
             console.error("Reset Travel Status Error:", error);
@@ -487,20 +516,42 @@ function UserManagement() {
 
     // Individual User Reset Travel Status
     const handleResetSingleUser = async (userId) => {
+        if (!userId || resettingUserIds.has(userId) || resettingGlobal) return;
         try {
+            setResettingUserIds((prev) => new Set(prev).add(userId));
             const response = await api.put(`/users/${userId}/reset-travel-status`);
             if (response.data?.success) {
+                try {
+                    sessionStorage.removeItem("cached_users");
+                } catch {}
                 const updatedUser = response.data.user;
                 setUsers((prev) =>
-                    prev.map((u) => (u.userId === userId || u._id === userId ? { ...u, ...updatedUser } : u))
+                    prev.map((u) => (u.userId === userId || u._id === userId ? {
+                        ...u,
+                        ...updatedUser,
+                        travelStatus: "Pending",
+                        allocationStatus: "Unallocated",
+                        isAllocated: false,
+                        isUnallocated: true,
+                        assignedVehicle: null,
+                        assignedRoute: null,
+                        allocatedBus: null
+                    } : u))
                 );
-                toast.success(`Reset travel status for User ${userId}`);
+                toast.success(response.data.message || `Reset travel status for User ${userId}`);
+                await fetchUsers();
             }
         } catch (error) {
             console.error("Single User Reset Error:", error);
             toast.error(
                 error.response?.data?.message || `Failed to reset user ${userId}`
             );
+        } finally {
+            setResettingUserIds((prev) => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
         }
     };
 
@@ -603,6 +654,8 @@ function UserManagement() {
 
     // Helper to retrieve the matching plan approval timestamp for a user
     const getPlanApprovalTimeForUser = (user) => {
+        if (user.planApprovedAt) return formatDateTime(user.planApprovedAt);
+        if (planApprovalTimes?.LATEST) return formatDateTime(planApprovalTimes.LATEST);
         const dirs = Array.isArray(user.affectedDirections) ? user.affectedDirections : [];
         if (dirs.includes("INWARD") && planApprovalTimes?.INWARD) {
             return formatDateTime(planApprovalTimes.INWARD);
@@ -847,6 +900,8 @@ function UserManagement() {
                 </div>
             </div>
 
+
+
             {/* Prominent Search & Filter Toolbar */}
             <div className="user-filter-toolbar">
                 {/* Search Box */}
@@ -947,7 +1002,9 @@ function UserManagement() {
             {/* Dynamic Results Counter Bar */}
             <div className="results-counter-bar">
                 <span className="counter-text">
-                    {filteredUsers.length === 0 ? (
+                    {loading && users.length === 0 ? (
+                        <span className="counter-loading">Loading users...</span>
+                    ) : filteredUsers.length === 0 ? (
                         <span className="counter-zero">No users found</span>
                     ) : isFiltered ? (
                         <>
@@ -959,7 +1016,7 @@ function UserManagement() {
                         </>
                     )}
                 </span>
-                {isFiltered && (
+                {isFiltered && !loading && (
                     <span className="filter-active-indicator">
                         Active filter applied
                     </span>
@@ -978,11 +1035,10 @@ function UserManagement() {
                                     <th>Student Name</th>
                                     <th>Stopping Area</th>
                                     <th style={{ width: "130px" }}>Travel Status</th>
-                                    <th style={{ width: "110px" }}>Direction</th>
                                     <th style={{ width: "170px" }}>Response Submitted</th>
                                     <th style={{ width: "170px" }}>Plan Approved</th>
                                     <th style={{ width: "150px" }}>Allocation</th>
-                                    <th style={{ width: "160px" }}>Bus / Route / Seat</th>
+                                    <th style={{ width: "220px" }}>Bus / Route / Seat</th>
                                     <th style={{ width: "90px", textAlign: "right" }}>Actions</th>
                                 </tr>
                             ) : (
@@ -992,16 +1048,33 @@ function UserManagement() {
                                     <th>Name</th>
                                     <th>Stopping Area</th>
                                     <th style={{ width: "140px" }}>Travel Status</th>
-                                    <th style={{ width: "170px" }}>Bus Allocation</th>
+                                    <th style={{ width: "240px" }}>Bus Allocation</th>
                                     <th style={{ width: "120px", textAlign: "right" }}>Actions</th>
                                 </tr>
                             )}
                         </thead>
 
                         <tbody>
-                            {users.length === 0 && loading ? (
+                            {fetchError && users.length === 0 ? (
                                 <tr>
-                                    <td colSpan={isLateView ? 11 : 7}>
+                                    <td colSpan={isLateView ? 10 : 7}>
+                                        <div className="table-empty-state">
+                                            <div className="empty-state-icon" style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>⚠️</div>
+                                            <h4 style={{ color: "#ef4444" }}>Failed to Load Users</h4>
+                                            <p style={{ color: "#94a3b8", marginBottom: "1rem" }}>{fetchError}</p>
+                                            <button
+                                                type="button"
+                                                className="btn-empty-clear"
+                                                onClick={() => fetchUsers(true)}
+                                            >
+                                                ↻ Retry
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : users.length === 0 && loading ? (
+                                <tr>
+                                    <td colSpan={isLateView ? 10 : 7}>
                                         <div className="table-empty-state">
                                             <div className="modern-spinner" style={{ margin: "1.5rem auto" }}></div>
                                             <h4 style={{ color: "#38bdf8" }}>Loading Transportation Users</h4>
@@ -1011,7 +1084,7 @@ function UserManagement() {
                                 </tr>
                             ) : filteredUsers.length === 0 ? (
                                 <tr>
-                                    <td colSpan={isLateView ? 11 : 7}>
+                                    <td colSpan={isLateView ? 10 : 7}>
                                         <div className="table-empty-state">
                                             {users.length === 0 ? (
                                                 <>
@@ -1064,16 +1137,23 @@ function UserManagement() {
                             ) : (
                                 filteredUsers.map((user, index) => {
                                     const status = user.travelStatus || "Pending";
-                                    const isAllocated =
+                                    const isLateComing = Boolean(
                                         status === "Coming" &&
-                                        Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId || user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned");
+                                        (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
+                                    );
+                                    const isAllocated = !isLateComing && Boolean(
+                                        user.isAllocated ?? (
+                                            status === "Coming" &&
+                                            Boolean(user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId || user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned")
+                                        )
+                                    );
 
                                     const busName = isAllocated
-                                        ? user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || user.manualBusId || "BUS-Assigned"
+                                        ? user.allocatedVehicle || user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || user.manualBusId || "BUS-Assigned"
                                         : null;
 
                                     const routeCode = isAllocated
-                                        ? user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || user.manualRouteId || "Route"
+                                        ? user.allocatedRoute || user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || user.manualRouteId || "Route"
                                         : null;
 
                                     if (isLateView) {
@@ -1116,25 +1196,6 @@ function UserManagement() {
                                                     </div>
                                                 </td>
 
-                                                {/* Relevant Direction */}
-                                                <td>
-                                                    <div className="affected-dirs-list">
-                                                        {Array.isArray(user.affectedDirections) && user.affectedDirections.length > 0 ? (
-                                                            user.affectedDirections.map((dir) => (
-                                                                <span key={dir} className={`affected-dir-tag affected-dir-tag--${dir.toLowerCase()}`}>
-                                                                    {dir}
-                                                                </span>
-                                                            ))
-                                                        ) : user.allocatedBus?.direction ? (
-                                                            <span className={`affected-dir-tag affected-dir-tag--${user.allocatedBus.direction.toLowerCase()}`}>
-                                                                {user.allocatedBus.direction}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="affected-dir-tag affected-dir-tag--inward">INWARD</span>
-                                                        )}
-                                                    </div>
-                                                </td>
-
                                                 {/* Response Submitted Time */}
                                                 <td>
                                                     <div className="late-time-display">
@@ -1165,8 +1226,8 @@ function UserManagement() {
                                                                 ✓ Allocated
                                                             </span>
                                                         ) : (
-                                                            <span className="allocation-tag tag-pending-reallocation" title="Late travel response. Bus allocation safely withheld pending route regeneration.">
-                                                                ⏳ Pending Reallocation
+                                                            <span className="allocation-tag tag-unallocated" title="Late travel response. Bus allocation safely withheld pending route regeneration.">
+                                                                ⚠️ Unallocated
                                                             </span>
                                                         )}
                                                     </div>
@@ -1174,17 +1235,41 @@ function UserManagement() {
 
                                                 {/* Bus / Route / Seat */}
                                                 <td>
-                                                    {isAllocated ? (
-                                                        <div className="allocation-info-cell">
-                                                            <span className="bus-assigned-badge">🚌 {busName}</span>
-                                                            {routeCode && <span className="route-assigned-badge">🛣️ {routeCode}</span>}
-                                                            {user.allocatedBus?.seatNumber && (
-                                                                <span className="seat-assigned-badge">💺 #{user.allocatedBus.seatNumber}</span>
-                                                            )}
-                                                        </div>
-                                                    ) : (
-                                                        <span className="allocation-tag tag-not-applicable">— Not Assigned</span>
-                                                    )}
+                                                    {(() => {
+                                                        const inwardAlloc = (
+                                                            user.allocatedBus?.inward &&
+                                                            (user.allocatedBus.inward.isAllocated || user.allocatedBus.inward.approved)
+                                                        ) ? user.allocatedBus.inward : (
+                                                            (user.allocatedBus?.direction === "INWARD" || user.direction === "INWARD") && isAllocated ? user.allocatedBus : null
+                                                        );
+
+                                                        const outwardAlloc = (
+                                                            user.allocatedBus?.outward &&
+                                                            (user.allocatedBus.outward.isAllocated || user.allocatedBus.outward.approved)
+                                                        ) ? user.allocatedBus.outward : (
+                                                            (user.allocatedBus?.direction === "OUTWARD" || user.direction === "OUTWARD") && isAllocated ? user.allocatedBus : null
+                                                        );
+
+                                                        const fallbackBus = user.allocatedVehicle || user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || user.manualBusId;
+                                                        const fallbackRoute = user.allocatedRoute || user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || user.manualRouteId;
+                                                        const displayBus = inwardAlloc?.vehicleName || outwardAlloc?.vehicleName || fallbackBus || busName;
+                                                        const displayRoute = inwardAlloc?.routeCode || outwardAlloc?.routeCode || fallbackRoute || routeCode;
+                                                        const displaySeat = inwardAlloc?.seatNumber || outwardAlloc?.seatNumber || user.allocatedBus?.seatNumber;
+
+                                                        if (isAllocated && displayBus) {
+                                                            return (
+                                                                <div className="allocation-info-cell">
+                                                                    <span className="bus-assigned-badge">🚌 {displayBus}</span>
+                                                                    {displayRoute && <span className="route-assigned-badge">🛣️ {displayRoute}</span>}
+                                                                    {displaySeat && <span className="seat-assigned-badge">💺 #{displaySeat}</span>}
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        return (
+                                                            <span className="allocation-tag tag-not-applicable">— Not Assigned</span>
+                                                        );
+                                                    })()}
                                                 </td>
 
                                                 {/* Actions */}
@@ -1196,8 +1281,9 @@ function UserManagement() {
                                                             onClick={() => handleResetSingleUser(user.userId || user._id)}
                                                             title="Reset travel status to Pending"
                                                             aria-label={`Reset travel status for ${user.name}`}
+                                                            disabled={resettingUserIds.has(user.userId || user._id) || resettingGlobal}
                                                         >
-                                                            🔄
+                                                            {resettingUserIds.has(user.userId || user._id) ? "⏳" : "🔄"}
                                                         </button>
                                                         <button
                                                             type="button"
@@ -1251,8 +1337,8 @@ function UserManagement() {
                                                         <span className="status-dot"></span>
                                                         {status}
                                                     </span>
-                                                    {Boolean(user.isLateResponse || user.lateResponseDetected) && (
-                                                        <span className="late-indicator-badge" title="Travel status changed to Coming after route plan approval">
+                                                    {Boolean(user.lateResponse || user.isLateResponse || user.lateResponseDetected || user.lateResponseStatus === "ACTIVE") && (
+                                                        <span className="late-indicator-badge" title="Travel response submitted after route planning">
                                                             ⚠️ Late Response
                                                         </span>
                                                     )}
@@ -1261,62 +1347,62 @@ function UserManagement() {
 
                                             {/* Allocation */}
                                             <td>
-                                                {user.allocationStatus === "Re-assigned" ? (
-                                                    <div className="allocation-info-cell">
-                                                        <span className="allocation-tag tag-reassigned" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#eab308", border: "1px solid rgba(234, 179, 8, 0.3)" }}>
-                                                            🔄 Re-assigned
-                                                        </span>
-                                                        {busName && (
-                                                            <span className="bus-assigned-badge">
-                                                                🚌 {busName}
-                                                            </span>
-                                                        )}
-                                                        {routeCode && (
-                                                            <span className="route-assigned-badge">
-                                                                🛣️ {routeCode}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                ) : isAllocated ? (
-                                                    <div className="allocation-info-cell">
-                                                        <span className="bus-assigned-badge">
-                                                            🚌 {busName}
-                                                        </span>
-                                                        {routeCode && (
-                                                            <span className="route-assigned-badge">
-                                                                🛣️ {routeCode}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                ) : (user.allocationStatus === "Pending Reallocation" || user.requiresReallocation) ? (
-                                                    <div className="allocation-info-cell">
-                                                        <span className="allocation-tag tag-pending-reallocation" title="Late travel response detected. Bus allocation safely withheld pending route regeneration.">
-                                                            ⏳ Pending Reallocation
-                                                        </span>
-                                                        {Array.isArray(user.affectedDirections) && user.affectedDirections.length > 0 && (
-                                                            <div className="affected-dirs-list">
-                                                                {user.affectedDirections.map((dir) => (
-                                                                    <span key={dir} className={`affected-dir-tag affected-dir-tag--${dir.toLowerCase()}`}>
-                                                                        {dir}
+                                                {(() => {
+                                                    const inwardAlloc = (
+                                                        user.allocatedBus?.inward &&
+                                                        (user.allocatedBus.inward.isAllocated || user.allocatedBus.inward.approved)
+                                                    ) ? user.allocatedBus.inward : (
+                                                        (user.allocatedBus?.direction === "INWARD" || user.direction === "INWARD") && isAllocated ? user.allocatedBus : null
+                                                    );
+
+                                                    const outwardAlloc = (
+                                                        user.allocatedBus?.outward &&
+                                                        (user.allocatedBus.outward.isAllocated || user.allocatedBus.outward.approved)
+                                                    ) ? user.allocatedBus.outward : (
+                                                        (user.allocatedBus?.direction === "OUTWARD" || user.direction === "OUTWARD") && isAllocated ? user.allocatedBus : null
+                                                    );
+
+                                                    const fallbackBus = user.allocatedVehicle || user.assignedVehicle || user.allocatedBus?.vehicleName || user.allocatedBus?.vehicleNumber || user.manualBusId;
+                                                    const fallbackRoute = user.allocatedRoute || user.assignedRoute || user.allocatedBus?.routeCode || user.allocatedBus?.routeName || user.manualRouteId;
+                                                    const displayBus = inwardAlloc?.vehicleName || outwardAlloc?.vehicleName || fallbackBus || busName;
+                                                    const displayRoute = inwardAlloc?.routeCode || outwardAlloc?.routeCode || fallbackRoute || routeCode;
+                                                    const displaySeat = inwardAlloc?.seatNumber || outwardAlloc?.seatNumber || user.allocatedBus?.seatNumber;
+
+                                                    if (isAllocated && displayBus) {
+                                                        return (
+                                                            <div className="allocation-info-cell">
+                                                                <span className="bus-assigned-badge">
+                                                                    🚌 {displayBus}
+                                                                </span>
+                                                                {displayRoute && (
+                                                                    <span className="route-assigned-badge">
+                                                                        🛣️ {displayRoute}
                                                                     </span>
-                                                                ))}
+                                                                )}
+                                                                {displaySeat && (
+                                                                    <span className="seat-assigned-badge">
+                                                                        💺 #{displaySeat}
+                                                                    </span>
+                                                                )}
                                                             </div>
-                                                        )}
-                                                        {user.lateResponseAt && (
-                                                            <span className="late-response-time-sub">
-                                                                Late: {new Date(user.lateResponseAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                ) : status === "Coming" ? (
-                                                    <span className="allocation-tag tag-unallocated">
-                                                        ⚠️ Unallocated
-                                                    </span>
-                                                ) : (
-                                                    <span className="allocation-tag tag-not-applicable">
-                                                        — Not Assigned
-                                                    </span>
-                                                )}
+                                                        );
+                                                    }
+
+                                                    if (isLateComing) {
+                                                        return (
+                                                            <div className="allocation-info-cell">
+                                                                <span className="allocation-tag tag-unallocated">⚠️ Unallocated</span>
+                                                                <span className="late-response-time-sub">Late response awaiting admin reallocation</span>
+                                                            </div>
+                                                        );
+                                                    }
+
+                                                    if (status === "Coming") {
+                                                        return <span className="allocation-tag tag-unallocated">⚠️ Unallocated</span>;
+                                                    }
+
+                                                    return <span className="allocation-tag tag-not-applicable">— Not Assigned</span>;
+                                                })()}
                                             </td>
 
                                             {/* Actions */}
@@ -1328,8 +1414,9 @@ function UserManagement() {
                                                         onClick={() => handleResetSingleUser(user.userId || user._id)}
                                                         title="Reset travel status to Pending"
                                                         aria-label={`Reset travel status for ${user.name}`}
+                                                        disabled={resettingUserIds.has(user.userId || user._id) || resettingGlobal}
                                                     >
-                                                        🔄
+                                                        {resettingUserIds.has(user.userId || user._id) ? "⏳" : "🔄"}
                                                     </button>
                                                     <button
                                                         type="button"
@@ -1395,7 +1482,7 @@ function UserManagement() {
                                 onClick={handleConfirmGlobalReset}
                                 disabled={resettingGlobal}
                             >
-                                {resettingGlobal ? "Resetting..." : "Confirm Global Reset"}
+                                {resettingGlobal ? "Resetting..." : "Confirm Reset Travel Status"}
                             </button>
                         </div>
                     </div>

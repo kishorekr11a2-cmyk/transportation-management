@@ -16,6 +16,7 @@ import {
     resolveStopCoordinates,
     normalizeStopName
 } from "./manualPlanRecommendationService.js";
+import { resolveLateResponsesForPreviousPlan } from "./lateResponseLifecycleService.js";
 
 const isDbConnected = () => mongoose.connection?.readyState === 1;
 
@@ -784,6 +785,24 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         };
     }
 
+    // Determine incrementing planVersion and unique approvalEventId
+    const prevPlan = await mongoose.connection.db.collection("ai_selected_plans").findOne(
+        {
+            $or: [
+                { direction: canonicalDirection },
+                { tripMode: canonicalDirection },
+                { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                { "plan.direction": canonicalDirection },
+                { "plan.tripMode": canonicalDirection }
+            ]
+        },
+        { sort: { planVersion: -1, approvedAt: -1, createdAt: -1 } }
+    );
+
+    const planVersion = (Number(prevPlan?.planVersion) || 0) + 1;
+    const approvalEventId = new mongoose.Types.ObjectId().toString();
+    const approvalTime = new Date();
+
     // 3. Mark previous active plan for this direction as superseded in ai_selected_plans
     await mongoose.connection.db.collection("ai_selected_plans").updateMany(
         {
@@ -802,6 +821,8 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
     // 4. Insert approved regenerated plan into ai_selected_plans
     const sanitizedPlan = sanitizeTransportationPlan(draft);
     const approvedDoc = {
+        planVersion,
+        approvalEventId,
         planType: "AI_REGENERATED",
         direction: canonicalDirection,
         tripMode,
@@ -810,8 +831,8 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         active: true,
         status: "active",
         approved: true,
-        selectedAt: new Date(),
-        approvedAt: new Date(),
+        selectedAt: approvalTime,
+        approvedAt: approvalTime,
         requiresReview: false,
         hasLateResponses: false,
         pendingReallocation: false,
@@ -835,7 +856,9 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
             {
                 $set: {
                     isApproved: true,
-                    approvedAt: new Date(),
+                    approvedAt: approvalTime,
+                    planVersion,
+                    approvalEventId,
                     requiresReview: false,
                     hasLateResponses: false,
                     pendingReallocation: false
@@ -847,6 +870,17 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         );
     } catch (aiErr) {
         console.warn("AiPlan update warning on draft approval:", aiErr.message);
+    }
+
+    // Resolve previous late responses using shared lifecycle helper
+    try {
+        await resolveLateResponsesForPreviousPlan({
+            direction: canonicalDirection,
+            newPlanVersion: planVersion,
+            newApprovalEventId: approvalEventId
+        });
+    } catch (rErr) {
+        console.warn("resolveLateResponsesForPreviousPlan warning on draft approval:", rErr.message);
     }
 
     // 5. Persist allocations to student records and update Student Dashboard
