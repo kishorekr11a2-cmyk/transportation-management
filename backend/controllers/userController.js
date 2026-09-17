@@ -353,116 +353,12 @@ export const getLateResponses = async (req, res) => {
     }
 
     try {
-        // 1. Authoritative check: Fetch active late response events from LateResponseEvent collection
         const activeLifecycle = await lifecycleGetActiveLateResponses();
-        if (activeLifecycle && activeLifecycle.count > 0) {
-            return res.status(200).json(activeLifecycle);
-        }
-
-        // 2. Fallback check for unseeded environments / tests where LateResponseEvent collection is empty:
-        // Query students who have travelStatus === 'Coming' and late response flags set
-        const students = await User.find({
-            role: "student",
-            travelStatus: "Coming",
-            $or: [
-                { lateResponse: true },
-                { isLateResponse: true },
-                { lateResponseDetected: true }
-            ]
-        })
-            .select({
-                userId: 1,
-                name: 1,
-                stoppings: 1,
-                city: 1,
-                district: 1,
-                state: 1,
-                country: 1,
-                travelStatus: 1,
-                previousTravelStatus: 1,
-                allocationStatus: 1,
-                lateResponse: 1,
-                isLateResponse: 1,
-                lateResponseDetected: 1,
-                lateResponseAt: 1,
-                lateResponseNotifiedEventKeys: 1,
-                lateResponseNotifiedAt: 1,
-                travelResponseSubmittedAt: 1,
-                lastTravelResponseAt: 1,
-                requiresReallocation: 1,
-                assignedVehicle: 1,
-                assignedRoute: 1,
-                allocatedBus: 1
-            })
-            .lean()
-            .sort({ lateResponseAt: -1, travelResponseSubmittedAt: -1, createdAt: -1 });
-
-        const qualifyingLateStudents = students
-            .filter((student) => {
-                // Rule 15 & User Directive: An already assigned / allocated student is NOT a late response
-                const isAlreadyAllocated = Boolean(
-                    student.assignedVehicle ||
-                    student.allocatedBus?.isAllocated ||
-                    student.allocatedBus?.vehicleName ||
-                    student.allocatedBus?.inward?.isAllocated ||
-                    student.allocatedBus?.outward?.isAllocated ||
-                    student.allocationStatus === "Assigned" ||
-                    student.allocationStatus === "Re-assigned"
-                );
-                return !isAlreadyAllocated;
-            })
-            .map((student) => {
-                const responseTime = student.lateResponseAt || student.travelResponseSubmittedAt || student.lastTravelResponseAt || new Date();
-                const eventKey = generateLateResponseEventKey(student.userId, responseTime);
-                return {
-                    ...student,
-                    travelStatus: "Coming",
-                    currentTravelStatus: "Coming",
-                    previousTravelStatus: student.previousTravelStatus || "Pending",
-                    allocationStatus: "Unallocated",
-                    lateResponse: true,
-                    isLateResponse: true,
-                    lateResponseDetected: true,
-                    requiresReallocation: true,
-                    responseSubmittedAt: responseTime,
-                    responseSubmittedTime: responseTime,
-                    eventKey,
-                    eventKeys: [eventKey],
-                    isNotified: false,
-                    isUnnotified: true,
-                    busName: "Not Assigned",
-                    routeName: "—",
-                    seatNumber: "—",
-                    currentActionStatus: "Awaiting Manual Route Assignment"
-                };
-            });
-
-        // NOTE: Strictly READ-ONLY! User Rule 13:
-        // "Do not let dashboard polling, page loading, refresh, or background API calls modify the student’s travel status or allocation."
-
-        const count = qualifyingLateStudents.length;
-        const unnotifiedCount = qualifyingLateStudents.filter((u) => u.isUnnotified).length;
-        const uniqueUnnotifiedKeys = qualifyingLateStudents.map((u) => u.eventKey).filter(Boolean);
-
-        return res.status(200).json({
-            success: true,
-            count,
-            lateComingResponsesCount: count,
-            pendingReallocationUsersCount: count,
-            unnotifiedCount,
-            unnotifiedEventKeys: uniqueUnnotifiedKeys,
-            lateResponses: qualifyingLateStudents,
-            users: qualifyingLateStudents,
-            summary: {
-                lateComingResponsesCount: count,
-                pendingReallocationUsersCount: count,
-                totalLateResponses: count
-            }
-        });
+        return res.status(200).json(activeLifecycle);
     } catch (error) {
         console.error("Get Late Responses Error:", error.message);
         if (!isDbConnected()) return dbUnavailableResponse(res);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message
         });
@@ -480,131 +376,74 @@ export const acknowledgeLateNotifications = async (req, res) => {
     }
 
     try {
-        const { eventKeys, direction, userIds } = req.body || {};
+        const { eventKeys, userIds } = req.body || {};
         const now = new Date();
 
-        let keysToAcknowledge = Array.isArray(eventKeys) ? eventKeys.filter(Boolean) : [];
+        // 1. Fetch current active late responses
+        const activeData = await lifecycleGetActiveLateResponses();
+        const activeUsers = activeData?.users || [];
+        const activeKeys = activeData?.unnotifiedEventKeys || [];
 
-        // If no explicit eventKeys provided, dynamically resolve unnotified keys
-        if (keysToAcknowledge.length === 0) {
-            const approvedPlans = await resolveActiveApprovedPlans();
-            const filter = { role: "student", travelStatus: "Coming" };
-            if (Array.isArray(userIds) && userIds.length > 0) {
-                filter.$or = [
-                    { userId: { $in: userIds } },
-                    { _id: { $in: userIds.filter((id) => mongoose.Types.ObjectId.isValid(id)) } }
-                ];
-            }
-            const students = await User.find(filter)
-                .select("userId travelResponseSubmittedAt lastTravelResponseAt lateResponseAt affectedDirections lateResponseNotifiedEventKeys")
-                .lean();
+        let keysToAcknowledge = Array.isArray(eventKeys) && eventKeys.length > 0
+            ? eventKeys.filter(Boolean)
+            : activeKeys;
 
-            for (const student of students) {
-                const responseTime = new Date(
-                    student.travelResponseSubmittedAt ||
-                    student.lastTravelResponseAt ||
-                    student.lateResponseAt ||
-                    student.createdAt
-                );
-                const dirs = (student.affectedDirections && student.affectedDirections.length > 0)
-                    ? student.affectedDirections
-                    : ["OUTWARD", "INWARD"];
-
-                for (const dir of dirs) {
-                    if (direction && String(direction).toUpperCase().trim() !== dir) continue;
-                    const planTime = approvedPlans[dir]?.approvedAt || null;
-                    const key = generateLateResponseEventKey(student.userId || student._id, dir, responseTime, planTime);
-                    if (!student.lateResponseNotifiedEventKeys?.includes(key)) {
-                        keysToAcknowledge.push(key);
-                    }
-                }
-            }
+        // Collect student userIds to acknowledge
+        const studentUserIdsToAck = new Set();
+        if (Array.isArray(userIds) && userIds.length > 0) {
+            userIds.forEach((id) => studentUserIdsToAck.add(String(id).trim()));
         }
-
-        if (keysToAcknowledge.length === 0) {
-            return res.status(200).json({
-                success: true,
-                message: "No unnotified late response events found to acknowledge.",
-                acknowledgedCount: 0
-            });
+        for (const u of activeUsers) {
+            if (u.userId) studentUserIdsToAck.add(String(u.userId).trim());
         }
-
-        // Extract student identifiers from event keys (format: lr_${userId}_${dir}_${rTime}_${pTime})
-        const targetUserIds = [];
         for (const k of keysToAcknowledge) {
             const parts = k.split("_");
             if (parts.length >= 2 && parts[1]) {
-                targetUserIds.push(parts[1]);
+                studentUserIdsToAck.add(parts[1].trim());
             }
         }
 
-        // 1. Atomically update User records to append acknowledged event keys (case-insensitive for userId)
-        const regexUserIds = targetUserIds.map((id) => new RegExp(`^${id}$`, "i"));
-        const userUpdateFilter = targetUserIds.length > 0
-            ? {
-                role: "student",
+        const idsArray = Array.from(studentUserIdsToAck).filter(Boolean);
+        const regexIds = idsArray.map((id) => new RegExp(`^${id}$`, "i"));
+
+        // Atomically update User records to mark acknowledged
+        if (idsArray.length > 0) {
+            await User.updateMany(
+                {
+                    role: "student",
+                    $or: [
+                        { userId: { $in: idsArray } },
+                        { userId: { $in: regexIds } }
+                    ]
+                },
+                {
+                    $set: { lateResponseNotifiedAt: now },
+                    $addToSet: { lateResponseNotifiedEventKeys: { $each: keysToAcknowledge } }
+                }
+            );
+        }
+
+        // Update LateResponseEvent collection
+        await LateResponseEvent.updateMany(
+            {
                 $or: [
-                    { userId: { $in: targetUserIds } },
-                    { userId: { $in: regexUserIds } },
-                    { _id: { $in: targetUserIds.filter((id) => mongoose.Types.ObjectId.isValid(id)) } }
+                    { eventKey: { $in: keysToAcknowledge } },
+                    { userId: { $in: idsArray }, status: "ACTIVE" }
                 ]
+            },
+            {
+                $set: {
+                    isNotified: true,
+                    notifiedAt: now,
+                    updatedAt: now
+                }
             }
-            : { role: "student" };
-
-        await User.updateMany(userUpdateFilter, {
-            $addToSet: { lateResponseNotifiedEventKeys: { $each: keysToAcknowledge } },
-            $set: { lateResponseNotifiedAt: now }
-        });
-
-        // 2. Update or insert into LateResponseEvent collection for auditing
-        try {
-            const bulkOps = keysToAcknowledge.map((key) => {
-                const parts = key.split("_");
-                const uId = parts[1] || "unknown";
-                const dir = parts[2] || "OUTWARD";
-                const rTime = parts[3] && !isNaN(Number(parts[3])) ? new Date(Number(parts[3])) : now;
-                const pTime = parts[4] && !isNaN(Number(parts[4])) ? new Date(Number(parts[4])) : null;
-
-                return {
-                    updateOne: {
-                        filter: { eventKey: key },
-                        update: {
-                            $set: {
-                                isNotified: true,
-                                isLateResponse: true,
-                                notifiedAt: now,
-                                updatedAt: now
-                            },
-                            $setOnInsert: {
-                                eventKey: key,
-                                userId: uId,
-                                direction: dir,
-                                responseTimestamp: rTime,
-                                responseSubmittedAt: rTime,
-                                planApprovedAt: pTime,
-                                isLateResponse: true,
-                                status: "ACTIVE",
-                                isNotified: true,
-                                notifiedAt: now,
-                                createdAt: now
-                            }
-                        },
-                        upsert: true
-                    }
-                };
-            });
-
-            if (bulkOps.length > 0) {
-                await LateResponseEvent.bulkWrite(bulkOps, { ordered: false });
-            }
-        } catch (eventErr) {
-            console.warn("LateResponseEvent update warning:", eventErr.message);
-        }
+        );
 
         return res.status(200).json({
             success: true,
-            message: `Successfully acknowledged ${keysToAcknowledge.length} late travel response notification(s).`,
-            acknowledgedCount: keysToAcknowledge.length,
+            message: `Successfully acknowledged late travel response notification(s).`,
+            acknowledgedCount: keysToAcknowledge.length || idsArray.length,
             acknowledgedKeys: keysToAcknowledge
         });
     } catch (error) {
@@ -806,6 +645,18 @@ export const updateTravelStatus = async (req, res) => {
         const sId = String(user.userId || "").toLowerCase().trim();
         const sMongoId = String(user._id || "").toLowerCase().trim();
 
+        if (user.travelStatus === "Not Coming" && travelStatus === "Coming") {
+            return res.status(400).json({
+                success: false,
+                code: "STATUS_CHANGE_NOT_ALLOWED",
+                message: "You cannot change from Not Coming to Coming. Please contact the administrator.",
+                travelStatus: user.travelStatus,
+                allocationStatus: user.allocationStatus,
+                responseLocked: true,
+                planVersion: currentPlanVersion || 1
+            });
+        }
+
         // 1. Check if student is already allocated in an active approved plan (e.g. Step 8 after Plan Version 2 approval)
         // Common response validation: enforces 1 student + 1 plan version = 1 response only
         const validation = await validateStudentResponse({
@@ -910,25 +761,20 @@ export const updateTravelStatus = async (req, res) => {
         }
 
         // Sub-case B: A transportation plan is approved!
-        // Check if student was included in the approved plan by matching unique userId or MongoDB _id
-        const isAllocatedInApprovedPlan = Boolean(
+        // Check if student was genuine part of the approved plan by matching unique userId or MongoDB _id
+        const wasInApprovedPlan = previousTravelStatus !== "Pending" && Boolean(
             approvedPlans.INWARD?.allocatedUserIds?.has(sId) ||
             approvedPlans.INWARD?.allocatedUserIds?.has(sMongoId) ||
             approvedPlans.OUTWARD?.allocatedUserIds?.has(sId) ||
-            approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId) ||
-            (user.allocatedBus?.isAllocated && (user.allocatedBus.approved === true || user.allocatedBus.adminApprovalStatus === "Approved")) ||
-            (user.allocatedBus?.inward?.isAllocated && (user.allocatedBus.inward.approved === true || user.allocatedBus.inward.adminApprovalStatus === "Approved")) ||
-            (user.allocatedBus?.outward?.isAllocated && (user.allocatedBus.outward.approved === true || user.allocatedBus.outward.adminApprovalStatus === "Approved"))
+            approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId)
         );
 
         const isSubmittedAfterPlanApproval = latestApprovalTime > 0 && (responseSubmittedAt.getTime() > latestApprovalTime);
+        const isLateComing = (previousTravelStatus === "Pending" && hasApprovedPlan) || (isSubmittedAfterPlanApproval && !wasInApprovedPlan);
 
-        // Rule 3: If student submits Coming after approved plan, and that student was not included in the approved plan:
-        // Mark student as:
-        // * travelStatus: Coming
-        // * allocationStatus: Unallocated
-        // * lateResponse: true
-        if (isSubmittedAfterPlanApproval && !isAllocatedInApprovedPlan) {
+        // If student submits Coming after approved plan:
+        // Mark student as LATE RESPONSE: Unallocated, no vehicle/bus assigned
+        if (isLateComing) {
             console.log("[LATE RESPONSE DETECTED]", {
                 userId: user.userId,
                 responseSubmittedAt: responseSubmittedAt.toISOString(),

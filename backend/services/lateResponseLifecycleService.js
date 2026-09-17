@@ -11,11 +11,15 @@ const isDbConnected = () => mongoose.connection?.readyState === 1;
  */
 export const generateLateResponseEventKey = (userId, directionOrApproval, approvalEventIdOrResponseTime, planApprovalTimeOrVersion) => {
     const uId = String(userId || "").toLowerCase().trim();
+    let dir = null;
     let idPart = approvalEventIdOrResponseTime;
     let timePart = planApprovalTimeOrVersion;
 
-    if (directionOrApproval === "INWARD" || directionOrApproval === "OUTWARD") {
-        // Direction is ignored for key generation to keep late responses unified
+    const dirUpper = typeof directionOrApproval === "string" ? directionOrApproval.toUpperCase().trim() : null;
+    if (dirUpper === "INWARD" || dirUpper === "OUTWARD") {
+        dir = dirUpper;
+        idPart = approvalEventIdOrResponseTime;
+        timePart = planApprovalTimeOrVersion;
     } else if (directionOrApproval !== undefined && directionOrApproval !== null) {
         idPart = directionOrApproval;
         timePart = approvalEventIdOrResponseTime;
@@ -31,7 +35,8 @@ export const generateLateResponseEventKey = (userId, directionOrApproval, approv
             ? `t${idPart.getTime()}`
             : String(idPart);
     }
-    return `lr_${uId}_${eventIdentifier.toLowerCase()}`;
+    const dirPart = dir ? `_${dir}` : "";
+    return `lr_${uId}${dirPart}_${eventIdentifier}`;
 };
 
 /**

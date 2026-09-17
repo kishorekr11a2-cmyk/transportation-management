@@ -41,10 +41,13 @@ function UserManagement() {
     // Late Travel Response Alert & Filter states
     const [showLatePopup, setShowLatePopup] = useState(false);
     const [latePopupCount, setLatePopupCount] = useState(0);
+    const [lateInfo, setLateInfo] = useState({ count: 0, users: [], unnotifiedCount: 0 });
     const [planApprovalTimes, setPlanApprovalTimes] = useState({ INWARD: null, OUTWARD: null });
     const popupTimerRef = useRef(null);
     const hasCheckedPopupOnMountRef = useRef(false);
     const pendingAckKeysRef = useRef([]);
+
+    const lateUserIds = useMemo(() => new Set((lateInfo.users || []).map((u) => String(u.userId || "").toLowerCase().trim())), [lateInfo.users]);
 
     // Modal states
     const [showResetModal, setShowResetModal] = useState(false);
@@ -120,19 +123,15 @@ function UserManagement() {
                 setPlanApprovalTimes(lateData.summary.planApprovalTimes);
             }
 
-            // Qualifying late Coming students count from API or user records
+            // Authoritative late Coming students from API
             const apiLateUsers = lateData?.users || lateData?.lateResponses || [];
-            const dbLateCount = Number.isInteger(lateData?.count) ? lateData.count : 0;
-            // Double check against loaded userData: Only genuinely late responses
-            const localLateStudents = userData.filter((u) => {
-                return Boolean(
-                    u.travelStatus === "Coming" &&
-                    (u.lateResponse || u.isLateResponse || u.lateResponseDetected || u.allocationStatus === "Pending Reallocation" || u.requiresReallocation)
-                );
+            const dbLateCount = Number.isInteger(lateData?.count) ? lateData.count : apiLateUsers.length;
+            setLateInfo({
+                count: dbLateCount,
+                users: apiLateUsers,
+                unnotifiedCount: lateData?.unnotifiedCount || 0
             });
-
-            const lateCount = Number.isInteger(lateData?.count) ? lateData.count : localLateStudents.length;
-            console.log(`[LateResponse] Total unresolved Late Coming students: ${lateCount}`);
+            console.log(`[LateResponse] Total authoritative Late Coming students: ${dbLateCount}`);
 
             // Notification Deduplication: Only notify newly unnotified late response events!
             const unnotifiedCount = Number.isInteger(lateData?.unnotifiedCount) ? lateData.unnotifiedCount : 0;
@@ -271,16 +270,18 @@ function UserManagement() {
 
         users.forEach((user) => {
             const status = user.travelStatus || "Pending";
+            const uId = String(user.userId || "").toLowerCase().trim();
+
             if (status === "Coming") comingCount++;
             else if (status === "Not Coming") notComingCount++;
             else pendingCount++;
 
             const isLateComing = Boolean(
                 status === "Coming" &&
-                (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
+                (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation || lateUserIds.has(uId))
             );
 
-            // Allocation determination
+            // Rule 7: Allocated = eligible Coming users with a valid current allocation
             const isAllocated = !isLateComing && status === "Coming" && Boolean(
                 user.isAllocated ?? (
                     user.allocationStatus === "Assigned" ||
@@ -294,22 +295,23 @@ function UserManagement() {
                 )
             );
 
-            const isUnallocated = !isAllocated;
-
             if (isAllocated) {
                 allocatedCount++;
-            }
-            if (isLateComing) {
-                lateComingCount++;
-            }
-            if (isUnallocated) {
+            } else if (status === "Coming") {
+                // Rule 7: Unallocated = eligible Coming users without a valid current allocation
                 unallocatedCount++;
                 if (!isLateComing) {
                     normalUnallocatedCount++;
                 }
             }
+
+            if (isLateComing) {
+                lateComingCount++;
+            }
         });
 
+        // Ensure lateComingCount uses authoritative API data if available
+        const finalLateCount = lateInfo.count > 0 ? lateInfo.count : lateComingCount;
         const totalUsers = users.length;
 
         return {
@@ -319,10 +321,10 @@ function UserManagement() {
             pendingCount,
             allocatedCount,
             unallocatedCount,
-            lateComingCount,
+            lateComingCount: finalLateCount,
             normalUnallocatedCount
         };
-    }, [users]);
+    }, [users, lateInfo.count, lateUserIds]);
 
     // =========================================================
     // 4. Unique Stopping Areas for Filter Dropdown
@@ -390,13 +392,15 @@ function UserManagement() {
                 return false;
             }
 
+            const uId = String(user.userId || "").toLowerCase().trim();
+            const isLateComing = Boolean(
+                user.travelStatus === "Coming" &&
+                (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation || lateUserIds.has(uId))
+            );
+
             // 2. Travel Status Filter
             if (statusFilter !== "All") {
                 if (statusFilter === "Late Coming Responses") {
-                    const isLateComing = Boolean(
-                        user.travelStatus === "Coming" &&
-                        (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
-                    );
                     if (!isLateComing) return false;
                 } else {
                     const userStatus = user.travelStatus || "Pending";
@@ -416,21 +420,17 @@ function UserManagement() {
 
             // 4. Allocation Filter
             if (allocationFilter !== "All") {
-                const isLateComing = Boolean(
-                    user.travelStatus === "Coming" &&
-                    (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
-                );
                 const isAllocated = !isLateComing && user.travelStatus === "Coming" && Boolean(
                     user.isAllocated ?? (
                         user.allocationStatus === "Assigned" || user.allocationStatus === "Re-assigned" || user.allocatedBus?.isAllocated || user.assignedVehicle || user.allocatedBus?.vehicleName || user.manualBusId
                     )
                 );
-                const isUnallocated = !isAllocated;
+                const isUnallocated = !isAllocated && user.travelStatus === "Coming";
 
                 if (allocationFilter === "Allocated") {
                     if (!isAllocated) return false;
                 } else if (allocationFilter === "Unallocated") {
-                    // MUST SHOW ALL UNALLOCATED STUDENTS (both Type 1 and Type 2!)
+                    // MUST SHOW ALL UNALLOCATED COMING STUDENTS (both Normal and Late Coming!)
                     if (!isUnallocated) return false;
                 } else if (allocationFilter === "Normal Unallocated") {
                     // Show only Type 2 (Normal Unallocated due to capacity/route limits)
@@ -443,7 +443,7 @@ function UserManagement() {
 
             return true;
         });
-    }, [users, searchQuery, statusFilter, stopFilter, allocationFilter]);
+    }, [users, searchQuery, statusFilter, stopFilter, allocationFilter, lateUserIds]);
 
     const isFiltered = searchQuery.trim() !== "" || statusFilter !== "All" || stopFilter !== "All" || allocationFilter !== "All";
 
@@ -1137,9 +1137,10 @@ function UserManagement() {
                             ) : (
                                 filteredUsers.map((user, index) => {
                                     const status = user.travelStatus || "Pending";
+                                    const uId = String(user.userId || "").toLowerCase().trim();
                                     const isLateComing = Boolean(
                                         status === "Coming" &&
-                                        (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation)
+                                        (user.lateResponse || user.lateResponseStatus === "ACTIVE" || user.isLateResponse || user.lateResponseDetected || user.allocationStatus === "Pending Reallocation" || user.requiresReallocation || lateUserIds.has(uId))
                                     );
                                     const isAllocated = !isLateComing && Boolean(
                                         user.isAllocated ?? (

@@ -53,9 +53,10 @@ const AdminDashboard = () => {
     try {
       const res = await api.get("/users/late-responses");
       if (res.data?.success) {
+        const count = Number.isInteger(res.data.count) ? res.data.count : (res.data.lateComingResponsesCount || 0);
         setLateData({
-          lateComingResponsesCount: res.data.lateComingResponsesCount || 0,
-          pendingReallocationUsersCount: res.data.pendingReallocationUsersCount || 0,
+          lateComingResponsesCount: count,
+          pendingReallocationUsersCount: count,
           users: res.data.users || [],
         });
       }
@@ -177,7 +178,10 @@ const AdminDashboard = () => {
                 <button
                   type="button"
                   className="dash-late-btn dash-late-btn--inspect"
-                  onClick={() => setShowInspectModal(true)}
+                  onClick={() => {
+                    setShowInspectModal(true);
+                    api.post("/users/acknowledge-late-notifications").catch(() => {});
+                  }}
                   id="btn-inspect-late-users"
                 >
                   Inspect Users ({lateData.pendingReallocationUsersCount})

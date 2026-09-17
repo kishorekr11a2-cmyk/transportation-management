@@ -135,13 +135,11 @@ export const normalizeActivePlans = (plans, options = {}) => {
     for (const p of planList) {
         if (!p) continue;
         const isApproved = Boolean(
-            p.isApproved ||
+            p.isApproved === true ||
             p.adminApprovalStatus === "Approved" ||
             p.approved === true ||
             p.plan?.adminApprovalStatus === "Approved" ||
-            p.approvalEventId ||
-            p.planVersion ||
-            p.version
+            (p.approvalEventId && p.isApproved !== false && p.adminApprovalStatus !== "Draft")
         );
         const dir = String(p.direction || "INWARD").toUpperCase().trim();
         const planObj = {
@@ -153,13 +151,19 @@ export const normalizeActivePlans = (plans, options = {}) => {
             allocatedUserIds: p.allocatedUserIds || p.plan?.allocatedUserIds || null
         };
         if (dir === "OUTWARD") {
-            normalized.OUTWARD = planObj;
+            if (isApproved || !normalized.OUTWARD.isApproved) {
+                normalized.OUTWARD = planObj;
+            }
         } else {
-            normalized.INWARD = planObj;
+            if (isApproved || !normalized.INWARD.isApproved) {
+                normalized.INWARD = planObj;
+            }
         }
         if (isApproved) {
             normalized.hasApprovedPlan = true;
-            if (!normalized.primaryPlan) normalized.primaryPlan = planObj;
+            if (!normalized.primaryPlan || !normalized.primaryPlan.isApproved) {
+                normalized.primaryPlan = planObj;
+            }
         }
     }
     return normalized;
@@ -246,37 +250,6 @@ export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options
         (userOrDoc.lateResponseDetected === true && existingAffectedDirs.includes("OUTWARD"))
     );
 
-    const isGeneralLate = Boolean(
-        userOrDoc.lateResponse === true ||
-        userOrDoc.isLateResponse === true ||
-        hasActiveLateEvent ||
-        isSubmittedAfterInward ||
-        isSubmittedAfterOutward ||
-        (userOrDoc.travelStatus === "Coming" && userOrDoc.lateResponseDetected === true && !userOrDoc.assignedVehicle && !userOrDoc.assignedRoute)
-    );
-
-    if (isGeneralLate) {
-        return {
-            isAllocated: false,
-            travelStatus: "Coming",
-            allocationStatus: "Unallocated",
-            isUnallocated: true,
-            lateResponse: true,
-            isLateResponse: true,
-            lateResponseDetected: true,
-            reason: "Late response requires admin reallocation",
-            vehicle: null,
-            route: null,
-            planVersion: activePlans?.primaryPlan?.planVersion || 1,
-            planType: activePlans?.primaryPlan?.planType || null,
-            direction: null,
-            boardingStop: uStop || null,
-            seatStatus: null,
-            approvalStatus: null,
-            allocatedBus: null
-        };
-    }
-
     // Helper to find student in an active plan's bus list (ONLY by userId or mongoId — NEVER by name)
     const findStudentInPlanBuses = (planDoc, direction) => {
         const isApproved = Boolean(
@@ -284,17 +257,16 @@ export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options
             planDoc?.adminApprovalStatus === "Approved" ||
             planDoc?.approved === true ||
             planDoc?.plan?.adminApprovalStatus === "Approved" ||
-            planDoc?.approvalEventId
+            (planDoc?.approvalEventId && planDoc?.isApproved !== false && planDoc?.adminApprovalStatus !== "Draft")
         );
         if (!planDoc || !isApproved) return null;
 
-        // Check if student submitted Coming AFTER this plan was approved
-        const planApprovedAt = planDoc.approvedAt || planDoc.plan?.approvedAt;
+        const planData = planDoc.plan || planDoc;
+        const planApprovedAt = planDoc.approvedAt || planDoc.selectedAt || planData?.approvedAt;
         if (planApprovedAt && responseTime && new Date(responseTime).getTime() > new Date(planApprovedAt).getTime()) {
-            return null; // Late student cannot be matched into this already-approved plan!
+            return null;
         }
 
-        const planData = planDoc.plan || planDoc;
         const planAllocatedIds = planData?.allocatedUserIds || planDoc?.allocatedUserIds;
         if (planAllocatedIds) {
             const hasUser = planAllocatedIds instanceof Set
@@ -391,12 +363,58 @@ export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options
     let inwardAllocation = null;
     let outwardAllocation = null;
 
-    if (activePlans?.INWARD?.isApproved && (!isLateInward || targetDir === "OUTWARD")) {
+    if (activePlans?.INWARD?.isApproved) {
         inwardAllocation = findStudentInPlanBuses(activePlans.INWARD, "INWARD");
     }
 
-    if (activePlans?.OUTWARD?.isApproved && (!isLateOutward || targetDir === "INWARD")) {
+    if (activePlans?.OUTWARD?.isApproved) {
         outwardAllocation = findStudentInPlanBuses(activePlans.OUTWARD, "OUTWARD");
+    }
+
+    const hasLateNotice = Boolean(
+        isLateInward ||
+        isLateOutward ||
+        hasActiveLateEvent ||
+        userOrDoc.lateResponseDetected === true ||
+        userOrDoc.isLateResponse === true ||
+        userOrDoc.lateResponse === true ||
+        userOrDoc.requiresReallocation === true
+    );
+
+    // Direct check from user document (saved by persistPlanToUsers or admin allocation)
+    // ONLY if student does NOT have a late notice and is not explicitly unallocated!
+    if (!hasLateNotice && userOrDoc.allocationStatus !== "Unallocated" && !userOrDoc.isUnallocated) {
+        const userAlloc = userOrDoc.allocatedBus;
+        if (!inwardAllocation && userAlloc?.inward?.isAllocated && (userAlloc.inward.approved === true || userAlloc.inward.adminApprovalStatus === "Approved")) {
+            inwardAllocation = { ...userAlloc.inward, isAllocated: true, approved: true };
+        }
+        if (!outwardAllocation && userAlloc?.outward?.isAllocated && (userAlloc.outward.approved === true || userAlloc.outward.adminApprovalStatus === "Approved")) {
+            outwardAllocation = { ...userAlloc.outward, isAllocated: true, approved: true };
+        }
+        if (!inwardAllocation && !outwardAllocation && (userAlloc?.isAllocated || userOrDoc.isAllocated || userOrDoc.assignedVehicle)) {
+            const allocDir = userAlloc?.direction || userOrDoc.direction || targetDir || "OUTWARD";
+            const vName = userAlloc?.vehicleName || userOrDoc.assignedVehicle || "Assigned Bus";
+            const rCode = userAlloc?.routeCode || userOrDoc.assignedRoute || "Assigned Route";
+            const sNum = userAlloc?.seatNumber || (userOrDoc.seatNumber ? Number(userOrDoc.seatNumber) : 1);
+            const directAlloc = {
+                isAllocated: true,
+                approved: true,
+                vehicle: vName,
+                vehicleName: vName,
+                vehicleNumber: vName,
+                route: rCode,
+                routeCode: rCode,
+                routeName: userAlloc?.routeName || rCode,
+                direction: allocDir,
+                seatNumber: sNum,
+                seatStatus: sNum ? `#${sNum}` : "Assigned",
+                boardingStop: userAlloc?.boardingStop || uStop || "Assigned Stop",
+                allocationStatus: "Assigned",
+                adminApprovalStatus: "Approved"
+            };
+            if (allocDir === "INWARD") inwardAllocation = directAlloc;
+            else outwardAllocation = directAlloc;
+        }
     }
 
     let primaryAlloc;
@@ -440,8 +458,6 @@ export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options
             }
         };
     }
-
-    const hasLateNotice = Boolean(isLateInward || isLateOutward || hasActiveLateEvent || userOrDoc.lateResponseDetected);
 
     console.log("[LateResponse] userId:", userOrDoc.userId || uId);
     console.log("[LateResponse] lateResponseDetected:", hasLateNotice);
@@ -613,7 +629,32 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             ? detectedAffectedDirs
             : (activePlans.INWARD?.isApproved && !activePlans.OUTWARD?.isApproved ? ["INWARD"] : (activePlans.OUTWARD?.isApproved && !activePlans.INWARD?.isApproved ? ["OUTWARD"] : ["INWARD", "OUTWARD"])));
 
+    // ── 3. Check Active Late Response for Current Approved Plan ──
+    const hasActiveLateEvent = activeLateUserIds ? activeLateUserIds.has(uId) : false;
+    const isSubmittedAfterCurrentApproval = Boolean(
+        activePlans.hasApprovedPlan &&
+        planApprovalTime &&
+        responseTime &&
+        new Date(responseTime).getTime() > planApprovalTime.getTime()
+    );
+
+    const isLateForCurrentPlan = Boolean(
+        userDoc.lateResponse === true ||
+        userDoc.isLateResponse === true ||
+        isSubmittedAfterCurrentApproval ||
+        hasActiveLateEvent ||
+        (userDoc.lateResponseDetected === true && (
+            (userDoc.submittedApprovalEventId && currentPlanEventId && String(userDoc.submittedApprovalEventId).toLowerCase().trim() === String(currentPlanEventId).toLowerCase().trim()) ||
+            (userDoc.submittedPlanVersion && userDoc.submittedPlanVersion === activePlanVersion) ||
+            isSubmittedAfterCurrentApproval
+        ))
+    );
+
     // ── 4. Check If Student Is Included In The Newly Approved Plan ──
+    // IMPORTANT: Must check allocation BEFORE the isLateForCurrentPlan early return.
+    // A student who was late but has since been allocated via regenerated plan must
+    // be returned as ALLOCATED, not LATE. The late flags on the user document may not
+    // yet be cleared if persistPlanToUsers ran but the user document was not fully updated.
     const allocation = getActiveAllocationForStudent(userDoc, activePlans, { activeLateUserIds, direction: options.direction });
 
     if (allocation.isAllocated) {
@@ -643,30 +684,13 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             lateResponseDetected: hasPendingOtherDir,
             requiresReallocation: hasPendingOtherDir,
             affectedDirections: remainingAffectedDirs,
-            allocatedBus: allocation.allocatedBus,
+            allocatedBus: allocation.allocatedBus || allocation,
             route: allocation.route,
             planVersion: allocation.planVersion || activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
             activePlan: activePlans?.primaryPlan || null
         };
     }
-
-    const isSubmittedAfterCurrentApproval = Boolean(
-        activePlans.hasApprovedPlan &&
-        planApprovalTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > planApprovalTime.getTime()
-    );
-
-    const isLateForCurrentPlan = Boolean(
-        isSubmittedAfterCurrentApproval ||
-        hasActiveLateEvent ||
-        (userDoc.lateResponseDetected === true && (
-            (userDoc.submittedApprovalEventId && currentPlanEventId && String(userDoc.submittedApprovalEventId).toLowerCase().trim() === String(currentPlanEventId).toLowerCase().trim()) ||
-            (userDoc.submittedPlanVersion && userDoc.submittedPlanVersion === activePlanVersion) ||
-            isSubmittedAfterCurrentApproval
-        ))
-    );
 
     if (isLateForCurrentPlan) {
         const targetPlanId = (dynamicAffectedDirs.includes("OUTWARD") && !dynamicAffectedDirs.includes("INWARD"))
@@ -701,9 +725,13 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             planVersion: activePlanVersion,
             planId: targetPlanId,
             activePlan: activePlans?.primaryPlan || null,
-            reason: "Late response requires admin reallocation"
+            reason: "Late response requires admin reallocation",
+            message: "Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan."
         };
     }
+
+
+
 
     // ── 5. Default: Unallocated State (Normal Coming student awaiting or without seat) ──
     return {
@@ -873,6 +901,47 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
         ))
     );
 
+    // ── 4. Student Is Included In The Newly Approved Plan ──
+    // IMPORTANT: Check allocation BEFORE late response return (same fix as getCurrentStudentTransportStatus).
+    const allocation = getActiveAllocationForStudent(userDoc, activePlans, { activeLateUserIds });
+
+    if (allocation.isAllocated) {
+        console.log("[LateResponse] userId:", userDoc.userId || uId);
+        console.log("[LateResponse] lateResponseDetected:", false);
+        console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
+        console.log("[LateResponse] allocation decision:", "ALLOCATED");
+
+        return {
+            ...userDoc,
+            userId: userDoc.userId,
+            name: userDoc.name,
+            travelStatus: "Coming",
+            allocationStatus: userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned",
+            isAllocated: true,
+            isUnallocated: false,
+            allocatedVehicle: allocation.vehicle,
+            allocatedRoute: allocation.route,
+            assignedVehicle: allocation.vehicle,
+            assignedRoute: allocation.route,
+            vehicle: allocation.vehicle,
+            activePlanVersion: allocation.planVersion || activePlanVersion,
+            activePlanType: allocation.planType || activePlanType,
+            submissionLocked: true,
+            isSubmissionLocked: true,
+            lateResponseStatus: "NONE",
+            lateResponse: false,
+            isLateResponse: false,
+            lateResponseDetected: false,
+            requiresReallocation: false,
+            affectedDirections: [],
+            allocatedBus: allocation.allocatedBus || allocation,
+            route: allocation.route,
+            planVersion: allocation.planVersion || activePlanVersion,
+            planId: activePlans?.primaryPlan?.planId || null,
+            activePlan: activePlans?.primaryPlan || null
+        };
+    }
+
     if (isLateForCurrentPlan) {
         console.log("[LateResponse] userId:", userDoc.userId || uId);
         console.log("[LateResponse] lateResponseDetected:", true);
@@ -907,47 +976,8 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
             activePlan: activePlans?.primaryPlan || null,
-            reason: "Late response requires admin reallocation"
-        };
-    }
-
-    // ── 4. Student Is Included In The Newly Approved Plan ──
-    const allocation = getActiveAllocationForStudent(userDoc, activePlans, { activeLateUserIds });
-
-    if (allocation.isAllocated) {
-        console.log("[LateResponse] userId:", userDoc.userId || uId);
-        console.log("[LateResponse] lateResponseDetected:", false);
-        console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-        console.log("[LateResponse] allocation decision:", "ALLOCATED");
-
-        return {
-            ...userDoc,
-            userId: userDoc.userId,
-            name: userDoc.name,
-            travelStatus: "Coming",
-            allocationStatus: userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned",
-            isAllocated: true,
-            isUnallocated: false,
-            allocatedVehicle: allocation.vehicle,
-            allocatedRoute: allocation.route,
-            assignedVehicle: allocation.vehicle,
-            assignedRoute: allocation.route,
-            vehicle: allocation.vehicle,
-            activePlanVersion: allocation.planVersion || activePlanVersion,
-            activePlanType: allocation.planType || activePlanType,
-            submissionLocked: true,
-            isSubmissionLocked: true,
-            lateResponseStatus: "NONE",
-            lateResponse: false,
-            isLateResponse: false,
-            lateResponseDetected: false,
-            requiresReallocation: false,
-            affectedDirections: [],
-            allocatedBus: allocation.allocatedBus,
-            route: allocation.route,
-            planVersion: allocation.planVersion || activePlanVersion,
-            planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
+            reason: "Late response requires admin reallocation",
+            message: "Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan."
         };
     }
 
@@ -1011,6 +1041,17 @@ export const validateStudentResponse = async ({
     const currentPlanVersion = Number(resolvedPlan?.planVersion || resolvedPlan?.version || allocation.planVersion) || 1;
     const currentApprovalEventId = resolvedPlan?.approvalEventId ? String(resolvedPlan.approvalEventId) : null;
 
+    // Reject if current status is "Not Coming" and user attempts to change to "Coming"
+    if (user?.travelStatus === "Not Coming" && travelStatus === "Coming") {
+        return {
+            allowed: false,
+            code: "STATUS_CHANGE_NOT_ALLOWED",
+            message: "You cannot change from Not Coming to Coming. Please contact the administrator.",
+            travelStatus: "Not Coming",
+            planVersion: currentPlanVersion
+        };
+    }
+
     // 1. Check if user is genuinely allocated in the active approved plan
     const isUserAllocated = Boolean(
         allocation.isAllocated &&
@@ -1033,8 +1074,7 @@ export const validateStudentResponse = async ({
         resolvedPlan?.isApproved ||
         resolvedPlan?.adminApprovalStatus === "Approved" ||
         resolvedPlan?.approved === true ||
-        resolvedPlan?.planVersion ||
-        resolvedPlan?.approvalEventId
+        (resolvedPlan?.approvalEventId && resolvedPlan?.isApproved !== false && resolvedPlan?.adminApprovalStatus !== "Draft")
     );
 
     // If no approved plan exists:

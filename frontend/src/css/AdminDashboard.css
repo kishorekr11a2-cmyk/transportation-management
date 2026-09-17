@@ -192,15 +192,11 @@
   Row 3: Excel (col 1)  | AI Agent (col 2)  → excel smaller, AI larger
 */
 
-/* Excel card explicitly constrained */
-.bento-card--excel {
-  /* stays in natural 1-col grid cell */
-}
-
-/* AI card spans full height of its row but is taller visually via min-height */
-.bento-card--ai {
-  /* stays in natural 1-col grid cell */
-}
+/*
+  Card layout notes:
+  - Excel card (.bento-card--excel) stays in its natural 1-col grid cell
+  - AI card (.bento-card--ai) featured styling is defined in the AI Agent section below
+*/
 
 /* ────────────────────────────────────────────────────
    BASE BENTO CARD

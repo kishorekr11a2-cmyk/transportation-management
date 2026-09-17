@@ -21,6 +21,7 @@ import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
 import OptimizationResultSummary from "../components/OptimizationResultSummary";
 import ResetRouteModal from "../components/ResetRouteModal";
+import ResetManualPlanModal from "../components/ResetManualPlanModal";
 import SelectGeneratedRouteModal from "../components/SelectGeneratedRouteModal";
 import RecommendedRouteMapModal from "../components/RecommendedRouteMapModal";
 import api from "../services/api";
@@ -282,10 +283,16 @@ export default function AIAgent() {
     const [showResetModal, setShowResetModal] =
         useState(false);
 
+    const [showManualResetModal, setShowManualResetModal] =
+        useState(false);
+
     const [showSelectRouteModal, setShowSelectRouteModal] =
         useState(false);
 
     const [resetting, setResetting] =
+        useState(false);
+
+    const [manualPlanResetting, setManualPlanResetting] =
         useState(false);
 
     const [resetSuccessMessage, setResetSuccessMessage] =
@@ -660,31 +667,52 @@ export default function AIAgent() {
 
     const handleResetAdminManualPlan = async () => {
         const currentDir = manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-        const confirmReset = window.confirm(
-            `Are you sure you want to reset the ${currentDir} manual transportation plan?\n\n` +
-            `• Only the ${currentDir} manual plan and its student bus allocations will be reset.\n` +
-            `• The opposite direction will remain intact and approved.\n` +
-            `• Affected students will return to 'Not Assigned' until you approve again.\n` +
-            `• Student locked travel responses ('Coming') will remain preserved.`
-        );
-        if (!confirmReset) return;
-
         try {
-            setManualPlanApproving(true);
+            setManualPlanResetting(true);
             const res = await resetManualPlan({ direction: currentDir });
             if (res?.success) {
-                toast.success(res.message || `${currentDir} manual plan reset successfully.`);
+                toast.success("Admin Manual Route Plan reset successfully.");
+                setShowManualResetModal(false);
+
+                // Clean up only manual-plan-related local storage, NEVER touch AI plan cache!
+                try {
+                    localStorage.removeItem("active_manual_plan_direction");
+                    const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
+                    if (activeSelection?.planType === "ADMIN" || activeSelection?.planType === "MANUAL") {
+                        localStorage.removeItem("active_ai_selection");
+                        setSelectedPlanType("");
+                        setLastSelection(null);
+                    }
+                    if (currentDir === "OUTWARD") {
+                        const storedOut = JSON.parse(localStorage.getItem("active_outward_plan") || "null");
+                        if (storedOut?.planType === "ADMIN" || storedOut?.planType === "MANUAL") {
+                            localStorage.removeItem("active_outward_plan");
+                            setOutwardPlan(null);
+                        }
+                    } else {
+                        const storedIn = JSON.parse(localStorage.getItem("active_inward_plan") || "null");
+                        if (storedIn?.planType === "ADMIN" || storedIn?.planType === "MANUAL") {
+                            localStorage.removeItem("active_inward_plan");
+                            setInwardPlan(null);
+                        }
+                    }
+                } catch (e) {}
+
                 await Promise.all([
                     loadManualRoutes(currentDir),
                     loadLastSelection(currentDir),
-                    loadActivePlan(false)
+                    loadActivePlan(false),
+                    loadAIData(),
+                    fetchLateResponses()
                 ]);
+            } else {
+                throw new Error(res?.message || "Failed to reset manual plan.");
             }
         } catch (err) {
             console.error("Reset manual plan error:", err);
             toast.error(err.response?.data?.message || err.message || "Failed to reset manual plan.");
         } finally {
-            setManualPlanApproving(false);
+            setManualPlanResetting(false);
         }
     };
 
@@ -3060,6 +3088,14 @@ export default function AIAgent() {
                                                 ? `${manualPlanData?.direction || manualPlanDirection} Submitted`
                                                 : `${manualPlanData?.direction || manualPlanDirection} Not Submitted`)}
                                     </span>
+                                    <button
+                                        type="button"
+                                        className="reset-manual-plan-btn"
+                                        onClick={() => setShowManualResetModal(true)}
+                                        title="Reset Admin Manual Route Plan"
+                                    >
+                                        🔄 Reset Manual Plan
+                                    </button>
                                 </div>
                                 <div style={{
                                     fontSize: "12px",
@@ -3070,7 +3106,7 @@ export default function AIAgent() {
                                         ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Approved & Active`
                                         : (manualPlanData?.isSubmitted
                                             ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Submitted`
-                                            : `Click OK in Route Management`)}
+                                            : `Not Approved • Click OK in Route Management`)}
                                 </div>
                             </div>
 
@@ -3098,6 +3134,10 @@ export default function AIAgent() {
                                 <div>
                                     <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Allocated Seats</div>
                                     <div style={{ fontSize: "20px", fontWeight: "800", color: "#16a34a" }}>{manualPlanData.assignedUsers ?? 0}</div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Allocated Users</div>
+                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#16a34a" }}>{manualPlanData.allocatedUsers ?? manualPlanData.assignedUsers ?? 0}</div>
                                 </div>
                                 <div>
                                     <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Standby Users</div>
@@ -3133,7 +3173,7 @@ export default function AIAgent() {
                             <div className="manual-info-box">
                                 Loading saved admin routes &amp; calculating seat allocations...
                             </div>
-                        ) : (!manualPlanData?.isSubmitted && !manualPlanData?.isApproved && displayedManualRoutes.length === 0) ? (
+                        ) : (!manualPlanData?.isSubmitted && !manualPlanData?.isApproved) ? (
                             <div className="empty-manual" style={{ padding: "36px 20px", textAlign: "center", background: "#f8fafc", borderRadius: "12px", border: "1px dashed #cbd5e1", margin: "16px 0" }}>
                                 <span style={{ fontSize: "42px", display: "block", marginBottom: "10px" }}>📋</span>
 
@@ -3379,26 +3419,15 @@ export default function AIAgent() {
                                 {recommendationsLoading ? "⏳ Analyzing Routes..." : "✨ AI Recommendation"}
                             </button>
 
-                            {manualPlanData?.isApproved && (
-                                <button
-                                    type="button"
-                                    className="reset-manual-plan-btn"
-                                    onClick={handleResetAdminManualPlan}
-                                    disabled={manualPlanApproving}
-                                    style={{
-                                        padding: "12px 18px",
-                                        background: "#ffffff",
-                                        color: "#dc2626",
-                                        border: "1px solid #fca5a5",
-                                        borderRadius: "10px",
-                                        fontWeight: "700",
-                                        fontSize: "13px",
-                                        cursor: "pointer"
-                                    }}
-                                >
-                                    🔄 Reset {manualPlanDirection} Plan
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                className="reset-manual-plan-btn"
+                                onClick={() => setShowManualResetModal(true)}
+                                disabled={manualPlanResetting || manualPlanApproving}
+                                title="Reset Admin Manual Route Plan and clear manual allocations"
+                            >
+                                🔄 Reset Manual Plan
+                            </button>
 
                             <button
                                 type="button"
@@ -4088,6 +4117,15 @@ export default function AIAgent() {
                 onConfirm={handleConfirmReset}
                 isResetting={resetting}
                 direction={planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD")}
+            />
+
+            {/* Safe Reset Manual Plan Confirmation Modal */}
+            <ResetManualPlanModal
+                isOpen={showManualResetModal}
+                onClose={() => setShowManualResetModal(false)}
+                onConfirm={handleResetAdminManualPlan}
+                isResetting={manualPlanResetting}
+                direction={manualPlanData?.direction || manualPlanDirection || planDirectionTab || "INWARD"}
             />
 
             {/* Select Generated Route Modal */}

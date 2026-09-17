@@ -21,6 +21,7 @@ import {
     approveLateResponseDraft,
     discardLateResponseDraft
 } from "../services/lateResponseRegenerationService.js";
+import { resetManualPlan } from "../controllers/routeController.js";
 
 const router =
     express.Router();
@@ -443,6 +444,19 @@ router.post(
             });
         }
     }
+);
+
+/*
+|--------------------------------------------------------------------------
+| RESET ADMIN MANUAL TRANSPORTATION PLAN
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/reset-manual-plan",
+    authMiddleware,
+    adminMiddleware,
+    resetManualPlan
 );
 
 /*

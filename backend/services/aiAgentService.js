@@ -4473,6 +4473,10 @@ export const buildManualTransportationPlan = async (options = {}) => {
         }
     }
 
+    if (options.isApproved !== undefined) {
+        isApproved = Boolean(options.isApproved);
+    }
+
     // Backend Logs for Allocation Monitoring
     const matchedCount = comingStudents.length - unservicedStudents.length;
     console.log(`[MANUAL PLAN] Coming users found: ${totalComingUsers}`);
@@ -4502,24 +4506,60 @@ export const buildManualTransportationPlan = async (options = {}) => {
         }
     }
 
+    if (options.isSubmitted !== undefined) {
+        isSubmitted = Boolean(options.isSubmitted);
+    }
+
+    const hasActiveManualPlan = Boolean(isSubmitted || isApproved);
+
+    // If MongoDB is connected and no manual plan is submitted or approved,
+    // or if explicitly specified as unsubmitted/unapproved without forceAllocate,
+    // reset manual plan summary counts & clear passenger allocations (Requirement 8).
+    let finalAllocatedBuses = allocatedBuses;
+    let finalTotalAssigned = totalAssigned;
+    let finalUnassignedUsers = unassignedUsers;
+
+    const shouldResetSummary = (
+        (options.isSubmitted === false && options.isApproved === false) ||
+        (mongoose.connection?.db && !hasActiveManualPlan && !options.forceAllocate && !options.routes && !options.users)
+    );
+
+    if (shouldResetSummary) {
+        finalTotalAssigned = 0;
+        finalUnassignedUsers = totalComingUsers;
+        finalAllocatedBuses = allocatedBuses.map((b) => ({
+            ...b,
+            assignedUsers: 0,
+            remainingSeats: b.capacity || 0,
+            utilization: 0,
+            users: [],
+            stops: (b.stops || []).map((s) => ({
+                ...s,
+                userCount: 0,
+                userIds: [],
+                passengersBoarded: 0
+            }))
+        }));
+    }
+
     return {
         planType: "ADMIN",
         direction: canonicalDirection,
         tripMode: effectiveTripMode,
-        buses: allocatedBuses,
-        routes: allocatedBuses,
-        totalRoutes: allocatedBuses.length,
+        buses: finalAllocatedBuses,
+        routes: finalAllocatedBuses,
+        totalRoutes: finalAllocatedBuses.length,
         totalComingUsers,
         confirmedUsers: totalComingUsers,
-        assignedUsers: totalAssigned,
-        allocatedUsers: totalAssigned,
-        allocatedSeats: totalAssigned,
-        unassignedUsers,
+        assignedUsers: finalTotalAssigned,
+        allocatedUsers: finalTotalAssigned,
+        allocatedSeats: finalTotalAssigned,
+        unassignedUsers: finalUnassignedUsers,
         totalCapacity,
-        capacityShortage: unassignedUsers > 0 || totalComingUsers > totalCapacity,
-        unassignedReason,
-        utilization: totalCapacity > 0 ? Number(((totalAssigned / totalCapacity) * 100).toFixed(2)) : 0,
-        warnings,
+        capacityShortage: shouldResetSummary ? false : (finalUnassignedUsers > 0 || totalComingUsers > totalCapacity),
+        unassignedReason: shouldResetSummary ? null : unassignedReason,
+        utilization: totalCapacity > 0 ? Number(((finalTotalAssigned / totalCapacity) * 100).toFixed(2)) : 0,
+        warnings: shouldResetSummary ? [] : warnings,
         isApproved,
         adminApprovalStatus: isApproved ? "Approved" : "Pending Admin Approval",
         approvedAt,
@@ -5494,9 +5534,15 @@ export const persistPlanToUsers = async (
                 isAllocated: Boolean(isAllocated),
                 isUnallocated: !isAllocated,
                 requiresReallocation: stillRequiresReallocation,
-                lateResponseDetected: stillRequiresReallocation,
-                isLateResponse: stillRequiresReallocation,
-                lateResponseAt: stillRequiresReallocation ? persistentLateResponseAt : null,
+                // BUG FIX: When a late-response student is successfully allocated in the current
+                // direction, explicitly clear lateResponse and isLateResponse regardless of
+                // stillRequiresReallocation (which depended on affectedDirections that was set to []
+                // by createLateResponseEvent and thus was always empty — causing stillRequiresReallocation=false
+                // already). This is a defensive fix that also correctly handles partial allocation.
+                lateResponseDetected: isCurrentDirAllocated ? false : stillRequiresReallocation,
+                lateResponse: isCurrentDirAllocated ? false : stillRequiresReallocation,
+                isLateResponse: isCurrentDirAllocated ? false : stillRequiresReallocation,
+                lateResponseAt: (isCurrentDirAllocated || !stillRequiresReallocation) ? null : persistentLateResponseAt,
                 lateResponseResolvedAt: isCurrentDirAllocated ? (student.lateResponseResolvedAt || new Date()) : null,
                 affectedDirections: currentAffectedDirs
             };
@@ -5536,13 +5582,16 @@ export const persistPlanToUsers = async (
                 lateEventOps.push({
                     updateMany: {
                         filter: {
-                            userId: { $in: targetUIds },
-                            direction: canonicalDirection
+                            userId: { $in: targetUIds }
+                            // BUG FIX: Removed `direction: canonicalDirection` filter.
+                            // LateResponseEvent stores direction as null (set in createLateResponseEvent),
+                            // so filtering by direction always matched 0 documents.
                         },
                         update: {
                             $set: {
                                 status: "RESOLVED",
                                 resolvedAt: new Date(),
+                                resolutionReason: `Allocated via ${planType || "AI"} plan`,
                                 allocatedBus: activeTop?.vehicleName || null,
                                 allocatedRoute: activeTop?.routeCode || activeTop?.routeName || null,
                                 allocatedSeat: activeTop?.seatNumber ? String(activeTop.seatNumber) : null
@@ -6386,10 +6435,12 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                     role: "student",
                     $or: [
                         { "allocatedBus.inward.planType": { $in: ["MANUAL", "ADMIN"] } },
-                        { "allocatedBus.inward": { $ne: null } },
-                        { "allocatedBus.direction": "INWARD", approvedPlanType: "MANUAL" },
+                        { "allocatedBus.direction": "INWARD", approvedPlanType: { $in: ["MANUAL", "ADMIN"] } },
                         { "allocatedBus.direction": "INWARD", manualBusId: { $ne: null } },
-                        { "allocatedBus.direction": "INWARD", manualRouteId: { $ne: null } }
+                        { "allocatedBus.direction": "INWARD", manualRouteId: { $ne: null } },
+                        { manualRouteId: { $ne: null } },
+                        { manualBusId: { $ne: null } },
+                        { approvedPlanType: { $in: ["MANUAL", "ADMIN"] } }
                     ]
                 },
                 [
@@ -6530,10 +6581,12 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                     role: "student",
                     $or: [
                         { "allocatedBus.outward.planType": { $in: ["MANUAL", "ADMIN"] } },
-                        { "allocatedBus.outward": { $ne: null } },
-                        { "allocatedBus.direction": "OUTWARD", approvedPlanType: "MANUAL" },
+                        { "allocatedBus.direction": "OUTWARD", approvedPlanType: { $in: ["MANUAL", "ADMIN"] } },
                         { "allocatedBus.direction": "OUTWARD", manualBusId: { $ne: null } },
-                        { "allocatedBus.direction": "OUTWARD", manualRouteId: { $ne: null } }
+                        { "allocatedBus.direction": "OUTWARD", manualRouteId: { $ne: null } },
+                        { manualRouteId: { $ne: null } },
+                        { manualBusId: { $ne: null } },
+                        { approvedPlanType: { $in: ["MANUAL", "ADMIN"] } }
                     ]
                 },
                 [
@@ -6668,31 +6721,143 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                 return res;
             });
         } else if (planTypeFilter === "MANUAL") {
-            // Global manual reset across all directions
+            // Global manual reset across all directions — preserves any AI allocations!
             userPromise = User.updateMany(
                 {
                     role: "student",
                     $or: [
-                        { approvedPlanType: "MANUAL" },
+                        { approvedPlanType: { $in: ["MANUAL", "ADMIN"] } },
                         { "allocatedBus.planType": { $in: ["MANUAL", "ADMIN"] } },
+                        { "allocatedBus.inward.planType": { $in: ["MANUAL", "ADMIN"] } },
+                        { "allocatedBus.outward.planType": { $in: ["MANUAL", "ADMIN"] } },
                         { manualBusId: { $ne: null } },
-                        { manualRouteId: { $ne: null } }
+                        { manualRouteId: { $ne: null } },
+                        { manualAllocation: { $ne: null } }
                     ]
                 },
-                {
-                    $set: {
-                        manualRouteId: null,
-                        manualBusId: null,
-                        approvedPlanType: null,
-                        manualAllocation: null,
-                        assignedVehicle: null,
-                        assignedRoute: null,
-                        allocatedBus: null,
-                        allocationStatus: "Unallocated"
+                [
+                    {
+                        $set: {
+                            manualRouteId: null,
+                            manualBusId: null,
+                            manualAllocation: null,
+                            "allocatedBus.inward": {
+                                $cond: [
+                                    { $in: ["$allocatedBus.inward.planType", ["MANUAL", "ADMIN"]] },
+                                    null,
+                                    "$allocatedBus.inward"
+                                ]
+                            },
+                            "allocatedBus.outward": {
+                                $cond: [
+                                    { $in: ["$allocatedBus.outward.planType", ["MANUAL", "ADMIN"]] },
+                                    null,
+                                    "$allocatedBus.outward"
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        $set: {
+                            "allocatedBus.isAllocated": {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
+                            },
+                            "allocatedBus.direction": {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "INWARD",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "OUTWARD",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            assignedVehicle: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.vehicleName", "$allocatedBus.inward.vehicleNumber"] },
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            { $ifNull: ["$allocatedBus.outward.vehicleName", "$allocatedBus.outward.vehicleNumber"] },
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            assignedRoute: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.routeCode", "$allocatedBus.inward.routeName"] },
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            { $ifNull: ["$allocatedBus.outward.routeCode", "$allocatedBus.outward.routeName"] },
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            approvedPlanType: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.planType", "AI"] },
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            { $ifNull: ["$allocatedBus.outward.planType", "AI"] },
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            allocationStatus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "Assigned",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$travelStatus", "Coming"] },
+                                            "Unallocated",
+                                            "Not Assigned"
+                                        ]
+                                    }
+                                ]
+                            },
+                            allocatedBus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "$allocatedBus",
+                                    null
+                                ]
+                            }
+                        }
                     }
-                }
+                ]
             ).then((res) => {
-                console.log(`[RESET] manual users: ${Date.now() - tUsersStart} ms (modified: ${res.modifiedCount})`);
+                console.log(`[RESET] global manual users: ${Date.now() - tUsersStart} ms (modified: ${res.modifiedCount})`);
                 return res;
             });
         } else if (targetDirection === "INWARD") {

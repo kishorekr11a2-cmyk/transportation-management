@@ -539,7 +539,8 @@ export const approveManualPlan = async (req, res) => {
 
         const plan = await buildManualTransportationPlan({
             direction: canonicalDirection,
-            allocationMode: "MANUAL"
+            allocationMode: "MANUAL",
+            forceAllocate: true
         });
 
         if (!plan.buses || plan.buses.length === 0) {
@@ -580,31 +581,58 @@ export const approveManualPlan = async (req, res) => {
 
 export const resetManualPlan = async (req, res) => {
     try {
-        const direction = req.body.direction || req.query.direction || null;
+        const direction = req.body?.direction || req.query?.direction || null;
         const canonicalDirection = direction ? ((String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD") : null;
+        
         const result = await resetGeneratedAIRoute({ direction: canonicalDirection, planType: "MANUAL" });
 
-        if (mongoose.connection?.db && canonicalDirection) {
-            await mongoose.connection.db.collection("manual_plan_submissions").deleteOne({
+        if (mongoose.connection?.db) {
+            const dirQuery = canonicalDirection ? {
                 $or: [
                     { direction: canonicalDirection },
-                    { direction: canonicalDirection.toLowerCase() }
+                    { direction: canonicalDirection.toLowerCase() },
+                    { direction: new RegExp(`^${canonicalDirection}$`, "i") }
                 ]
-            });
-            await Route.updateMany(
-                {
-                    $or: [
-                        { direction: canonicalDirection },
-                        { direction: canonicalDirection.toLowerCase() }
-                    ]
-                },
-                { $set: { isSubmitted: false } }
-            );
+            } : {};
+
+            const selPlanDirQuery = canonicalDirection ? {
+                $or: [
+                    { direction: canonicalDirection },
+                    { tripMode: canonicalDirection },
+                    { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                    { "plan.direction": canonicalDirection },
+                    { "plan.tripMode": canonicalDirection }
+                ]
+            } : {};
+
+            await Promise.allSettled([
+                mongoose.connection.db.collection("manual_plan_submissions").deleteMany(dirQuery),
+                Route.updateMany(dirQuery, { $set: { isSubmitted: false } }),
+                mongoose.connection.db.collection("late_response_drafts").deleteMany(dirQuery),
+                mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                    {
+                        planType: { $in: ["ADMIN", "MANUAL"] },
+                        ...selPlanDirQuery
+                    },
+                    {
+                        $set: {
+                            active: false,
+                            status: "reset",
+                            approved: false,
+                            resetAt: new Date(),
+                            requiresReview: false,
+                            hasLateResponses: false,
+                            pendingReallocation: false,
+                            affectedDirections: []
+                        }
+                    }
+                )
+            ]);
         }
 
         res.json({
             success: true,
-            message: `Manual ${canonicalDirection || "all"} transportation plan reset successfully. Student travel responses remain preserved.`,
+            message: "Admin Manual Route Plan reset successfully.",
             direction: canonicalDirection,
             result
         });

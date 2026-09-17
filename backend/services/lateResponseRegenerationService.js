@@ -284,7 +284,20 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
 
     // 8. Clone existing routes to prepare proposed continuous routes
     const proposedRoutes = existingBuses.map((bus, idx) => {
-        const existingUsers = Array.isArray(bus.users) ? [...bus.users] : [];
+        const rawExistingUsers = bus.users || bus.allocatedStudents || bus.passengers || [];
+        const existingUsers = rawExistingUsers
+            .map((u) => (typeof u === "string" ? u : String(u.userId || u._id || u.id || "")))
+            .filter(Boolean);
+        const existingAllocatedStudents = (Array.isArray(bus.allocatedStudents) ? bus.allocatedStudents : []).map((st, sIdx) => ({
+            userId: typeof st === "string" ? st : String(st.userId || st._id || st.id || ""),
+            name: typeof st === "object" ? (st.name || "") : "",
+            seatNumber: (typeof st === "object" && st.seatNumber) ? Number(st.seatNumber) : (sIdx + 1)
+        }));
+        if (existingAllocatedStudents.length === 0 && existingUsers.length > 0) {
+            existingUsers.forEach((uId, uIdx) => {
+                existingAllocatedStudents.push({ userId: uId, seatNumber: uIdx + 1 });
+            });
+        }
         const existingCapacity = Number(bus.capacity) || 70;
         const currentAssignedCount = existingUsers.length;
         const currentStops = (bus.stops || []).map((s, sIdx) => ({
@@ -311,6 +324,7 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
             remainingSeats: Math.max(0, existingCapacity - currentAssignedCount),
             stops: currentStops,
             users: existingUsers,
+            allocatedStudents: existingAllocatedStudents,
             newStopsAdded: [],
             newLateStudentsAccommodated: 0,
             roadDistanceKm: Number(bus.routeDistanceKm || bus.roadDistanceKm || 0),
@@ -376,14 +390,23 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                 targetStop.newLateStudentsCount += stopGroup.count;
                 stopGroup.students.forEach((st) => {
                     const sId = String(st.userId || st._id);
+                    targetRoute.assignedUsers++;
+                    const assignedSeatNumber = targetRoute.assignedUsers;
                     targetStop.userIds.push(sId);
                     targetRoute.users.push(sId);
+                    if (!Array.isArray(targetRoute.allocatedStudents)) targetRoute.allocatedStudents = [];
+                    targetRoute.allocatedStudents.push({
+                        userId: sId,
+                        name: st.name || "",
+                        seatNumber: assignedSeatNumber
+                    });
                     accommodatedStudents.push({
                         studentId: sId,
                         studentName: st.name,
                         stoppingArea: stopName,
                         assignedRouteCode: targetRoute.routeCode,
                         assignedVehicleName: targetRoute.vehicleName,
+                        seatNumber: assignedSeatNumber,
                         integrationType: "EXISTING_STOP_ACCOMMODATION"
                     });
                 });
@@ -430,19 +453,27 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
 
                 stopGroup.students.forEach((st) => {
                     const sId = String(st.userId || st._id);
+                    targetRoute.assignedUsers++;
+                    const assignedSeatNumber = targetRoute.assignedUsers;
                     targetRoute.users.push(sId);
+                    if (!Array.isArray(targetRoute.allocatedStudents)) targetRoute.allocatedStudents = [];
+                    targetRoute.allocatedStudents.push({
+                        userId: sId,
+                        name: st.name || "",
+                        seatNumber: assignedSeatNumber
+                    });
                     accommodatedStudents.push({
                         studentId: sId,
                         studentName: st.name,
                         stoppingArea: stopName,
                         assignedRouteCode: targetRoute.routeCode,
                         assignedVehicleName: targetRoute.vehicleName,
+                        seatNumber: assignedSeatNumber,
                         integrationType: "NEW_STOP_INSERTION"
                     });
                 });
             }
 
-            targetRoute.assignedUsers += stopGroup.count;
             targetRoute.remainingSeats = Math.max(0, targetRoute.capacity - targetRoute.assignedUsers);
             targetRoute.newLateStudentsAccommodated += stopGroup.count;
             assignedToRoute = true;
@@ -501,18 +532,26 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
 
                     stopGroup.students.forEach((st) => {
                         const sId = String(st.userId || st._id);
+                        targetRoute.assignedUsers++;
+                        const assignedSeatNumber = targetRoute.assignedUsers;
                         targetRoute.users.push(sId);
+                        if (!Array.isArray(targetRoute.allocatedStudents)) targetRoute.allocatedStudents = [];
+                        targetRoute.allocatedStudents.push({
+                            userId: sId,
+                            name: st.name || "",
+                            seatNumber: assignedSeatNumber
+                        });
                         accommodatedStudents.push({
                             studentId: sId,
                             studentName: st.name,
                             stoppingArea: stopName,
                             assignedRouteCode: targetRoute.routeCode,
                             assignedVehicleName: targetRoute.vehicleName,
+                            seatNumber: assignedSeatNumber,
                             integrationType: "VEHICLE_UPGRADE_ACCOMMODATION"
                         });
                     });
 
-                    targetRoute.assignedUsers += stopGroup.count;
                     targetRoute.remainingSeats = Math.max(0, targetRoute.capacity - targetRoute.assignedUsers);
                     targetRoute.newLateStudentsAccommodated += stopGroup.count;
                     assignedToRoute = true;
@@ -526,6 +565,12 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
             const newRouteNumber = proposedRoutes.length + 1;
             const newRouteCode = `R-${String(newRouteNumber).padStart(2, "0")}`;
             const newRouteName = `${newRouteCode}: ${newVeh.vehicleName}`;
+
+            const newAllocatedStudents = stopGroup.students.map((st, sIdx) => ({
+                userId: String(st.userId || st._id),
+                name: st.name || "",
+                seatNumber: sIdx + 1
+            }));
 
             const newRouteObj = {
                 routeNumber: newRouteNumber,
@@ -551,6 +596,7 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                     }
                 ],
                 users: stopGroup.students.map((st) => String(st.userId || st._id)),
+                allocatedStudents: newAllocatedStudents,
                 newStopsAdded: [stopName],
                 newLateStudentsAccommodated: stopGroup.count,
                 isNewRoute: true,
@@ -562,7 +608,7 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                 currentRouteSummary: null
             };
 
-            stopGroup.students.forEach((st) => {
+            stopGroup.students.forEach((st, sIdx) => {
                 const sId = String(st.userId || st._id);
                 accommodatedStudents.push({
                     studentId: sId,
@@ -570,6 +616,7 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                     stoppingArea: stopName,
                     assignedRouteCode: newRouteCode,
                     assignedVehicleName: newVeh.vehicleName,
+                    seatNumber: sIdx + 1,
                     integrationType: "NEW_ROUTE_FORMATION"
                 });
             });
@@ -687,6 +734,17 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         approvedAt: activePlanRecord.approvedAt
     };
 
+    // Ensure allocatedUserIds array is on each route and draftDoc
+    const allAllocatedUserIds = new Set();
+    proposedRoutes.forEach((r) => {
+        (r.users || []).forEach((u) => allAllocatedUserIds.add(String(u)));
+        (r.allocatedStudents || []).forEach((s) => allAllocatedUserIds.add(String(s.userId || s)));
+        r.allocatedUserIds = Array.from(new Set([
+            ...(r.users || []).map(String),
+            ...(r.allocatedStudents || []).map((s) => String(s.userId || s))
+        ]));
+    });
+
     // 12. Persist to late_response_drafts (Review-Only Draft Storage)
     const draftDoc = {
         direction: canonicalDirection,
@@ -704,6 +762,7 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         buses: proposedRoutes, // compatibility with persistPlanToUsers
         accommodatedStudents,
         standbyStudents,
+        allocatedUserIds: Array.from(allAllocatedUserIds),
         lateStudentsCount: lateStudents.length
     };
 
@@ -872,9 +931,254 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         console.warn("AiPlan update warning on draft approval:", aiErr.message);
     }
 
-    // Resolve previous late responses using shared lifecycle helper
+    // 5. Extract all allocated userIds from the draft buses BEFORE resolving late responses.
+    //    This is the source of truth: only students whose userId appears in a bus.users[] array
+    //    OR stop.userIds[] array in the draft are considered actually allocated.
+    const rawAllocatedIds = new Set();
+    const allocatedIdVariants = new Set();
+    const allocatedStudentInfoMap = new Map();
+
+    const draftBuses = draft.buses || draft.routes || [];
+    for (const bus of draftBuses) {
+        const busVehicle = bus.vehicleName || bus.vehicleNumber || "Assigned Bus";
+        const busRoute = bus.routeCode || bus.routeName || "Assigned Route";
+
+        // Index allocatedStudents with seat numbers
+        if (Array.isArray(bus.allocatedStudents)) {
+            bus.allocatedStudents.forEach((st, sIdx) => {
+                const sId = typeof st === "string" ? st : (st.userId || st._id || st.id || "");
+                const seatNo = (typeof st === "object" && st.seatNumber) ? Number(st.seatNumber) : (sIdx + 1);
+                if (sId) {
+                    rawAllocatedIds.add(String(sId));
+                    allocatedIdVariants.add(String(sId));
+                    allocatedIdVariants.add(String(sId).toLowerCase().trim());
+                    allocatedIdVariants.add(String(sId).toUpperCase().trim());
+                    allocatedStudentInfoMap.set(String(sId).toLowerCase().trim(), {
+                        vehicleName: busVehicle,
+                        routeCode: busRoute,
+                        seatNumber: seatNo
+                    });
+                }
+            });
+        }
+
+        // Index users
+        const busUsers = bus.users || bus.passengers || [];
+        busUsers.forEach((u, uIdx) => {
+            const uid = typeof u === "string" ? u : (u.userId || u._id || u.id || "");
+            if (uid) {
+                rawAllocatedIds.add(String(uid));
+                allocatedIdVariants.add(String(uid));
+                allocatedIdVariants.add(String(uid).toLowerCase().trim());
+                allocatedIdVariants.add(String(uid).toUpperCase().trim());
+                if (!allocatedStudentInfoMap.has(String(uid).toLowerCase().trim())) {
+                    allocatedStudentInfoMap.set(String(uid).toLowerCase().trim(), {
+                        vehicleName: busVehicle,
+                        routeCode: busRoute,
+                        seatNumber: uIdx + 1
+                    });
+                }
+            }
+        });
+
+        // Index stops
+        const stops = bus.stops || [];
+        for (const st of stops) {
+            for (const uid of (st.userIds || [])) {
+                if (uid) {
+                    rawAllocatedIds.add(String(uid));
+                    allocatedIdVariants.add(String(uid));
+                    allocatedIdVariants.add(String(uid).toLowerCase().trim());
+                    allocatedIdVariants.add(String(uid).toUpperCase().trim());
+                }
+            }
+        }
+    }
+
+    // Also collect standby user IDs so we can leave their late-response records intact
+    const standbyUserIds = new Set(
+        (draft.standbyStudents || []).map((s) => String(s.studentId || "").toLowerCase().trim()).filter(Boolean)
+    );
+
+    console.log(`[LATE RESPONSE APPROVAL] Direction: ${canonicalDirection} | Allocated: ${allocatedStudentInfoMap.size} | Standby: ${standbyUserIds.size}`);
+
+    // Determine effectivePlanType from prevPlan or draft summary
+    const isManualOriginal = prevPlan?.planType === "MANUAL" || prevPlan?.planType === "ADMIN" || draft?.currentPlanSummary?.planType === "MANUAL";
+    const effectivePlanType = isManualOriginal ? "MANUAL" : "AI";
+
+    // 6. Persist allocations to student records FIRST — this is what actually writes
+    //    bus/route/seat info to User documents. Must run BEFORE resolving late responses.
+    await persistPlanToUsers(
+        sanitizedPlan,
+        canonicalDirection,
+        draft.sourceHub || null,
+        draft.destinationHub || null,
+        effectivePlanType,
+        isManualOriginal ? "MANUAL" : "AI"
+    );
+
+    // If original plan was manual, also keep manual_plan_submissions in sync
+    if (isManualOriginal && mongoose.connection.db) {
+        try {
+            await mongoose.connection.db.collection("manual_plan_submissions").updateMany(
+                {
+                    $or: [
+                        { direction: canonicalDirection },
+                        { direction: canonicalDirection.toLowerCase() }
+                    ]
+                },
+                {
+                    $set: {
+                        isSubmitted: true,
+                        plan: sanitizedPlan,
+                        updatedAt: approvalTime
+                    }
+                }
+            );
+        } catch (mSubErr) {
+            console.warn("manual_plan_submissions sync warning:", mSubErr.message);
+        }
+    }
+
+    // 7. Verify actual student allocations in the database and resolve late responses
+    const now = new Date();
+    const idVariantsList = Array.from(allocatedIdVariants);
+    const objIdList = idVariantsList
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+    let allocatedStudentsCount = 0;
+
+    if (idVariantsList.length > 0) {
+        const matchedUsers = await User.find({
+            role: "student",
+            $or: [
+                { userId: { $in: idVariantsList } },
+                { _id: { $in: objIdList } }
+            ]
+        }).lean();
+
+        for (const u of matchedUsers) {
+            const uIdLower = String(u.userId || "").toLowerCase().trim();
+            const alloc = u.allocatedBus;
+            const dirKey = canonicalDirection.toLowerCase();
+            const isCurrentDirAllocated = Boolean(
+                (alloc && alloc.isAllocated && (alloc.approved === true || alloc.adminApprovalStatus === "Approved")) ||
+                (alloc && alloc[dirKey] && alloc[dirKey].isAllocated && (alloc[dirKey].approved === true || alloc[dirKey].adminApprovalStatus === "Approved")) ||
+                allocatedStudentInfoMap.has(uIdLower)
+            );
+
+            if (isCurrentDirAllocated) {
+                allocatedStudentsCount++;
+
+                const currentAffected = (Array.isArray(u.affectedDirections) ? u.affectedDirections : [])
+                    .map((d) => String(d).toUpperCase().trim());
+                const nextAffected = currentAffected.filter((d) => d !== canonicalDirection);
+                const isFullyAllocated = nextAffected.length === 0;
+
+                const studentInfo = allocatedStudentInfoMap.get(uIdLower) || {};
+                const assignedVehicle = alloc?.[dirKey]?.vehicleName || alloc?.vehicleName || u.assignedVehicle || studentInfo.vehicleName || "Assigned Bus";
+                const assignedRoute = alloc?.[dirKey]?.routeCode || alloc?.routeCode || u.assignedRoute || studentInfo.routeCode || "Assigned Route";
+                const assignedSeat = alloc?.[dirKey]?.seatNumber || alloc?.seatNumber || studentInfo.seatNumber ? Number(alloc?.[dirKey]?.seatNumber || alloc?.seatNumber || studentInfo.seatNumber) : 1;
+
+                const userUpdate = {
+                    requiresReallocation: !isFullyAllocated,
+                    affectedDirections: nextAffected,
+                    lateResponseDetected: !isFullyAllocated,
+                    lateResponse: !isFullyAllocated,
+                    isLateResponse: !isFullyAllocated,
+                    lateResponseResolvedAt: now,
+                    isAllocated: true,
+                    isUnallocated: false,
+                    allocationStatus: "Assigned",
+                    assignedVehicle,
+                    assignedRoute
+                };
+                if (!alloc || !alloc.isAllocated) {
+                    userUpdate.allocatedBus = {
+                        isAllocated: true,
+                        approved: true,
+                        allocationStatus: "Assigned",
+                        adminApprovalStatus: "Approved",
+                        vehicleName: assignedVehicle,
+                        vehicleNumber: assignedVehicle,
+                        routeCode: assignedRoute,
+                        seatNumber: assignedSeat,
+                        direction: canonicalDirection
+                    };
+                }
+                if (isFullyAllocated) {
+                    userUpdate.lateResponseAt = null;
+                }
+
+                await User.updateOne({ _id: u._id }, { $set: userUpdate });
+
+                // Resolve LateResponseEvent for this student and direction
+
+                const uIds = [u.userId, String(u._id), u.userId.toLowerCase(), u.userId.toUpperCase()];
+                try {
+                    await LateResponseEvent.updateMany(
+                        {
+                            userId: { $in: uIds },
+                            $or: [
+                                { direction: canonicalDirection },
+                                { direction: null },
+                                { direction: "" }
+                            ],
+                            status: { $nin: ["RESOLVED", "ALLOCATED"] }
+                        },
+                        {
+                            $set: {
+                                status: "RESOLVED",
+                                resolvedAt: now,
+                                resolutionReason: `Allocated via regenerated ${canonicalDirection} plan v${planVersion}`,
+                                allocatedBus: assignedVehicle,
+                                allocatedRoute: assignedRoute,
+                                allocatedSeat: assignedSeat,
+                                direction: canonicalDirection,
+                                updatedAt: now
+                            }
+                        }
+                    );
+                } catch (lreErr) {
+                    console.error("[LATE RESPONSE RESOLVED] LateResponseEvent update error:", lreErr.message);
+                }
+            }
+        }
+        console.log(`[LATE RESPONSE RESOLVED] Verified allocation & resolved late response for ${allocatedStudentsCount} student(s) (${canonicalDirection})`);
+    }
+
+    // 8. For standby students — keep their LateResponseEvent ACTIVE and log the reason
+    for (const standby of (draft.standbyStudents || [])) {
+        const sId = String(standby.studentId || "").trim();
+        if (sId) {
+            const sIds = [sId, sId.toLowerCase(), sId.toUpperCase()];
+            try {
+                await LateResponseEvent.updateMany(
+                    {
+                        userId: { $in: sIds },
+                        status: { $nin: ["RESOLVED", "ALLOCATED"] }
+                    },
+                    {
+                        $set: {
+                            status: "ACTIVE",
+                            unallocatedReason: standby.reason || "FLEET_CAPACITY_LIMIT",
+                            metadata: { standby: true, reason: standby.reason || "FLEET_CAPACITY_LIMIT" },
+                            updatedAt: now
+                        }
+                    }
+                );
+            } catch (sbErr) {
+                console.warn("[LATE RESPONSE STANDBY] Update error:", sbErr.message);
+            }
+            console.log(`[LATE RESPONSE STANDBY] ${sId} remains on standby (Reason: ${standby.reason || "FLEET_CAPACITY_LIMIT"})`);
+        }
+    }
+
+    // 9. Run the shared lifecycle resolver for any remaining active events by allocated users.
     try {
         await resolveLateResponsesForPreviousPlan({
+            allocatedUserIds: allocatedIdVariants,
             direction: canonicalDirection,
             newPlanVersion: planVersion,
             newApprovalEventId: approvalEventId
@@ -883,69 +1187,17 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         console.warn("resolveLateResponsesForPreviousPlan warning on draft approval:", rErr.message);
     }
 
-    // 5. Persist allocations to student records and update Student Dashboard
-    await persistPlanToUsers(
-        sanitizedPlan,
-        canonicalDirection,
-        draft.sourceHub || null,
-        draft.destinationHub || null,
-        "AI_REGENERATED"
-    );
-
-    // 6. Resolve LateResponseEvent records for this direction — mark as ALLOCATED
-    // This completes the late-response lifecycle: DETECTED → NOTIFIED → ALLOCATED
-    try {
-        const lreResult = await mongoose.connection.db.collection("lateresponseevents").updateMany(
-            {
-                direction: canonicalDirection,
-                status: { $nin: ["RESOLVED", "ALLOCATED"] }
-            },
-            {
-                $set: {
-                    status: "ALLOCATED",
-                    resolvedAt: new Date(),
-                    updatedAt: new Date()
-                }
-            }
-        );
-        console.log(`[LATE RESPONSE RESOLVED] Approved regenerated plan — resolved ${lreResult.modifiedCount} LateResponseEvent(s) for ${canonicalDirection}`);
-    } catch (lreErr) {
-        console.error("[LATE RESPONSE RESOLVED] LateResponseEvent update error on approval:", lreErr.message);
-    }
-
-    // 7. Clear late-response flags from User records for students now allocated in this direction
-    try {
-        await mongoose.connection.db.collection("users").updateMany(
-            {
-                role: "student",
-                travelStatus: "Coming",
-                affectedDirections: canonicalDirection
-            },
-            {
-                $set: {
-                    requiresReallocation: false,
-                    lateResponseDetected: false,
-                    lateResponseAt: null,
-                    lateResponseResolvedAt: new Date()
-                },
-                $pull: {
-                    affectedDirections: canonicalDirection
-                }
-            }
-        );
-    } catch (uErr) {
-        console.error("[LATE RESPONSE RESOLVED] User flag clearing error on approval:", uErr.message);
-    }
-
-    // 8. Delete draft from late_response_drafts
+    // 10. Delete draft from late_response_drafts
     await mongoose.connection.db.collection("late_response_drafts").deleteMany({
         direction: canonicalDirection
     });
 
     return {
         success: true,
-        message: `✓ ${canonicalDirection} Regenerated Transportation Plan approved! Student bus & seat allocations are published and live.`,
-        plan: approvedDoc
+        message: `✓ ${canonicalDirection} Regenerated Transportation Plan approved! ${allocatedStudentsCount} student(s) allocated. ${standbyUserIds.size > 0 ? `${standbyUserIds.size} on standby.` : ""}`,
+        plan: approvedDoc,
+        allocatedCount: allocatedStudentsCount,
+        standbyCount: standbyUserIds.size
     };
 };
 
