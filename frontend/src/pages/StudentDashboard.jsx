@@ -6,14 +6,7 @@ import "../css/StudentDashboard.css";
 
 const StudentDashboard = () => {
     const navigate = useNavigate();
-    const [student, setStudent] = useState(() => {
-        try {
-            const raw = sessionStorage.getItem("user") || localStorage.getItem("student_user") || localStorage.getItem("user");
-            return raw ? JSON.parse(raw) : null;
-        } catch {
-            return null;
-        }
-    });
+    const [student, setStudent] = useState(null);
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
     const [submittingStatus, setSubmittingStatus] = useState(null);

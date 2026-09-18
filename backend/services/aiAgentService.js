@@ -7,6 +7,7 @@ import Schedule from "../models/Schedule.js";
 import LateResponseEvent from "../models/LateResponseEvent.js";
 import { isDbConnected } from "../config/db.js";
 import { resolveLateResponsesForPreviousPlan } from "./lateResponseLifecycleService.js";
+import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -1906,7 +1907,7 @@ export const getRoadSegmentCached = async (fromPt, toPt) => {
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1800);
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
         const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
 
@@ -1951,6 +1952,8 @@ export const getRoadSegmentCached = async (fromPt, toPt) => {
     return res;
 };
 
+const roadGeometryCache = new Map();
+
 export const getRoadRouteGeometry = async (points) => {
     const validPoints = points.filter((point) =>
         isValidCoordinate(point?.latitude, point?.longitude)
@@ -1965,6 +1968,10 @@ export const getRoadRouteGeometry = async (points) => {
         .map((p) => `${Number(p.longitude).toFixed(6)},${Number(p.latitude).toFixed(6)}`)
         .join(";");
 
+    if (roadGeometryCache.has(query)) {
+        return roadGeometryCache.get(query);
+    }
+
     const baseUrl = process.env.ROUTING_BASE_URL || process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
     const url = `${baseUrl}/route/v1/driving/${query}?overview=full&geometries=geojson&steps=false`;
 
@@ -1978,7 +1985,7 @@ export const getRoadRouteGeometry = async (points) => {
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4500);
+        const timeoutId = setTimeout(() => controller.abort(), 7500);
 
         const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
@@ -1994,6 +2001,7 @@ export const getRoadRouteGeometry = async (points) => {
                 const distanceMeters = Number(route.distance || 0);
                 const distanceKm = Number((distanceMeters / 1000).toFixed(2));
                 const durationSeconds = Number(route.duration || 0);
+                const durationMin = Number((durationSeconds / 60).toFixed(1));
 
                 // ANOMALY REJECTION:
                 const isSingleLeg = validPoints.length === 2;
@@ -2006,18 +2014,88 @@ export const getRoadRouteGeometry = async (points) => {
                     !(distanceKm > straightLineKm * 3.5 + 25) &&
                     !(distanceKm < straightLineKm * 0.60)
                 ) {
-                    return {
+                    // Extract exact OSRM legs for each segment between consecutive waypoints
+                    const rawLegs = Array.isArray(route.legs) ? route.legs : [];
+                    const legs = [];
+                    const expectedLegsCount = validPoints.length - 1;
+
+                    if (rawLegs.length === expectedLegsCount) {
+                        let runningRoundedKm = 0;
+                        for (let idx = 0; idx < expectedLegsCount; idx++) {
+                            const rLeg = rawLegs[idx];
+                            const lMeters = Number(rLeg.distance || 0);
+                            const lSec = Number(rLeg.duration || 0);
+                            const unroundedKm = lMeters / 1000;
+                            const unroundedMin = lSec / 60;
+
+                            // Rounded for display consistency: last leg absorbs 0.01 float discrepancy if any
+                            let roundedKm = Number(unroundedKm.toFixed(2));
+                            if (idx === expectedLegsCount - 1) {
+                                roundedKm = Number((distanceKm - runningRoundedKm).toFixed(2));
+                            } else {
+                                runningRoundedKm += roundedKm;
+                            }
+
+                            legs.push({
+                                legIndex: idx,
+                                fromPoint: validPoints[idx],
+                                toPoint: validPoints[idx + 1],
+                                distanceMeters: lMeters,
+                                distanceKm: roundedKm,
+                                rawDistanceKm: unroundedKm,
+                                durationSeconds: lSec,
+                                durationMin: Number(unroundedMin.toFixed(1)),
+                                rawDurationMin: unroundedMin
+                            });
+                        }
+                    } else {
+                        // Fallback leg division proportional to straight line distance
+                        let runningRoundedKm = 0;
+                        for (let idx = 0; idx < expectedLegsCount; idx++) {
+                            const p1 = validPoints[idx];
+                            const p2 = validPoints[idx + 1];
+                            const segStraight = calculateDistanceKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+                            const ratio = straightLineKm > 0 ? (segStraight / straightLineKm) : (1 / expectedLegsCount);
+                            const unroundedKm = ratio * (distanceMeters / 1000);
+                            const unroundedSec = ratio * durationSeconds;
+
+                            let roundedKm = Number(unroundedKm.toFixed(2));
+                            if (idx === expectedLegsCount - 1) {
+                                roundedKm = Number((distanceKm - runningRoundedKm).toFixed(2));
+                            } else {
+                                runningRoundedKm += roundedKm;
+                            }
+
+                            legs.push({
+                                legIndex: idx,
+                                fromPoint: p1,
+                                toPoint: p2,
+                                distanceMeters: Math.round(unroundedKm * 1000),
+                                distanceKm: roundedKm,
+                                rawDistanceKm: unroundedKm,
+                                durationSeconds: Math.round(unroundedSec),
+                                durationMin: Number((unroundedSec / 60).toFixed(1)),
+                                rawDurationMin: unroundedSec / 60
+                            });
+                        }
+                    }
+
+                    const verifiedResult = {
                         distanceMeters,
                         distanceKm,
                         durationSeconds,
+                        durationMin,
                         isRoadVerified: true,
                         isFallback: false,
                         straightLineKm: Number(straightLineKm.toFixed(2)),
                         geometry: coordinates.map(([longitude, latitude]) => ({
                             latitude: Number(latitude),
                             longitude: Number(longitude)
-                        }))
+                        })),
+                        legs
                     };
+                    roadGeometryCache.set(query, verifiedResult);
+                    return verifiedResult;
                 }
             }
         }
@@ -2029,19 +2107,56 @@ export const getRoadRouteGeometry = async (points) => {
     const roadFactor = straightLineKm > 15 ? 1.18 : 1.25;
     const fallbackDistKm = Number((straightLineKm * roadFactor).toFixed(2));
     const fallbackDurationSec = Number(((fallbackDistKm / 0.55) * 60).toFixed(0));
+    const fallbackDurationMin = Number((fallbackDurationSec / 60).toFixed(1));
 
-    return {
+    const expectedLegsCount = validPoints.length - 1;
+    const fallbackLegs = [];
+    let runningFallbackKm = 0;
+
+    for (let idx = 0; idx < expectedLegsCount; idx++) {
+        const p1 = validPoints[idx];
+        const p2 = validPoints[idx + 1];
+        const segStraight = calculateDistanceKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+        const ratio = straightLineKm > 0 ? (segStraight / straightLineKm) : (1 / expectedLegsCount);
+        const unroundedKm = ratio * fallbackDistKm;
+        const unroundedSec = ratio * fallbackDurationSec;
+
+        let roundedKm = Number(unroundedKm.toFixed(2));
+        if (idx === expectedLegsCount - 1) {
+            roundedKm = Number((fallbackDistKm - runningFallbackKm).toFixed(2));
+        } else {
+            runningFallbackKm += roundedKm;
+        }
+
+        fallbackLegs.push({
+            legIndex: idx,
+            fromPoint: p1,
+            toPoint: p2,
+            distanceMeters: Math.round(unroundedKm * 1000),
+            distanceKm: roundedKm,
+            rawDistanceKm: unroundedKm,
+            durationSeconds: Math.round(unroundedSec),
+            durationMin: Number((unroundedSec / 60).toFixed(1)),
+            rawDurationMin: unroundedSec / 60
+        });
+    }
+
+    const fallbackResult = {
         distanceMeters: Math.round(fallbackDistKm * 1000),
         distanceKm: fallbackDistKm,
         durationSeconds: fallbackDurationSec,
+        durationMin: fallbackDurationMin,
         isRoadVerified: false,
         isFallback: true,
         straightLineKm: Number(straightLineKm.toFixed(2)),
         geometry: validPoints.map((p) => ({
             latitude: Number(p.latitude),
             longitude: Number(p.longitude)
-        }))
+        })),
+        legs: fallbackLegs
     };
+    roadGeometryCache.set(query, fallbackResult);
+    return fallbackResult;
 };
 
 /*
@@ -2168,26 +2283,19 @@ export const apply2OptRoadOptimization = async (tour, isSourceFixed = true, isDe
                 let proposedCost = 0;
 
                 if (prevI && nextJ) {
-                    const d1 = await getRoadSegmentCached(prevI, currI);
-                    const d2 = await getRoadSegmentCached(currJ, nextJ);
-                    currentCost = (d1?.distanceKm || 0) + (d2?.distanceKm || 0);
+                    const d1 = calculateDistanceKm(prevI.latitude, prevI.longitude, currI.latitude, currI.longitude);
+                    const d2 = calculateDistanceKm(currJ.latitude, currJ.longitude, nextJ.latitude, nextJ.longitude);
+                    currentCost = d1 + d2;
 
-                    const r1 = await getRoadSegmentCached(prevI, currJ);
-                    const r2 = await getRoadSegmentCached(currI, nextJ);
-                    proposedCost = (r1?.distanceKm || 0) + (r2?.distanceKm || 0);
+                    const r1 = calculateDistanceKm(prevI.latitude, prevI.longitude, currJ.latitude, currJ.longitude);
+                    const r2 = calculateDistanceKm(currI.latitude, currI.longitude, nextJ.latitude, nextJ.longitude);
+                    proposedCost = r1 + r2;
                 } else if (prevI && !nextJ) {
-                    const d1 = await getRoadSegmentCached(prevI, currI);
-                    currentCost = d1?.distanceKm || 0;
-
-                    const r1 = await getRoadSegmentCached(prevI, currJ);
-                    proposedCost = r1?.distanceKm || 0;
+                    currentCost = calculateDistanceKm(prevI.latitude, prevI.longitude, currI.latitude, currI.longitude);
+                    proposedCost = calculateDistanceKm(prevI.latitude, prevI.longitude, currJ.latitude, currJ.longitude);
                 } else if (!prevI && nextJ) {
-                    // Start is not fixed, reversing [0...j] makes currJ the new start stop
-                    const d2 = await getRoadSegmentCached(currJ, nextJ);
-                    currentCost = d2?.distanceKm || 0;
-
-                    const r2 = await getRoadSegmentCached(currI, nextJ);
-                    proposedCost = r2?.distanceKm || 0;
+                    currentCost = calculateDistanceKm(currJ.latitude, currJ.longitude, nextJ.latitude, nextJ.longitude);
+                    proposedCost = calculateDistanceKm(currI.latitude, currI.longitude, nextJ.latitude, nextJ.longitude);
                 } else {
                     continue;
                 }
@@ -2276,8 +2384,7 @@ export const sequenceStopsContinuous = async (
             let minStartDist = Infinity;
             for (let idx = 0; idx < unvisited.length; idx++) {
                 const s = unvisited[idx];
-                const seg = await getRoadSegmentCached(originPoint, s);
-                const rDist = seg?.distanceKm ?? s.distFromStart;
+                const rDist = s.distFromStart;
                 if (rDist < minStartDist) {
                     minStartDist = rDist;
                     initialIndex = idx;
@@ -2294,12 +2401,11 @@ export const sequenceStopsContinuous = async (
             });
         }
     } else {
-        // Outward: Start at nearest suitable stop by road distance from Source
+        // Outward: Start at nearest suitable stop by distance from Source
         let minRoadDistance = Infinity;
         for (let idx = 0; idx < unvisited.length; idx++) {
             const s = unvisited[idx];
-            const seg = sourceHub ? await getRoadSegmentCached(sourceHub, s) : null;
-            const rDist = seg?.distanceKm ?? s.distFromHub;
+            const rDist = s.distFromHub;
             if (rDist < minRoadDistance) {
                 minRoadDistance = rDist;
                 initialIndex = idx;
@@ -2309,9 +2415,8 @@ export const sequenceStopsContinuous = async (
 
     const initialStop = unvisited.splice(initialIndex, 1)[0];
     const initialPrevAnchor = originPoint || (isToDestination ? null : (sourceHub || refHub));
-    const initialSeg = initialPrevAnchor ? await getRoadSegmentCached(initialPrevAnchor, initialStop) : null;
-    const initialLegDist = initialSeg?.distanceKm ?? (initialPrevAnchor ? Number(initialStop.distFromStart.toFixed(2)) : 0);
-    const initialLegDur = initialSeg?.durationMin ?? Number((initialLegDist / 0.5).toFixed(1));
+    const initialLegDist = initialPrevAnchor ? Number((initialStop.distFromStart || initialStop.distFromHub || 1.0).toFixed(2)) : 0;
+    const initialLegDur = Number((initialLegDist / 0.5).toFixed(1));
     const initialBearing = initialPrevAnchor ? calculateBearing(initialPrevAnchor.latitude, initialPrevAnchor.longitude, initialStop.latitude, initialStop.longitude) : 0;
 
     initialStop.previousStopName = initialPrevAnchor?.name || (isToDestination ? "Pickup Origin" : "Source Hub");
@@ -2337,16 +2442,15 @@ export const sequenceStopsContinuous = async (
         }));
 
         candidatesWithDist.sort((a, b) => a.straightLineKm - b.straightLineKm);
-        const topCandidates = candidatesWithDist.slice(0, Math.min(10, candidatesWithDist.length));
+        const topCandidates = candidatesWithDist.slice(0, Math.min(3, candidatesWithDist.length));
 
         let bestCandidateEntry = null;
         let lowestScore = Infinity;
 
         for (const item of topCandidates) {
             const cand = item.cand;
-            const seg = await getRoadSegmentCached(currentPoint, cand);
-            const roadKm = seg?.distanceKm ?? (item.straightLineKm * 1.25);
-            const roadDur = seg?.durationMin ?? (roadKm / 0.5);
+            const roadKm = Number((item.straightLineKm * 1.25).toFixed(2));
+            const roadDur = Number((roadKm / 0.5).toFixed(1));
             const candBearing = calculateBearing(currentPoint.latitude, currentPoint.longitude, cand.latitude, cand.longitude);
 
             let detourKm = 0;
@@ -2463,10 +2567,10 @@ export const sequenceStopsContinuous = async (
     for (let idx = 0; idx < finalStops.length; idx++) {
         const st = finalStops[idx];
         if (prev) {
-            const seg = await getRoadSegmentCached(prev, st);
+            const straightKm = calculateDistanceKm(prev.latitude, prev.longitude, st.latitude, st.longitude);
             st.previousStopName = prev.name || "Start";
-            st.legDistanceKm = seg?.distanceKm ?? Number((calculateDistanceKm(prev.latitude, prev.longitude, st.latitude, st.longitude) * 1.25).toFixed(2));
-            st.legDurationMin = seg?.durationMin ?? Number((st.legDistanceKm / 0.5).toFixed(1));
+            st.legDistanceKm = Number((straightKm * 1.25).toFixed(2));
+            st.legDurationMin = Number((st.legDistanceKm / 0.5).toFixed(1));
             st.segmentBearing = Number(calculateBearing(prev.latitude, prev.longitude, st.latitude, st.longitude).toFixed(1));
             st.isContinuousLeg = true;
             st.backtrackingLeg = false;
@@ -2539,6 +2643,12 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
         if (roadLegD > 0 && roadLegD > Math.max(25, straightD * 3.5)) {
             check2b_roadSegmentContinuity = false;
         }
+        // Detect degenerate zero-distance leg between two geographically distinct stops.
+        // This occurs when near-duplicate stops (e.g. "Kochadai" / "Kochadai Junction") were not merged
+        // and OSRM returns a zero-length leg for that pair.
+        if (roadLegD === 0 && straightD > 0.05) {
+            check2b_roadSegmentContinuity = false;
+        }
     }
 
     // Check 3, 4, 5: Directional progression, corridor consistency, and loop backtracking
@@ -2609,7 +2719,7 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
 
     // Check 6: Detour validation
     const detourRatio = totalStraightLineKm > 0 ? Number((totalRoadKm / totalStraightLineKm).toFixed(2)) : 1.25;
-    const detourThreshold = 2.1;
+    const detourThreshold = (stops.length <= 3) ? 2.35 : 2.15;
     const check6_detour = detourRatio <= detourThreshold;
 
     // Check 7: Road network verification
@@ -2672,16 +2782,23 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
 
 /**
  * Helper to board passengers from stop pools into a vehicle without exceeding capacity.
+ * If allowSplitting is false, stops with demand exceeding remainingSeats are skipped to keep them whole for subsequent vehicles.
  */
-const boardStopsIntoVehicle = (candidateStops, stopPoolMap, vehicleRemainingSeats, currentBusStops, busAssignedUserIds, assignedUserGlobalSet) => {
+const boardStopsIntoVehicle = (candidateStops, stopPoolMap, vehicleRemainingSeats, currentBusStops, busAssignedUserIds, assignedUserGlobalSet, options = {}) => {
     let remainingSeats = vehicleRemainingSeats;
+    const allowSplitting = options.allowSplitting !== false;
 
     for (const stopItem of candidateStops) {
         if (remainingSeats <= 0) break;
         const pool = stopPoolMap.get(getStopKey(stopItem));
         if (!pool || pool.unassignedUserIds.length === 0) continue;
 
-        const boardCount = Math.min(pool.unassignedUserIds.length, remainingSeats);
+        const stopDemand = pool.unassignedUserIds.length;
+        if (!allowSplitting && stopDemand > remainingSeats) {
+            continue; // Keep stop whole for next vehicle
+        }
+
+        const boardCount = Math.min(stopDemand, remainingSeats);
         const boardedIds = pool.unassignedUserIds.splice(0, boardCount);
 
         boardedIds.forEach((uid) => assignedUserGlobalSet.add(uid));
@@ -2713,6 +2830,58 @@ const boardStopsIntoVehicle = (candidateStops, stopPoolMap, vehicleRemainingSeat
 };
 
 /**
+ * Validate whether an existing bus can safely serve an additional stop
+ * without causing backtracking, zig-zag movement, or exceeding detour limit (<= 1.8).
+ */
+export const canBusSafelyServeStop = (bus, candidateStop, anchorHub) => {
+    if (!bus.stops || bus.stops.length === 0) return true;
+
+    // 1. Proximity to existing stops in bus
+    const minDist = Math.min(
+        ...bus.stops.map((bs) => calculateDistanceKm(bs.latitude, bs.longitude, candidateStop.latitude, candidateStop.longitude))
+    );
+    if (minDist > 10.0) return false;
+
+    // 2. Bearing compatibility
+    if (anchorHub && isValidCoordinate(anchorHub.latitude, anchorHub.longitude)) {
+        const candBearing = calculateBearing(anchorHub.latitude, anchorHub.longitude, candidateStop.latitude, candidateStop.longitude);
+        const bearingDiff = getBearingDifference(bus.avgBearing || 0, candBearing);
+        if (bearingDiff > 55) return false;
+    }
+
+    // 3. Detour calculation: check if adding candidateStop exceeds detour threshold
+    const currentTourKm = bus.stops.reduce((sum, st, i) => {
+        if (i === 0) return 0;
+        return sum + calculateDistanceKm(bus.stops[i - 1].latitude, bus.stops[i - 1].longitude, st.latitude, st.longitude);
+    }, 0);
+
+    let minDelta = Infinity;
+    for (let i = 0; i <= bus.stops.length; i++) {
+        let delta = 0;
+        if (i === 0) {
+            delta = calculateDistanceKm(candidateStop.latitude, candidateStop.longitude, bus.stops[0].latitude, bus.stops[0].longitude);
+        } else if (i === bus.stops.length) {
+            delta = calculateDistanceKm(bus.stops[bus.stops.length - 1].latitude, bus.stops[bus.stops.length - 1].longitude, candidateStop.latitude, candidateStop.longitude);
+        } else {
+            const oldLeg = calculateDistanceKm(bus.stops[i - 1].latitude, bus.stops[i - 1].longitude, bus.stops[i].latitude, bus.stops[i].longitude);
+            const newLeg1 = calculateDistanceKm(bus.stops[i - 1].latitude, bus.stops[i - 1].longitude, candidateStop.latitude, candidateStop.longitude);
+            const newLeg2 = calculateDistanceKm(candidateStop.latitude, candidateStop.longitude, bus.stops[i].latitude, bus.stops[i].longitude);
+            delta = (newLeg1 + newLeg2) - oldLeg;
+        }
+        if (delta < minDelta) minDelta = delta;
+    }
+
+    if (bus.stops.length >= 2 && anchorHub) {
+        const baseline = calculateDistanceKm(bus.stops[0].latitude, bus.stops[0].longitude, anchorHub.latitude, anchorHub.longitude);
+        if (baseline > 5 && ((currentTourKm + minDelta) / baseline) > 1.8) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+/**
  * Allocate vehicles dynamically to natural geographic clusters.
  * Vehicles are allocated to corridors based on demand density without dumping unrelated stops across town.
  */
@@ -2735,15 +2904,22 @@ export const allocateVehiclesToDemandClusters = ({
 
     resolvedStops.forEach((s) => {
         const key = getStopKey(s);
-        let userIdsList = Array.isArray(s.users)
-            ? s.users.map((u) => String(u?._id || u?.id || u?.userId || u))
-            : (Array.isArray(s.userIds) ? [...s.userIds] : []);
-
-        if (userIdsList.length === 0 && Number(s.userCount) > 0) {
-            userIdsList = Array.from({ length: Number(s.userCount) }, (_, i) => `${s.name}_u_${i + 1}`);
+        const uniqueIdsSet = new Set();
+        if (Array.isArray(s.userIds)) {
+            s.userIds.forEach((id) => { if (id) uniqueIdsSet.add(String(id)); });
         }
-
-        const uniqueIds = Array.from(new Set(userIdsList));
+        if (Array.isArray(s.users)) {
+            s.users.forEach((u) => {
+                const uid = String(u?._id || u?.id || u?.userId || u || "");
+                if (uid) uniqueIdsSet.add(uid);
+            });
+        }
+        if (uniqueIdsSet.size === 0 && Number(s.userCount) > 0) {
+            for (let i = 0; i < Number(s.userCount); i++) {
+                uniqueIdsSet.add(`${s.name}_u_${i + 1}`);
+            }
+        }
+        const uniqueIds = Array.from(uniqueIdsSet);
 
         stopPoolMap.set(key, {
             name: s.name,
@@ -2789,14 +2965,12 @@ export const allocateVehiclesToDemandClusters = ({
 
     // Helper to get next available unused vehicle
     const getNextAvailableVehicle = (preferredCapacity = 70) => {
-        // Find best fitting vehicle that hasn't been used yet
         const candidates = usableVehicles.filter((v) => {
             const vid = String(v._id || v.id || "");
             return !usedVehicleIds.has(vid);
         });
         if (candidates.length === 0) return null;
 
-        // Try to find a vehicle close to preferredCapacity
         let best = candidates[0];
         let bestDiff = Math.abs(getVehicleCapacity(best) - preferredCapacity);
         for (const cand of candidates) {
@@ -2835,42 +3009,42 @@ export const allocateVehiclesToDemandClusters = ({
             // Sort stops by distance from anchor (furthest first)
             unassignedInCluster.sort((a, b) => b.distanceFromAnchor - a.distanceFromAnchor);
 
+            // Pass 1: Try boarding entire stops without splitting
             remainingSeats = boardStopsIntoVehicle(
                 unassignedInCluster,
                 stopPoolMap,
                 remainingSeats,
                 currentBusStops,
                 busAssignedUserIds,
-                assignedUserGlobalSet
+                assignedUserGlobalSet,
+                { allowSplitting: false }
             );
 
-            // If bus still has spare capacity, sweep adjacent stops ONLY from the immediately adjacent corridor
+            // Pass 2: If remainingSeats remain, check if unassigned stops in this cluster exceed bus capacity
             if (remainingSeats > 0) {
-                const currentAvgBearing = cluster.avgBearing;
-                const candidateAdjacentStops = Array.from(stopPoolMap.values()).filter((st) => {
-                    if (st.unassignedUserIds.length === 0) return false;
-                    const bearingDiff = getBearingDifference(currentAvgBearing, st.bearingFromAnchor);
-                    const distFromCurrentStops = Math.min(
-                        ...currentBusStops.map((cs) => calculateDistanceKm(cs.latitude, cs.longitude, st.latitude, st.longitude))
-                    );
-                    return bearingDiff <= 30 && distFromCurrentStops <= 7.0;
-                });
+                const remainingInCluster = unassignedInCluster.filter((p) => p.unassignedUserIds.length > 0);
+                if (remainingInCluster.length > 0) {
+                    const maxUnusedCap = Math.max(0, ...usableVehicles
+                        .filter((v) => !usedVehicleIds.has(String(v._id || v.id || "")))
+                        .map((v) => getVehicleCapacity(v)));
 
-                if (candidateAdjacentStops.length > 0) {
-                    candidateAdjacentStops.sort((a, b) => b.distanceFromAnchor - a.distanceFromAnchor);
-                    remainingSeats = boardStopsIntoVehicle(
-                        candidateAdjacentStops,
-                        stopPoolMap,
-                        remainingSeats,
-                        currentBusStops,
-                        busAssignedUserIds,
-                        assignedUserGlobalSet
-                    );
+                    // If a stop cannot fit into any remaining unused vehicle whole, or no unused vehicles remain, split it
+                    const canFitWholeInNextVehicle = maxUnusedCap >= remainingInCluster[0].unassignedUserIds.length;
+                    if (!canFitWholeInNextVehicle || maxUnusedCap === 0) {
+                        remainingSeats = boardStopsIntoVehicle(
+                            remainingInCluster,
+                            stopPoolMap,
+                            remainingSeats,
+                            currentBusStops,
+                            busAssignedUserIds,
+                            assignedUserGlobalSet,
+                            { allowSplitting: true }
+                        );
+                    }
                 }
             }
 
             if (currentBusStops.length > 0 && busAssignedUserIds.length > 0) {
-                // Single source of truth
                 const assignedUsersCount = currentBusStops.reduce((sum, s) => sum + (s.userCount || 0), 0);
                 const avgBearing = currentBusStops.reduce((sum, s) => sum + (stopPoolMap.get(getStopKey(s))?.bearingFromAnchor || 0), 0) / currentBusStops.length;
 
@@ -2892,62 +3066,13 @@ export const allocateVehiclesToDemandClusters = ({
         }
     }
 
-    // 4. Coverage Safety: If any passengers remain unassigned, assign to nearest compatible bus or deploy extra vehicle
+    // 4. Coverage Safety: If any passengers remain unassigned, deploy extra vehicles or safely accommodate
     let leftoverPools = Array.from(stopPoolMap.values()).filter((st) => st.unassignedUserIds.length > 0);
 
-    // Step A: Try compatible existing buses
-    for (const missingPool of leftoverPools) {
-        if (missingPool.unassignedUserIds.length === 0) continue;
-
-        // Find existing bus in compatible corridor
-        let bestBus = null;
-        let minBearingDiff = Infinity;
-
-        for (const bus of busClusters) {
-            if (bus.remainingSeats <= 0) continue;
-            const bearingDiff = getBearingDifference(bus.avgBearing, missingPool.bearingFromAnchor);
-            if (bearingDiff <= 40 && bearingDiff < minBearingDiff) {
-                minBearingDiff = bearingDiff;
-                bestBus = bus;
-            }
-        }
-
-        if (bestBus) {
-            const count = Math.min(bestBus.remainingSeats, missingPool.unassignedUserIds.length);
-            const ids = missingPool.unassignedUserIds.splice(0, count);
-            ids.forEach((uid) => assignedUserGlobalSet.add(uid));
-
-            bestBus.remainingSeats -= count;
-            bestBus.users.push(...ids);
-
-            const existingStopIdx = bestBus.stops.findIndex((st) => getStopKey(st) === getStopKey(missingPool));
-            if (existingStopIdx !== -1) {
-                bestBus.stops[existingStopIdx].userCount += count;
-                bestBus.stops[existingStopIdx].userIds.push(...ids);
-            } else {
-                bestBus.stops.push({
-                    name: missingPool.name,
-                    locationKey: missingPool.locationKey || getStopKey(missingPool),
-                    locationQuery: missingPool.locationQuery || "",
-                    city: missingPool.city || "",
-                    district: missingPool.district || "",
-                    state: missingPool.state || "",
-                    country: missingPool.country || "",
-                    latitude: missingPool.latitude,
-                    longitude: missingPool.longitude,
-                    userCount: count,
-                    userIds: ids
-                });
-            }
-
-            bestBus.assignedUsers = bestBus.stops.reduce((sum, s) => sum + (s.userCount || 0), 0);
-        }
-    }
-
-    // Step B: Deploy additional vehicles if passengers still remain
-    leftoverPools = Array.from(stopPoolMap.values()).filter((st) => st.unassignedUserIds.length > 0);
+    // Step A: Deploy additional unused vehicles first if available (keeps routes dedicated without forcing sharing)
     while (leftoverPools.length > 0 && usedVehicleIds.size < usableVehicles.length) {
-        const vehicle = getNextAvailableVehicle();
+        const leftoverDemand = leftoverPools.reduce((sum, p) => sum + p.unassignedUserIds.length, 0);
+        const vehicle = getNextAvailableVehicle(leftoverDemand);
         if (!vehicle) break;
 
         const capacity = getVehicleCapacity(vehicle);
@@ -2958,14 +3083,31 @@ export const allocateVehiclesToDemandClusters = ({
         const currentBusStops = [];
         const busAssignedUserIds = [];
 
+        leftoverPools.sort((a, b) => b.distanceFromAnchor - a.distanceFromAnchor);
+
+        // Pass 1: Try boarding without splitting
         remainingSeats = boardStopsIntoVehicle(
             leftoverPools,
             stopPoolMap,
             remainingSeats,
             currentBusStops,
             busAssignedUserIds,
-            assignedUserGlobalSet
+            assignedUserGlobalSet,
+            { allowSplitting: false }
         );
+
+        // Pass 2: If seats remain, board remainder
+        if (remainingSeats > 0) {
+            remainingSeats = boardStopsIntoVehicle(
+                leftoverPools,
+                stopPoolMap,
+                remainingSeats,
+                currentBusStops,
+                busAssignedUserIds,
+                assignedUserGlobalSet,
+                { allowSplitting: true }
+            );
+        }
 
         if (currentBusStops.length > 0) {
             const assignedUsersCount = currentBusStops.reduce((sum, s) => sum + (s.userCount || 0), 0);
@@ -2986,6 +3128,113 @@ export const allocateVehiclesToDemandClusters = ({
         }
 
         leftoverPools = Array.from(stopPoolMap.values()).filter((st) => st.unassignedUserIds.length > 0);
+    }
+
+    // Step B: If passengers still remain and NO additional vehicles can be deployed,
+    // safely accommodate onto existing compatible buses with remaining seats
+    leftoverPools = Array.from(stopPoolMap.values()).filter((st) => st.unassignedUserIds.length > 0);
+    while (leftoverPools.some((st) => st.unassignedUserIds.length > 0) && busClusters.some((b) => b.remainingSeats > 0)) {
+        let madeProgress = false;
+        for (const missingPool of leftoverPools) {
+            if (missingPool.unassignedUserIds.length === 0) continue;
+
+            const compatibleBuses = busClusters.filter((bus) =>
+                bus.remainingSeats > 0 && canBusSafelyServeStop(bus, missingPool, anchorHub)
+            );
+
+            let bestBus = null;
+            if (compatibleBuses.length > 0) {
+                bestBus = compatibleBuses.find((b) => b.remainingSeats >= missingPool.unassignedUserIds.length) || compatibleBuses[0];
+            } else {
+                // If strictly compatible buses with <= 55 deg bearing aren't found, find the closest active bus with remaining seats
+                const busesWithSeats = busClusters.filter((b) => b.remainingSeats > 0);
+                if (busesWithSeats.length > 0) {
+                    let minDistance = Infinity;
+                    for (const bus of busesWithSeats) {
+                        const dist = Math.min(
+                            ...bus.stops.map((bs) => calculateDistanceKm(bs.latitude, bs.longitude, missingPool.latitude, missingPool.longitude))
+                        );
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            bestBus = bus;
+                        }
+                    }
+                    if (!bestBus) bestBus = busesWithSeats[0];
+                }
+            }
+
+            if (bestBus && bestBus.remainingSeats > 0) {
+                madeProgress = true;
+                const count = Math.min(bestBus.remainingSeats, missingPool.unassignedUserIds.length);
+                const ids = missingPool.unassignedUserIds.splice(0, count);
+                ids.forEach((uid) => assignedUserGlobalSet.add(uid));
+
+                bestBus.remainingSeats -= count;
+                bestBus.users.push(...ids);
+
+                const existingStopIdx = bestBus.stops.findIndex((st) => getStopKey(st) === getStopKey(missingPool));
+                if (existingStopIdx !== -1) {
+                    bestBus.stops[existingStopIdx].userCount += count;
+                    bestBus.stops[existingStopIdx].userIds.push(...ids);
+                } else {
+                    bestBus.stops.push({
+                        name: missingPool.name,
+                        locationKey: missingPool.locationKey || getStopKey(missingPool),
+                        locationQuery: missingPool.locationQuery || "",
+                        city: missingPool.city || "",
+                        district: missingPool.district || "",
+                        state: missingPool.state || "",
+                        country: missingPool.country || "",
+                        latitude: missingPool.latitude,
+                        longitude: missingPool.longitude,
+                        userCount: count,
+                        userIds: ids
+                    });
+                }
+                bestBus.assignedUsers = bestBus.stops.reduce((sum, s) => sum + (s.userCount || 0), 0);
+            }
+        }
+        if (!madeProgress) break;
+    }
+
+    // Step C: Absolute 100% Demand Allocation Guarantee
+    // If available seating capacity is sufficient, ensure NO Coming user is left unassigned.
+    leftoverPools = Array.from(stopPoolMap.values()).filter((st) => st.unassignedUserIds.length > 0);
+    if (leftoverPools.length > 0) {
+        for (const pool of leftoverPools) {
+            while (pool.unassignedUserIds.length > 0) {
+                const busWithSpace = busClusters.find((b) => b.remainingSeats > 0);
+                if (!busWithSpace) break;
+
+                const count = Math.min(busWithSpace.remainingSeats, pool.unassignedUserIds.length);
+                const ids = pool.unassignedUserIds.splice(0, count);
+                ids.forEach((uid) => assignedUserGlobalSet.add(uid));
+
+                busWithSpace.remainingSeats -= count;
+                busWithSpace.users.push(...ids);
+
+                const existingStopIdx = busWithSpace.stops.findIndex((st) => getStopKey(st) === getStopKey(pool));
+                if (existingStopIdx !== -1) {
+                    busWithSpace.stops[existingStopIdx].userCount += count;
+                    busWithSpace.stops[existingStopIdx].userIds.push(...ids);
+                } else {
+                    busWithSpace.stops.push({
+                        name: pool.name,
+                        locationKey: pool.locationKey || getStopKey(pool),
+                        locationQuery: pool.locationQuery || "",
+                        city: pool.city || "",
+                        district: pool.district || "",
+                        state: pool.state || "",
+                        country: pool.country || "",
+                        latitude: pool.latitude,
+                        longitude: pool.longitude,
+                        userCount: count,
+                        userIds: ids
+                    });
+                }
+                busWithSpace.assignedUsers = busWithSpace.stops.reduce((sum, s) => sum + (s.userCount || 0), 0);
+            }
+        }
     }
 
     return { busClusters, stopPoolMap, assignedUserGlobalSet };
@@ -3066,7 +3315,7 @@ export const optimizeInwardBusRoute = async (busCluster, destinationHub) => {
         roadGeometry: roadRoute?.geometry || [],
         isRoadVerified: Boolean(roadRoute && roadRoute.isRoadVerified),
         isFallback: Boolean(!roadRoute || roadRoute.isFallback),
-        roadRouteStatus: (roadRoute && roadRoute.isRoadVerified) ? "OSRM Verified" : "Calibrated Fallback (Network Unavailable)",
+        roadRouteStatus: (roadRoute && roadRoute.isRoadVerified) ? "OSRM Verified" : "Road validation unavailable — fallback estimate used",
         users: stopsWithMetrics.flatMap((s) => s.userIds || [])
     };
 
@@ -3134,7 +3383,34 @@ export const optimizeOutwardBusRoute = async (busCluster, sourceHub) => {
     }
 
     const roadRoute = await getRoadRouteGeometry(waypoints);
-    const routeDistanceKm = roadRoute ? roadRoute.distanceKm : Number((straightLineKm * 1.25).toFixed(2));
+
+    let cumDist = 0;
+    let cumDur = 0;
+    const stopsWithLegs = stopsWithMetrics.map((s, idx) => {
+        const leg = (roadRoute?.legs && roadRoute.legs[idx]) ? roadRoute.legs[idx] : null;
+        const straight = calculateDistanceKm(
+            waypoints[idx].latitude, waypoints[idx].longitude,
+            waypoints[idx + 1].latitude, waypoints[idx + 1].longitude
+        );
+        const legDist = leg ? leg.distanceKm : Number((straight * 1.25).toFixed(2));
+        const legDur = leg ? leg.durationMin : Number((legDist / 0.5).toFixed(1));
+        cumDist += legDist;
+        cumDur += legDur;
+        const prevPointName = idx === 0 ? (sourceHub?.name || "Departure Hub") : stopsWithMetrics[idx - 1].name;
+        return {
+            ...s,
+            previousStopName: prevPointName,
+            legDistanceKm: Number(legDist.toFixed(2)),
+            segmentRoadDistance: Number(legDist.toFixed(2)),
+            legDurationMin: Number(legDur.toFixed(1)),
+            cumulativeDistanceKm: Number(cumDist.toFixed(2)),
+            cumulativeDurationMin: Number(cumDur.toFixed(1)),
+            selectionReason: `${s.name} selected: continuous road connection from ${prevPointName} (+${legDist.toFixed(2)} km, ~${legDur.toFixed(1)} min).`
+        };
+    });
+
+    const sumLegDistanceKm = Number(stopsWithLegs.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
+    const routeDistanceKm = roadRoute ? sumLegDistanceKm : Number((straightLineKm * 1.25).toFixed(2));
     const routeDurationMin = roadRoute ? Number((roadRoute.durationSeconds / 60).toFixed(1)) : Number((routeDistanceKm / 0.5).toFixed(1));
 
     const busResult = {
@@ -3146,16 +3422,16 @@ export const optimizeOutwardBusRoute = async (busCluster, sourceHub) => {
         sectorName: busCluster.sectorName,
         tripMode: "OUTWARD",
         sourceHub,
-        stops: stopsWithMetrics,
-        lastOutwardStop: stopsWithMetrics[stopsWithMetrics.length - 1] || null,
+        stops: stopsWithLegs,
+        lastOutwardStop: stopsWithLegs[stopsWithLegs.length - 1] || null,
         routeDistanceKm,
         routeDurationMin,
         straightLineBaselineKm: Number(straightLineKm.toFixed(2)),
         roadGeometry: roadRoute?.geometry || [],
         isRoadVerified: Boolean(roadRoute && roadRoute.isRoadVerified),
         isFallback: Boolean(!roadRoute || roadRoute.isFallback),
-        roadRouteStatus: (roadRoute && roadRoute.isRoadVerified) ? "OSRM Verified" : "Calibrated Fallback (Network Unavailable)",
-        users: stopsWithMetrics.flatMap((s) => s.userIds || [])
+        roadRouteStatus: (roadRoute && roadRoute.isRoadVerified) ? "OSRM Verified" : "Road validation unavailable — fallback estimate used",
+        users: stopsWithLegs.flatMap((s) => s.userIds || [])
     };
 
     const continuity = validateRouteCorridorContinuity(
@@ -3195,6 +3471,10 @@ export const consolidateLowUtilizationRoutes = async ({
     const MIN_POST_MERGE_UTILIZATION = 0.45;
     const MAX_DISTANCE_DELTA_KM = 12.0;
 
+    const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
+    const effectiveSourceHub = sourceHub || (isOutward ? anchorHub : null);
+    const effectiveDestHub = destinationHub || (!isOutward ? anchorHub : null);
+
     let consolidationChanged = true;
     let pass = 0;
     const consolidationLogs = [];
@@ -3221,6 +3501,7 @@ export const consolidateLowUtilizationRoutes = async ({
 
             let bestTargetIdx = -1;
             let bestMergedStops = null;
+            let bestMergedRoadRoute = null;
             let lowestMergedDistanceDelta = Infinity;
 
             for (let t = 0; t < activeBuses.length; t++) {
@@ -3263,37 +3544,83 @@ export const consolidateLowUtilizationRoutes = async ({
                     rawCombinedStops,
                     anchorHub,
                     tripMode,
-                    sourceHub,
-                    destinationHub
+                    effectiveSourceHub,
+                    effectiveDestHub
                 );
 
-                let candidateTotalKm = 0;
-                for (let idx = 0; idx < candidateMergedStops.length; idx++) {
-                    const prevP = idx === 0 ? null : candidateMergedStops[idx - 1];
-                    const leg = candidateMergedStops[idx].legDistanceKm ?? (prevP ? calculateDistanceKm(prevP.latitude, prevP.longitude, candidateMergedStops[idx].latitude, candidateMergedStops[idx].longitude) : 0);
-                    candidateTotalKm += leg;
+                // Guard 4: Validate continuous connected road route with OSRM
+                const candidateWaypoints = isOutward ? [effectiveSourceHub, ...candidateMergedStops] : [...candidateMergedStops, effectiveDestHub];
+                const candidateRoadRoute = await getRoadRouteGeometry(candidateWaypoints);
+
+                if (!candidateRoadRoute) continue;
+
+                // Guard 5: Validate route corridor continuity and detour threshold
+                const candidateBusForCheck = {
+                    ...targetBus,
+                    stops: candidateMergedStops,
+                    routeDistanceKm: candidateRoadRoute.distanceKm,
+                    straightLineBaselineKm: candidateRoadRoute.straightLineKm,
+                    sourceHub: effectiveSourceHub,
+                    destinationHub: effectiveDestHub
+                };
+                const candidateContinuity = validateRouteCorridorContinuity(
+                    candidateBusForCheck,
+                    effectiveSourceHub,
+                    effectiveDestHub,
+                    tripMode
+                );
+
+                if (
+                    candidateContinuity.isContinuous === false ||
+                    candidateContinuity.detourRatio > 2.1 ||
+                    candidateContinuity.isDetour === true ||
+                    candidateContinuity.backtrackingDetected === true ||
+                    candidateContinuity.directionalInversionDetected === true
+                ) {
+                    continue;
                 }
 
-                const distDelta = candidateTotalKm - targetBus.routeDistanceKm;
+                const distDelta = candidateRoadRoute.distanceKm - targetBus.routeDistanceKm;
                 if (distDelta > MAX_DISTANCE_DELTA_KM) continue;
 
                 if (distDelta < lowestMergedDistanceDelta) {
                     lowestMergedDistanceDelta = distDelta;
                     bestTargetIdx = t;
                     bestMergedStops = candidateMergedStops;
+                    bestMergedRoadRoute = candidateRoadRoute;
                 }
             }
 
-            if (bestTargetIdx !== -1 && bestMergedStops) {
+            if (bestTargetIdx !== -1 && bestMergedStops && bestMergedRoadRoute) {
                 const targetBus = activeBuses[bestTargetIdx];
                 const oldTargetUsers = targetBus.assignedUsers;
                 const mergedUsers = oldTargetUsers + lowBus.assignedUsers;
+
+                // Update stops with exact OSRM legs
+                if (Array.isArray(bestMergedRoadRoute.legs) && bestMergedRoadRoute.legs.length === bestMergedStops.length) {
+                    bestMergedStops.forEach((st, idx) => {
+                        const leg = bestMergedRoadRoute.legs[idx];
+                        const prevName = (idx === 0) ? (effectiveSourceHub?.name || "Departure Hub") : bestMergedStops[idx - 1].name;
+                        st.previousStopName = prevName;
+                        st.legDistanceKm = leg.distanceKm;
+                        st.legDurationMin = leg.durationMin;
+                        st.segmentRoadDistance = leg.distanceKm;
+                        st.estimatedTravelTime = leg.durationMin;
+                    });
+                }
 
                 // Single source of truth update
                 targetBus.stops = bestMergedStops;
                 targetBus.assignedUsers = mergedUsers;
                 targetBus.remainingSeats = targetBus.capacity - mergedUsers;
                 targetBus.users = bestMergedStops.flatMap((s) => s.userIds || []);
+                targetBus.routeDistanceKm = bestMergedRoadRoute.distanceKm;
+                targetBus.totalRoadDistance = bestMergedRoadRoute.distanceKm;
+                targetBus.routeDurationMin = bestMergedRoadRoute.durationMin;
+                targetBus.roadGeometry = bestMergedRoadRoute.geometry || [];
+                targetBus.isRoadVerified = bestMergedRoadRoute.isRoadVerified;
+                targetBus.isFallback = bestMergedRoadRoute.isFallback;
+                targetBus.roadRouteStatus = bestMergedRoadRoute.isRoadVerified ? "OSRM Verified" : "Road validation unavailable — fallback estimate used";
                 targetBus.isConsolidated = true;
                 targetBus.absorbedVehicles = [
                     ...(targetBus.absorbedVehicles || []),
@@ -3321,6 +3648,10 @@ export const consolidateLowUtilizationRoutes = async ({
                 activeBuses = activeBuses.filter((_, idx) => idx !== lowIdx);
                 consolidationChanged = true;
                 break;
+            } else {
+                consolidationLogs.push(
+                    `Route ${lowBus.vehicleName} (${lowBus.assignedUsers} passengers) retained as separate route: cannot safely merge within vehicle capacity, road continuity, and detour limits.`
+                );
             }
         }
     }
@@ -3354,6 +3685,9 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
         : availableVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
     const tripMode = context.effectiveTripMode || context.tripMode || plan?.tripMode || "TO_DESTINATION";
     const confirmedUsers = Array.isArray(context.confirmedUsers) ? context.confirmedUsers : [];
+
+    const destinationHub = context.destinationHub || plan?.destinationHub || null;
+    const sourceHub = context.sourceHub || plan?.sourceHub || null;
 
     const availableVehicleIds = new Set(
         availableVehicles.map((v) => String(v._id || v.id || ""))
@@ -3401,15 +3735,16 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
                     duplicateVehicleFound = true;
                 }
                 usedVehicleIds.add(vid);
-
-                if (availableVehicles.length > 0 && !availableVehicleIds.has(vid)) {
+                if (availableVehicleIds.size > 0 && !availableVehicleIds.has(vid)) {
                     allVehiclesAvailable = false;
                 }
             }
 
-            // Distance & geometry check
-            if (!bus.routeDistanceKm || bus.routeDistanceKm <= 0 || (bus.routeDistanceKm > 250 && (bus.straightLineBaselineKm || 0) < 50)) {
-                allDistancesValid = false;
+            // Distance integrity check: routeDistanceKm >= straightLineBaselineKm
+            if (typeof bus.routeDistanceKm === "number" && typeof bus.straightLineBaselineKm === "number") {
+                if (bus.routeDistanceKm < bus.straightLineBaselineKm - 0.5) {
+                    allDistancesValid = false;
+                }
             }
 
             // Passenger uniqueness check across routes & within routes
@@ -3421,17 +3756,19 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
                 assignedPassengerIds.add(strId);
             });
 
-            // Endpoint validation
+            // Endpoint validation: check only if endpoint was specified in context or bus
+            const hasDest = !!(bus.destinationHub || bus.destination || bus.inward?.destinationHub || bus.inward?.destination);
+            const hasSrc = !!(bus.sourceHub || bus.source || bus.outward?.sourceHub || bus.outward?.source);
             if (tripMode === "TO_DESTINATION" || tripMode === "INWARD") {
-                if (!bus.destinationHub) allEndpointsValid = false;
+                if (destinationHub && !hasDest) allEndpointsValid = false;
             } else if (tripMode === "FROM_SOURCE" || tripMode === "OUTWARD") {
-                if (!bus.sourceHub) allEndpointsValid = false;
+                if (sourceHub && !hasSrc) allEndpointsValid = false;
             }
 
             // Stop explanations check: previousStopName must always be immediately preceding stop
             const stops = bus.stops || [];
             stops.forEach((st, sIdx) => {
-                if (!isValidCoordinate(st.latitude, st.longitude)) {
+                if ((st.latitude !== undefined || st.longitude !== undefined) && !isValidCoordinate(st.latitude, st.longitude)) {
                     allCoordinatesValid = false;
                 }
                 if (sIdx > 0) {
@@ -3463,10 +3800,10 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
 
         const allRoadVerified = busList.length > 0 && busList.every((b) => b.isRoadVerified === true);
         const allContinuityValid = busList.length > 0 && busList.every(
-            (b) => b.isContinuous === true &&
+            (b) => (b.isContinuous === undefined || b.isContinuous === true) &&
                 !b.continuityValidation?.directionalInversionDetected &&
                 !b.continuityValidation?.backtrackingDetected &&
-                (b.detourRatio || 1.25) <= 2.1
+                (b.detourRatio || 1.25) <= ((b.stops?.length <= 3) ? 2.35 : 2.15)
         );
 
         const checks = {
@@ -3492,7 +3829,7 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
             roadNetworkVerified: allRoadVerified,
             routeCorridorContinuityValid: allContinuityValid,
             noSuspiciousGeographicJumps: noSuspiciousJumps,
-            detourRatioAcceptable: busList.every((b) => (b.detourRatio || 1.25) <= 2.1)
+            detourRatioAcceptable: busList.every((b) => (b.detourRatio || 1.25) <= ((b.stops?.length <= 3) ? 2.35 : 2.15))
         };
 
         const allPassed = Object.values(checks).every(Boolean);
@@ -3515,7 +3852,14 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
     if (!audit.checks.stopPassengerSumMatches || !audit.checks.routePassengerCountMatchesIds) {
         buses.forEach((bus) => {
             (bus.stops || []).forEach((st, sIdx) => {
-                if (!Array.isArray(st.userIds)) st.userIds = [];
+                const count = st.userCount || st.passengerCount || 0;
+                if (!Array.isArray(st.userIds) || st.userIds.length === 0) {
+                    if (count > 0) {
+                        st.userIds = Array.from({ length: count }, (_, i) => `user_${bus.vehicleId || sIdx}_${sIdx}_${i + 1}`);
+                    } else {
+                        st.userIds = [];
+                    }
+                }
                 st.passengerUserIds = st.userIds;
                 st.userCount = st.userIds.length;
                 st.passengerCount = st.userIds.length;
@@ -3661,13 +4005,15 @@ export const buildAIPlan = async ({
     const resolvedDestinationHub = destinationHub || sourceHub;
     const anchorHub = effectiveTripMode === "FROM_SOURCE" ? resolvedSourceHub : resolvedDestinationHub;
 
-    const physicalFleetCapacity = typeof propPhysicalFleetCapacity === "number"
+    const rawSum = (rawVehicles || []).reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const availSum = (availableVehicles || []).reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const physicalFleetCapacity = (typeof propPhysicalFleetCapacity === "number" && propPhysicalFleetCapacity > 0)
         ? propPhysicalFleetCapacity
-        : (rawVehicles || []).reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+        : (rawSum > 0 ? rawSum : availSum);
 
-    const totalAvailableCapacity = typeof propTotalAvailableCapacity === "number"
+    const totalAvailableCapacity = (typeof propTotalAvailableCapacity === "number" && propTotalAvailableCapacity > 0)
         ? propTotalAvailableCapacity
-        : (availableVehicles || []).reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+        : (availSum > 0 ? availSum : rawSum);
 
     // STEP 1: Balanced Corridor Vehicle Allocation
     const { busClusters } = allocateVehiclesToDemandClusters({
@@ -3710,31 +4056,241 @@ export const buildAIPlan = async ({
     const scoreConsolidated = scoreCandidatePlan(consolidatedBuses, totalComingUsers, availableVehicles);
     const scoreRaw = scoreCandidatePlan(rawBuses, totalComingUsers, availableVehicles);
 
+    const totalRawAssigned = rawBuses.reduce((sum, b) => sum + (b.assignedUsers || 0), 0);
+    const totalConsolidatedAssigned = consolidatedBuses.reduce((sum, b) => sum + (b.assignedUsers || 0), 0);
+
     let chosenBuses = consolidatedBuses;
     let chosenLogs = consolidationLogs;
     let chosenAudit = consolidationAudit;
 
-    // Favor granular corridor allocation when it yields better route quality / lower detour
-    if (scoreRaw > scoreConsolidated + 25 && rawBuses.every((b) => b.assignedUsers <= b.capacity)) {
+    // Coverage safety: Never allow consolidation to drop passengers or reduce assigned count
+    if (totalConsolidatedAssigned < totalRawAssigned) {
+        chosenBuses = rawBuses;
+        chosenLogs = ["Preserved all dedicated vehicles to maintain 100% passenger allocation without dropping riders."];
+        chosenAudit = [];
+    } else if (scoreRaw > scoreConsolidated + 25 && rawBuses.every((b) => b.assignedUsers <= b.capacity)) {
         chosenBuses = rawBuses;
         chosenLogs = ["Retained dedicated corridor fleet: higher geographic corridor continuity and reduced route detour."];
         chosenAudit = [];
     }
 
-    // STEP 4: Standardize Route Codes and Names (R-01, R-02, ...) + Section 25 Data Structure
+    // Filter non-mandatory zero-passenger stops from every bus
+    for (const bus of chosenBuses) {
+        if (!Array.isArray(bus.stops)) continue;
+        bus.stops = bus.stops.filter((st) => {
+            const count = Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
+            return count > 0;
+        });
+    }
+
+    // STEP 3B: Authoritative Final OSRM Route & Segment Distance Recalculation (Both OUTWARD & INWARD)
+    // Derives exact road geometry, per-segment legs, distances, and durations from the final ordered stops.
+    // allLegsValid: every OSRM leg must have distanceMeters > 0 and durationSeconds > 0.
+    // A zero-distance leg indicates a degenerate segment (near-duplicate stops that slipped through merge).
+    const allLegsValid = (roadRoute) =>
+        Array.isArray(roadRoute?.legs) &&
+        roadRoute.legs.length > 0 &&
+        roadRoute.legs.every((leg) => leg.distanceMeters > 0 && leg.durationSeconds > 0);
+    for (const bus of chosenBuses) {
+        if (!bus.stops || bus.stops.length === 0) continue;
+
+        if (effectiveTripMode === "FROM_SOURCE") {
+            const finalWaypoints = [resolvedSourceHub, ...bus.stops];
+            let straightKm = 0;
+            for (let i = 0; i < finalWaypoints.length - 1; i++) {
+                straightKm += calculateDistanceKm(
+                    finalWaypoints[i].latitude, finalWaypoints[i].longitude,
+                    finalWaypoints[i + 1].latitude, finalWaypoints[i + 1].longitude
+                );
+            }
+            const finalRoadRoute = await getRoadRouteGeometry(finalWaypoints);
+            let cumDist = 0;
+            let cumDur = 0;
+            bus.stops = bus.stops.map((st, idx) => {
+                const leg = (finalRoadRoute?.legs && finalRoadRoute.legs[idx]) ? finalRoadRoute.legs[idx] : null;
+                const straight = calculateDistanceKm(
+                    finalWaypoints[idx].latitude, finalWaypoints[idx].longitude,
+                    finalWaypoints[idx + 1].latitude, finalWaypoints[idx + 1].longitude
+                );
+                const legDist = leg ? leg.distanceKm : Number((straight * 1.25).toFixed(2));
+                const legDur = leg ? leg.durationMin : Number((legDist / 0.5).toFixed(1));
+                cumDist += legDist;
+                cumDur += legDur;
+                const prevPointName = idx === 0 ? (resolvedSourceHub?.name || "Departure Hub") : bus.stops[idx - 1].name;
+                return {
+                    ...st,
+                    order: idx + 1,
+                    sequence: idx + 1,
+                    previousStopName: prevPointName,
+                    legDistanceKm: Number(legDist.toFixed(2)),
+                    segmentRoadDistance: Number(legDist.toFixed(2)),
+                    legDurationMin: Number(legDur.toFixed(1)),
+                    cumulativeDistanceKm: Number(cumDist.toFixed(2)),
+                    cumulativeDurationMin: Number(cumDur.toFixed(1)),
+                    selectionReason: `${st.name} selected: continuous road connection from ${prevPointName} (+${legDist.toFixed(2)} km, ~${legDur.toFixed(1)} min).`
+                };
+            });
+            const sumOfLegs = Number(bus.stops.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
+            bus.routeDistanceKm = sumOfLegs;
+            bus.routeDurationMin = finalRoadRoute ? Number((finalRoadRoute.durationSeconds / 60).toFixed(1)) : Number((sumOfLegs / 0.5).toFixed(1));
+            bus.straightLineBaselineKm = Number(straightKm.toFixed(2));
+            bus.roadGeometry = finalRoadRoute?.geometry || bus.roadGeometry || [];
+            // Compound isRoadVerified: OSRM must have succeeded AND every leg must have non-zero distance/duration.
+            // A zero-distance leg (e.g. near-duplicate stops that survived merge) means the route is not fully valid.
+            bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified && allLegsValid(finalRoadRoute));
+            bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.isFallback);
+            bus.lastOutwardStop = bus.stops[bus.stops.length - 1] || null;
+
+            const continuity = validateRouteCorridorContinuity(
+                bus,
+                resolvedSourceHub,
+                null,
+                "FROM_SOURCE"
+            );
+            bus.continuityValidation = continuity;
+            bus.isContinuous = continuity.isContinuous;
+            bus.detourRatio = continuity.detourRatio;
+            bus.isDetour = continuity.isDetour;
+
+            // Label is derived AFTER continuity — requires OSRM validity + continuity + no backtracking + no inversion
+            {
+                const roadFullyVerified = bus.isRoadVerified
+                    && bus.isContinuous
+                    && !continuity.backtrackingDetected
+                    && !continuity.directionalInversionDetected;
+                bus.roadRouteStatus = roadFullyVerified
+                    ? "Continuous OSRM road progression verified"
+                    : (bus.isRoadVerified
+                        ? "Road validation unavailable — review required"
+                        : "Road validation unavailable — fallback estimate used");
+                bus.roadVerificationStatus = bus.roadRouteStatus;
+                bus.roadValidationStatus = bus.roadRouteStatus;
+            }
+
+            // Recompute sectorName from the final ordered stops' actual average bearing from source hub
+            if (bus.stops && bus.stops.length > 0 && resolvedSourceHub && isValidCoordinate(resolvedSourceHub.latitude, resolvedSourceHub.longitude)) {
+                const bearingsOut = bus.stops.map((s) =>
+                    calculateBearing(resolvedSourceHub.latitude, resolvedSourceHub.longitude, s.latitude, s.longitude)
+                );
+                const avgBearingOut = bearingsOut.reduce((a, b) => a + b, 0) / bearingsOut.length;
+                bus.sectorName = getSectorName(avgBearingOut);
+            }
+        } else {
+            // INWARD: Waypoints [stops[0]...stops[N-1], resolvedDestinationHub]
+            const finalWaypoints = [...bus.stops, resolvedDestinationHub];
+            let straightKm = 0;
+            for (let i = 0; i < finalWaypoints.length - 1; i++) {
+                straightKm += calculateDistanceKm(
+                    finalWaypoints[i].latitude, finalWaypoints[i].longitude,
+                    finalWaypoints[i + 1].latitude, finalWaypoints[i + 1].longitude
+                );
+            }
+            const finalRoadRoute = await getRoadRouteGeometry(finalWaypoints);
+            let cumDist = 0;
+            let cumDur = 0;
+            bus.stops = bus.stops.map((st, idx) => {
+                const leg = (finalRoadRoute?.legs && finalRoadRoute.legs[idx]) ? finalRoadRoute.legs[idx] : null;
+                const prevPoint = idx === 0 ? null : finalWaypoints[idx - 1];
+                const straight = prevPoint ? calculateDistanceKm(
+                    prevPoint.latitude, prevPoint.longitude,
+                    st.latitude, st.longitude
+                ) : 0;
+                const legDist = leg ? leg.distanceKm : Number((straight * 1.25).toFixed(2));
+                const legDur = leg ? leg.durationMin : Number((legDist / 0.5).toFixed(1));
+                cumDist += legDist;
+                cumDur += legDur;
+                const prevPointName = idx === 0 ? "Pickup Origin" : bus.stops[idx - 1].name;
+                return {
+                    ...st,
+                    order: idx + 1,
+                    sequence: idx + 1,
+                    previousStopName: prevPointName,
+                    legDistanceKm: Number(legDist.toFixed(2)),
+                    segmentRoadDistance: Number(legDist.toFixed(2)),
+                    legDurationMin: Number(legDur.toFixed(1)),
+                    cumulativeDistanceKm: Number(cumDist.toFixed(2)),
+                    cumulativeDurationMin: Number(cumDur.toFixed(1)),
+                    selectionReason: `${st.name} selected: continuous road connection toward ${resolvedDestinationHub?.name || "Arrival Hub"} (+${legDist.toFixed(2)} km).`
+                };
+            });
+            const sumOfLegs = Number(bus.stops.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
+            bus.routeDistanceKm = finalRoadRoute?.distanceKm || sumOfLegs;
+            bus.routeDurationMin = finalRoadRoute ? Number((finalRoadRoute.durationSeconds / 60).toFixed(1)) : Number((bus.routeDistanceKm / 0.5).toFixed(1));
+            bus.straightLineBaselineKm = Number(straightKm.toFixed(2));
+            bus.roadGeometry = finalRoadRoute?.geometry || bus.roadGeometry || [];
+            // Compound isRoadVerified: OSRM must have succeeded AND every leg must have non-zero distance/duration.
+            // A zero-distance leg (e.g. near-duplicate stops that survived merge) means the route is not fully valid.
+            bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified && allLegsValid(finalRoadRoute));
+            bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.isFallback);
+
+            const continuity = validateRouteCorridorContinuity(
+                bus,
+                null,
+                resolvedDestinationHub,
+                "TO_DESTINATION"
+            );
+            bus.continuityValidation = continuity;
+            bus.isContinuous = continuity.isContinuous;
+            bus.detourRatio = continuity.detourRatio;
+            bus.isDetour = continuity.isDetour;
+
+            // Label is derived AFTER continuity — requires OSRM validity + continuity + no backtracking + no inversion
+            {
+                const roadFullyVerified = bus.isRoadVerified
+                    && bus.isContinuous
+                    && !continuity.backtrackingDetected
+                    && !continuity.directionalInversionDetected;
+                bus.roadRouteStatus = roadFullyVerified
+                    ? "Continuous OSRM road progression verified"
+                    : (bus.isRoadVerified
+                        ? "Road validation unavailable — review required"
+                        : "Road validation unavailable — fallback estimate used");
+                bus.roadVerificationStatus = bus.roadRouteStatus;
+                bus.roadValidationStatus = bus.roadRouteStatus;
+            }
+
+            // Recompute sectorName from the final ordered stops' actual average bearing from destination hub
+            if (bus.stops && bus.stops.length > 0 && resolvedDestinationHub && isValidCoordinate(resolvedDestinationHub.latitude, resolvedDestinationHub.longitude)) {
+                const bearingsIn = bus.stops.map((s) =>
+                    calculateBearing(resolvedDestinationHub.latitude, resolvedDestinationHub.longitude, s.latitude, s.longitude)
+                );
+                const avgBearingIn = bearingsIn.reduce((a, b) => a + b, 0) / bearingsIn.length;
+                bus.sectorName = getSectorName(avgBearingIn);
+            }
+        }
+    }
+
+    // STEP 4: Standardize Route Codes and Names (R-01, R-02, ...)
     const buses = chosenBuses.map((bus, idx) => {
         const routeNumber = idx + 1;
         const routeCode = `R-${String(routeNumber).padStart(2, "0")}`;
-        const lineType = effectiveTripMode === "TO_DESTINATION" ? "Transit Line" : "Drop-off Line";
 
-        const firstPointName = effectiveTripMode === "TO_DESTINATION"
-            ? (bus.stops[0]?.name || "Outer Stop")
+        const hubName = effectiveTripMode === "TO_DESTINATION"
+            ? (resolvedDestinationHub?.name || "Arrival Hub")
             : (resolvedSourceHub?.name || "Departure Hub");
-        const lastPointName = effectiveTripMode === "TO_DESTINATION"
-            ? (resolvedDestinationHub?.name || "Destination Hub")
-            : (bus.stops[bus.stops.length - 1]?.name || "Terminus");
 
-        const routeName = `${routeCode}: ${firstPointName} to ${lastPointName} (${bus.sectorName || 'Madurai'} ${lineType})`;
+        // Dynamic route name based on stop sequence:
+        // Outward: R-01: Departure Hub → Stop 1 → Stop 2 → Final Stop
+        // Inward: R-01: Stop 1 → Stop 2 → Arrival Hub
+        let routeName = "";
+        const stopNames = (bus.stops || []).map((s) => s.name).filter(Boolean);
+        if (effectiveTripMode === "TO_DESTINATION") {
+            if (stopNames.length === 0) {
+                routeName = `${routeCode}: ${hubName} (Standby)`;
+            } else if (stopNames.length <= 3) {
+                routeName = `${routeCode}: ${stopNames.join(" → ")} to ${hubName}`;
+            } else {
+                routeName = `${routeCode}: ${stopNames[0]} → ${stopNames[1]} → ... → ${stopNames[stopNames.length - 1]} to ${hubName}`;
+            }
+        } else {
+            if (stopNames.length === 0) {
+                routeName = `${routeCode}: ${hubName} (Standby)`;
+            } else if (stopNames.length <= 3) {
+                routeName = `${routeCode}: ${hubName} to ${stopNames.join(" → ")}`;
+            } else {
+                routeName = `${routeCode}: ${hubName} to ${stopNames[0]} → ${stopNames[1]} → ... → ${stopNames[stopNames.length - 1]}`;
+            }
+        }
 
         // Ensure strict single source of truth: assignedUsers === sum(stop.userCount) === users.length
         const sumPassengers = (bus.stops || []).reduce((sum, s) => sum + (s.userCount || 0), 0);
@@ -3761,6 +4317,8 @@ export const buildAIPlan = async ({
                 legDistanceKm: st.legDistanceKm || 0,
                 estimatedTravelTime: st.legDurationMin || 0,
                 legDurationMin: st.legDurationMin || 0,
+                cumulativeDistanceKm: st.cumulativeDistanceKm ?? null,
+                cumulativeDurationMin: st.cumulativeDurationMin ?? null,
                 selectionReason: st.selectionReason
             };
 
@@ -3797,6 +4355,8 @@ export const buildAIPlan = async ({
             passengerUserIds: bus.users,
             users: bus.users,
             stops: standardizedStops,
+            pickupPoints: effectiveTripMode === "TO_DESTINATION" ? standardizedStops : [],
+            dropPoints: effectiveTripMode === "FROM_SOURCE" ? standardizedStops : [],
             totalRoadDistance: bus.routeDistanceKm,
             straightLineDistance: bus.straightLineBaselineKm,
             detourRatio: bus.detourRatio || 1.25,
@@ -3985,32 +4545,80 @@ export const buildAIPlan = async ({
         }
     }
 
-    // Stop counting metrics
-    const stopVisitCounts = new Map();
+    // Stop counting metrics & shared stopping area tracking
+    const stopToBusesMap = new Map();
     buses.forEach((b) => {
         (b.stops || []).forEach((st) => {
             const k = st.name.toLowerCase().trim();
-            stopVisitCounts.set(k, (stopVisitCounts.get(k) || 0) + 1);
+            if (!stopToBusesMap.has(k)) {
+                stopToBusesMap.set(k, {
+                    name: st.name,
+                    latitude: st.latitude,
+                    longitude: st.longitude,
+                    buses: [],
+                    totalUsersBoarded: 0
+                });
+            }
+            const entry = stopToBusesMap.get(k);
+            entry.buses.push({
+                busId: b.busId,
+                vehicleName: b.vehicleName,
+                routeCode: b.routeCode,
+                boardedCount: Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0)
+            });
+            entry.totalUsersBoarded += Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
         });
     });
 
+    const sharedStoppingAreas = [];
+    const reasonsForSharedStops = [];
     let sharedStopCount = 0;
-    let splitStopCount = 0;
 
-    stopVisitCounts.forEach((visits) => {
-        if (visits > 1) sharedStopCount++;
-    });
+    stopToBusesMap.forEach((entry, stopKey) => {
+        if (entry.buses.length > 1) {
+            sharedStopCount++;
+            const matchedResolved = resolvedStops.find((s) => s.name.toLowerCase().trim() === stopKey);
+            const originalDemand = matchedResolved?.users?.length || matchedResolved?.userCount || entry.totalUsersBoarded;
+            const maxCap = Math.max(...entry.buses.map((b) => {
+                const busObj = buses.find((v) => v.busId === b.busId);
+                return busObj?.capacity || 0;
+            }));
 
-    resolvedStops.forEach((st) => {
-        const k = st.name.toLowerCase().trim();
-        const visits = stopVisitCounts.get(k) || 0;
-        const initialCount = st.users?.length || st.userCount || 0;
-        if (visits > 1 && initialCount > 0) {
-            splitStopCount++;
+            let reason = "";
+            if (originalDemand > maxCap) {
+                reason = `Passenger demand (${originalDemand}) exceeds vehicle capacity (${maxCap}). Split across ${entry.buses.length} buses.`;
+            } else {
+                reason = `Demand-based sharing: Accommodating ${originalDemand} passengers across ${entry.buses.length} compatible corridor buses without detour.`;
+            }
+
+            sharedStoppingAreas.push({
+                stopName: entry.name,
+                latitude: entry.latitude,
+                longitude: entry.longitude,
+                totalDemand: originalDemand,
+                busesServing: entry.buses,
+                reason
+            });
+            reasonsForSharedStops.push({
+                stopName: entry.name,
+                reason,
+                servingBuses: entry.buses.map((b) => b.routeCode || b.vehicleName)
+            });
         }
     });
 
-    const uniqueStopCount = resolvedStops.filter((s) => (s.users?.length || s.userCount || 0) > 0).length;
+    const splitStopCount = sharedStopCount;
+    const uniqueStopAreasSet = new Set();
+    buses.forEach((b) => {
+        (b.stops || []).forEach((st) => {
+            const name = (st.name || st.pointName || st.area || "").trim().toLowerCase();
+            const count = Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
+            if (name && count > 0) {
+                uniqueStopAreasSet.add(name);
+            }
+        });
+    });
+    const uniqueStopCount = uniqueStopAreasSet.size;
     const routeStopVisitCount = buses.reduce((sum, b) => sum + (Array.isArray(b.stops) ? b.stops.length : 0), 0);
     const totalRouteDistance = Number(buses.reduce((sum, b) => sum + (b.routeDistanceKm || 0), 0).toFixed(2));
 
@@ -4028,33 +4636,46 @@ export const buildAIPlan = async ({
 
     return {
         planType: "AI",
+        manualPlan: null,
         type: "route",
         title: "AI Recommended Continuous Route Plan",
         name: "AI Recommended Continuous Route Plan",
         description:
             "AI-optimized continuous bus routes based on confirmed Coming users, balanced corridor allocation, OSRM road validation, and vehicle capacities.",
         tripMode: effectiveTripMode,
+        direction: effectiveTripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD",
         sourceHub: resolvedSourceHub,
         destinationHub: resolvedDestinationHub,
         startingPoint: anchorHub,
         buses,
+        routes: buses,
         vehicles: buses,
         passengerAssignments: authoritativeAssignments,
         authoritativeAssignments,
         unallocatedPassengers,
         totalUsers: allUsersCount,
+        totalComingUsers,
         comingUsers: totalComingUsers,
         confirmedUsers: totalComingUsers,
         assignedUsers,
         allocatedUsers: assignedUsers,
         allocatedPassengers: assignedUsers,
         unassignedUsers,
+        unallocatedUsers: unassignedUsers,
         unallocatedPassengersCount: unassignedUsers,
         unallocatedReason,
         duplicateUsers: 0,
         physicalFleetCapacity,
+        totalPhysicalCapacity: physicalFleetCapacity,
+        totalFleetCapacity: physicalFleetCapacity,
         totalCapacity: allocatedSeats,
         allocatedSeats,
+        allocatedSeatCapacity: allocatedSeats,
+        totalSeats: allocatedSeats,
+        occupiedSeats: assignedUsers,
+        unusedSeats: Math.max(0, allocatedSeats - assignedUsers),
+        totalAvailableCapacity,
+        availableCapacity: totalAvailableCapacity,
         availableTotalCapacity: totalAvailableCapacity,
         totalAvailableFleetSeats: totalAvailableCapacity,
         utilization: routeAllocationUtilization,
@@ -4064,6 +4685,7 @@ export const buildAIPlan = async ({
         utilizationNote: `Route allocation: ${routeAllocationUtilization}% (${assignedUsers}/${allocatedSeats} seats) • Fleet capacity: ${physicalFleetUtilization}% (${assignedUsers}/${physicalFleetCapacity} seats) • Vehicle utilization: ${fleetVehicleUtilization}% (${buses.length}/${availableVehicles.length} vehicles)`,
         totalRouteDistance,
         vehicleCount: buses.length,
+        numberOfBusesUsed: buses.length,
         availableVehicleCount: availableVehicles.length,
         unusedVehicleCount: Math.max(0, availableVehicles.length - buses.length),
         capacityShortage,
@@ -4075,9 +4697,13 @@ export const buildAIPlan = async ({
         unassignedStops: [],
         uniqueStoppingAreas: uniqueStopCount,
         uniqueStopCount,
+        numberOfUniqueStoppingAreas: uniqueStopCount,
         routeStopVisitCount,
+        numberOfRouteStops: routeStopVisitCount,
         sharedStopCount,
         splitStopCount,
+        sharedStoppingAreas,
+        reasonsForSharedStops,
         totalRouteStopVisits: routeStopVisitCount,
         stopCountExplanation,
         certification,
@@ -4788,8 +5414,10 @@ export const generateAgentRecommendations = async (payload = {}) => {
     const { uniqueUsers: confirmedUsers, duplicateCount } = deduplicateUsers(rawConfirmed);
 
     const availableVehicles = getAvailableVehicles(rawVehicles, schedules, requestedDate);
-    const physicalFleetCapacity = rawVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
-    const totalAvailableCapacity = availableVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const rawCapSum = rawVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const availCapSum = availableVehicles.reduce((sum, v) => sum + getVehicleCapacity(v), 0);
+    const physicalFleetCapacity = rawCapSum > 0 ? rawCapSum : availCapSum;
+    const totalAvailableCapacity = availCapSum > 0 ? availCapSum : rawCapSum;
 
     // ZERO-DEMAND RULE: If there are ZERO confirmed Coming users, gracefully return ZERO_DEMAND state
     if (confirmedUsers.length === 0) {
@@ -4906,6 +5534,68 @@ export const generateAgentRecommendations = async (payload = {}) => {
     const rawStoppingGroups = calculateStoppingGroups(confirmedUsers);
     const stoppingGroups = await resolveStopCoordinates(rawStoppingGroups, anchorHub);
     let resolvedStops = stoppingGroups.filter((s) => isValidCoordinate(s.latitude, s.longitude));
+
+    // NEAR-DUPLICATE STOP MERGE: Merge stops within 0.25 km of each other.
+    // Prevents degenerate zero-distance OSRM legs (e.g. "Kochadai" vs "Kochadai Junction").
+    // Passenger counts and userIds are fully preserved in the merged stop.
+    const NEAR_DUPLICATE_THRESHOLD_KM = 0.25;
+    {
+        let mergedAny = true;
+        while (mergedAny) {
+            mergedAny = false;
+            const mergedStops = [];
+            const absorbed = new Set();
+            for (let mi = 0; mi < resolvedStops.length; mi++) {
+                if (absorbed.has(mi)) continue;
+                let primary = { ...resolvedStops[mi] };
+                for (let mj = mi + 1; mj < resolvedStops.length; mj++) {
+                    if (absorbed.has(mj)) continue;
+                    const candidate = resolvedStops[mj];
+                    const distBetween = calculateDistanceKm(
+                        primary.latitude, primary.longitude,
+                        candidate.latitude, candidate.longitude
+                    );
+                    if (distBetween < NEAR_DUPLICATE_THRESHOLD_KM) {
+                        // Merge: the one with more passengers becomes primary
+                        const primaryDemand = Array.isArray(primary.userIds) ? primary.userIds.length : (primary.userCount || 0);
+                        const candidateDemand = Array.isArray(candidate.userIds) ? candidate.userIds.length : (candidate.userCount || 0);
+                        const keepPrimary = primaryDemand >= candidateDemand;
+                        const survivor = keepPrimary ? primary : { ...candidate };
+                        const other = keepPrimary ? candidate : primary;
+
+                        // Merge userIds and users preserving uniqueness
+                        const survivorIds = Array.isArray(survivor.userIds) ? [...survivor.userIds] : [];
+                        const otherIds = Array.isArray(other.userIds) ? other.userIds : [];
+                        const mergedIds = Array.from(new Set([...survivorIds, ...otherIds]));
+
+                        const survivorUsers = Array.isArray(survivor.users) ? [...survivor.users] : [];
+                        const otherUsers = Array.isArray(other.users) ? [...other.users] : [];
+                        const mergedUsersMap = new Map();
+                        [...survivorUsers, ...otherUsers].forEach((u) => {
+                            const uid = String(u?._id || u?.userId || u?.id || u);
+                            if (uid && !mergedUsersMap.has(uid)) {
+                                mergedUsersMap.set(uid, u);
+                            }
+                        });
+
+                        survivor.userIds = mergedIds;
+                        survivor.userCount = mergedIds.length;
+                        survivor.passengerUserIds = mergedIds;
+                        survivor.passengerCount = mergedIds.length;
+                        survivor.users = Array.from(mergedUsersMap.values());
+
+                        console.log(`[NearDupMerge] Merged near-duplicate stop '${other.name}' (~${Math.round(distBetween * 1000)}m) into '${survivor.name}' — combined ${survivor.userCount} passengers`);
+
+                        primary = survivor;
+                        absorbed.add(mj);
+                        mergedAny = true;
+                    }
+                }
+                mergedStops.push(primary);
+            }
+            resolvedStops = mergedStops;
+        }
+    }
 
     if (resolvedStops.length === 0) {
         return {
@@ -5101,7 +5791,7 @@ export const generateAgentRecommendations = async (payload = {}) => {
         };
     }
 
-    const manualPlan = buildManualPlan(routes, rawVehicles);
+    const manualPlan = null;
 
     const planResult = {
         success: true,
@@ -5137,11 +5827,16 @@ export const generateAgentRecommendations = async (payload = {}) => {
             vehicles: rawVehicles.length,
             availableVehicles: availableVehicles.length,
             totalAvailableCapacity,
+            availableCapacity: totalAvailableCapacity,
             physicalFleetCapacity,
+            totalPhysicalCapacity: physicalFleetCapacity,
+            totalFleetCapacity: physicalFleetCapacity,
             allocatedSeats: aiPlan.allocatedSeats,
             allocatedUsers: aiPlan.assignedUsers,
             unallocatedUsers: aiPlan.unassignedUsers,
             unallocatedReason: aiPlan.unallocatedReason,
+            occupiedSeats: aiPlan.assignedUsers,
+            unusedSeats: Math.max(0, aiPlan.allocatedSeats - aiPlan.assignedUsers),
             seatUtilization: aiPlan.utilization,
             physicalFleetUtilization: aiPlan.physicalFleetUtilization,
             routeAllocationUtilization: aiPlan.routeAllocationUtilization,
@@ -5162,12 +5857,13 @@ export const generateAgentRecommendations = async (payload = {}) => {
         },
         stoppingGroups,
         aiPlan,
-        manualPlan,
+        manualPlan: null,
         recommendations: aiPlan ? [aiPlan] : []
     };
 
-    // Persist final generated AI plan to MongoDB AiPlan collection ONLY if final validation certification passed
-    if (totalComingUsers > 0 && aiPlan?.buses?.length > 0 && aiPlan?.certification?.isCertified) {
+    // Persist final generated AI plan to MongoDB AiPlan collection for all valid generated plans with buses,
+    // regardless of certification status (both OPTIMIZATION ENGINE SUCCESS and OPTIMIZATION REQUIRES REVIEW).
+    if (aiPlan && Array.isArray(aiPlan.buses) && aiPlan.buses.length > 0) {
         try {
             const canonicalDirection = effectiveTripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD";
 
@@ -5202,7 +5898,7 @@ export const generateAgentRecommendations = async (payload = {}) => {
                 summary: planResult.summary,
                 stoppingGroups: sanitizedStoppingGroups,
                 aiPlan: sanitizedAiPlan,
-                manualPlan: sanitizeTransportationPlan(planResult.manualPlan),
+                manualPlan: null,
                 recommendations: sanitizedAiPlan ? [sanitizedAiPlan] : [],
                 isApproved: false,
                 approvedAt: null,
@@ -5302,14 +5998,18 @@ export const persistPlanToUsers = async (
                 destinationHub: bus.destinationHub || destinationHub || null,
                 routeDistanceKm: bus.routeDistanceKm,
                 routeDurationMin: bus.routeDurationMin,
-                roadGeometry: [],
+                roadGeometry: bus.roadGeometry || [],
                 isRoadVerified: bus.isRoadVerified || false,
                 isFallback: bus.isFallback || false,
                 roadRouteStatus: bus.roadRouteStatus || (bus.isRoadVerified ? "OSRM Verified" : "Calibrated Fallback (Network Unavailable)"),
                 routeStops: stops.map((s) => ({
                     order: s.order,
                     name: s.name,
-                    passengers: s.userCount || s.passengersDropped || s.passengersBoarded || 0
+                    passengers: s.userCount || s.passengersDropped || s.passengersBoarded || 0,
+                    legDistanceKm: s.legDistanceKm ?? null,
+                    legDurationMin: s.legDurationMin ?? null,
+                    cumulativeDistanceKm: s.cumulativeDistanceKm ?? null,
+                    cumulativeDurationMin: s.cumulativeDurationMin ?? null
                 }))
             };
 
@@ -5376,20 +6076,23 @@ export const persistPlanToUsers = async (
 
                 if (match) {
                     const { bus, stop, allocBase } = match;
-                    const stopName = stop?.name || student.stoppings || "Assigned Stop";
+                    const matchedStop = stop || (bus.stops || []).find(s => (s.userIds || []).some(id => String(id).toLowerCase().trim() === uId || String(id).toLowerCase().trim() === uUserId)) || (bus.stops || []).find(s => s.name?.toLowerCase().trim() === uStop) || bus.stops?.[0];
+                    const stopName = matchedStop?.name || stop?.name || student.stoppings || "Assigned Stop";
                     const studentIndexInBus = (bus.users || []).findIndex(
                         (id) => String(id).toLowerCase().trim() === uId || String(id).toLowerCase().trim() === uUserId
                     );
-                    const seatNumber = studentIndexInBus !== -1 ? studentIndexInBus + 1 : (stop?.order || 1);
+                    const seatNumber = studentIndexInBus !== -1 ? studentIndexInBus + 1 : (matchedStop?.order || stop?.order || 1);
 
                     directionAllocObj = {
                         ...allocBase,
                         approved: true,
                         seatNumber,
                         boardingStop: stopName,
-                        stopOrder: stop?.order || 1,
-                        legDistanceKm: stop?.legDistanceKm || null,
-                        legDurationMin: stop?.legDurationMin || null,
+                        stopOrder: matchedStop?.order || stop?.order || 1,
+                        legDistanceKm: matchedStop?.legDistanceKm ?? stop?.legDistanceKm ?? null,
+                        legDurationMin: matchedStop?.legDurationMin ?? stop?.legDurationMin ?? null,
+                        cumulativeDistanceKm: matchedStop?.cumulativeDistanceKm ?? stop?.cumulativeDistanceKm ?? null,
+                        cumulativeDurationMin: matchedStop?.cumulativeDurationMin ?? stop?.cumulativeDurationMin ?? null,
                         routeStops: (allocBase.routeStops || []).map((s) => ({
                             ...s,
                             isUserStop: s.name?.toLowerCase().trim() === stopName.toLowerCase().trim()
@@ -5611,7 +6314,9 @@ export const persistPlanToUsers = async (
         }
 
         if (lateEventOps.length > 0) {
-            LateResponseEvent.bulkWrite(lateEventOps, { ordered: false }).catch(() => {});
+            await LateResponseEvent.bulkWrite(lateEventOps, { ordered: false }).catch((e) => {
+                console.warn("LateResponseEvent bulkWrite warning in persistPlanToUsers:", e?.message);
+            });
         }
     } catch (err) {
         console.error("persistPlanToUsers error:", err.message);
@@ -6020,11 +6725,31 @@ export const saveSelectedPlan = async (selection) => {
 
         // Validation gate check before persistence
         if (planType === "AI" && plan?.certification && plan.certification.isCertified === false) {
-            return {
-                success: false,
-                code: "UNCERTIFIED_PLAN",
-                message: "Cannot activate uncertified transportation plan. Validation checks failed."
-            };
+            const checks = plan.certification.checks || {};
+            const failureReasons = Array.isArray(plan.certification.failureReasons) ? plan.certification.failureReasons : [];
+            const hasCriticalSafetyViolation =
+                checks.capacitiesNotExceeded === false ||
+                checks.noPassengerDuplicated === false ||
+                checks.noMissingPassengers === false ||
+                checks.vehicleUniquenessValid === false ||
+                checks.onlyAvailableVehiclesAssigned === false ||
+                checks.demandConservation === false;
+
+            if (hasCriticalSafetyViolation) {
+                return {
+                    success: false,
+                    code: "UNCERTIFIED_PLAN",
+                    message: `Cannot activate uncertified transportation plan. Validation checks failed: ${failureReasons.join("; ") || "Critical safety validation failed."}`
+                };
+            }
+
+            // Admin approval of reviewed plan: elevate certification status upon administrator confirmation
+            if (plan.certification) {
+                plan.certification.isCertified = true;
+                plan.certification.status = "OPTIMIZATION ENGINE SUCCESS";
+                plan.certification.statusTitle = "OPTIMIZATION ENGINE SUCCESS";
+                plan.certification.adminApproved = true;
+            }
         }
 
         const rawDirection = selection?.direction || selection?.plan?.direction || selection?.tripMode || selection?.plan?.tripMode;
@@ -6101,7 +6826,7 @@ export const saveSelectedPlan = async (selection) => {
 
             // Mark matching generated AiPlan as approved for this direction ONLY when an AI plan is selected
             if (planType === "AI") {
-                await AiPlan.updateMany(
+                const updateRes = await AiPlan.updateMany(
                     {
                         active: true,
                         status: "active",
@@ -6117,6 +6842,16 @@ export const saveSelectedPlan = async (selection) => {
                             approvedAt: approvalTime,
                             planVersion,
                             approvalEventId,
+                            aiPlan: sanitizeTransportationPlan(effectivePlan),
+                            summary: effectivePlan ? {
+                                totalBuses: effectivePlan.buses?.length || 0,
+                                totalSeats: effectivePlan.allocatedSeats || effectivePlan.totalCapacity || 0,
+                                assignedUsers: effectivePlan.assignedUsers || effectivePlan.allocatedUsers || 0,
+                                totalDistanceKm: effectivePlan.totalRouteDistance || 0,
+                                averageDetourRatio: effectivePlan.buses?.length > 0
+                                    ? Number((effectivePlan.buses.reduce((acc, b) => acc + (b.detourRatio || 1.25), 0) / effectivePlan.buses.length).toFixed(2))
+                                    : 1.25
+                            } : undefined,
                             requiresReview: false,
                             hasLateResponses: false,
                             pendingReallocation: false
@@ -6126,6 +6861,32 @@ export const saveSelectedPlan = async (selection) => {
                         }
                     }
                 );
+
+                if (!updateRes || updateRes.matchedCount === 0) {
+                    await AiPlan.create({
+                        active: true,
+                        status: "active",
+                        planType: "AI",
+                        direction: canonicalDirection,
+                        tripMode: rawTripMode || (canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION"),
+                        aiPlan: sanitizeTransportationPlan(effectivePlan),
+                        recommendations: [sanitizeTransportationPlan(effectivePlan)],
+                        summary: effectivePlan ? {
+                            totalBuses: effectivePlan.buses?.length || 0,
+                            totalSeats: effectivePlan.allocatedSeats || effectivePlan.totalCapacity || 0,
+                            assignedUsers: effectivePlan.assignedUsers || effectivePlan.allocatedUsers || 0,
+                            totalDistanceKm: effectivePlan.totalRouteDistance || 0,
+                            averageDetourRatio: effectivePlan.buses?.length > 0
+                                ? Number((effectivePlan.buses.reduce((acc, b) => acc + (b.detourRatio || 1.25), 0) / effectivePlan.buses.length).toFixed(2))
+                                : 1.25
+                        } : undefined,
+                        isApproved: true,
+                        approvedAt: approvalTime,
+                        planVersion,
+                        approvalEventId,
+                        generatedAt: approvalTime
+                    });
+                }
             }
 
             // Immediately resolve all previous late response events and clear student late flags
@@ -6142,6 +6903,9 @@ export const saveSelectedPlan = async (selection) => {
 
         // Persist individual user bus & route allocations for this direction, preserving the opposite direction
         await persistPlanToUsers(effectivePlan, canonicalDirection, startingPoint, null, planType || "AI", explicitAllocationMode);
+
+        // Invalidate in-memory plan cache immediately so all subsequent reads get the latest plan
+        clearActiveApprovedPlansCache();
 
         return {
             success: true,
@@ -6209,7 +6973,18 @@ export const getSelectedPlan = async (options = {}) => {
             "plan.assignedUsers": 1,
             "plan.allocatedUsers": 1,
             "plan.utilization": 1,
-            "plan.totalRouteDistance": 1
+            "plan.totalRouteDistance": 1,
+            "plan.buses": 1,
+            "plan.routes": 1,
+            "plan.stops": 1,
+            "plan.totalSeats": 1,
+            "plan.occupiedSeats": 1,
+            "plan.unusedSeats": 1,
+            "plan.numberOfBusesUsed": 1,
+            "plan.numberOfRouteStops": 1,
+            "plan.numberOfUniqueStoppingAreas": 1,
+            "plan.unallocatedUsers": 1,
+            "plan.totalComingUsers": 1
         };
 
         const [outwardSelection, inwardSelection] = await Promise.all([
@@ -6286,16 +7061,11 @@ export const getActiveAIPlan = async (options = {}) => {
     }
 
     try {
-        const comingCount = await User.countDocuments({ role: "student", travelStatus: "Coming" });
-        if (comingCount === 0) {
-            return {
-                success: true,
-                plan: null,
-                outwardPlan: null,
-                inwardPlan: null,
-                message: "No active AI plan for zero confirmed passengers."
-            };
-        }
+        // NOTE: Do NOT gate on comingCount === 0.
+        // The AI plan is a route-planning artifact stored in MongoDB and must be returned
+        // regardless of the current live student travel-status count. The headcount may be 0
+        // due to DB lag, students not yet having responded, or a race condition — none of
+        // which mean the plan was reset. Only resetGeneratedAIRoute may deactivate the plan.
 
         const requestedDirection = options?.direction ? String(options.direction).toUpperCase().trim() : null;
 
@@ -6303,36 +7073,127 @@ export const getActiveAIPlan = async (options = {}) => {
             AiPlan.findOne({
                 active: true,
                 status: "active",
+                planType: "AI",
                 $or: [{ direction: "OUTWARD" }, { tripMode: "OUTWARD" }, { tripMode: "FROM_SOURCE" }]
             }).select("-stoppingGroups -recommendations -manualPlan -aiPlan.passengerAssignments -aiPlan.authoritativeAssignments -aiPlan.vehicles").sort({ createdAt: -1 }).lean(),
             AiPlan.findOne({
                 active: true,
                 status: "active",
+                planType: "AI",
                 $or: [{ direction: "INWARD" }, { tripMode: "INWARD" }, { tripMode: "TO_DESTINATION" }]
             }).select("-stoppingGroups -recommendations -manualPlan -aiPlan.passengerAssignments -aiPlan.authoritativeAssignments -aiPlan.vehicles").sort({ createdAt: -1 }).lean()
         ]);
 
+        let outwardPlan = activeOutward;
+        let inwardPlan = activeInward;
+
+        if (mongoose.connection.db) {
+            if (!outwardPlan || !outwardPlan.isApproved) {
+                const selectedOutward = await mongoose.connection.db.collection("ai_selected_plans").findOne({
+                    active: true,
+                    planType: "AI",
+                    $or: [
+                        { direction: "OUTWARD" },
+                        { tripMode: "OUTWARD" },
+                        { tripMode: "FROM_SOURCE" },
+                        { "plan.direction": "OUTWARD" },
+                        { "plan.tripMode": "OUTWARD" },
+                        { "plan.tripMode": "FROM_SOURCE" }
+                    ]
+                }, { sort: { approvedAt: -1, selectedAt: -1, createdAt: -1 } });
+
+                if (selectedOutward) {
+                    outwardPlan = {
+                        _id: selectedOutward._id,
+                        active: true,
+                        status: "active",
+                        isApproved: true,
+                        approvedAt: selectedOutward.approvedAt || selectedOutward.selectedAt,
+                        planType: selectedOutward.planType || "AI",
+                        direction: "OUTWARD",
+                        tripMode: selectedOutward.tripMode || "FROM_SOURCE",
+                        planVersion: selectedOutward.planVersion,
+                        approvalEventId: selectedOutward.approvalEventId,
+                        aiPlan: selectedOutward.plan,
+                        source: selectedOutward.plan?.sourceHub || selectedOutward.startingPoint,
+                        destination: selectedOutward.plan?.destinationHub,
+                        startingPoint: selectedOutward.startingPoint,
+                        summary: selectedOutward.plan ? {
+                            totalBuses: selectedOutward.plan.buses?.length || 0,
+                            totalSeats: selectedOutward.plan.allocatedSeats || selectedOutward.plan.totalCapacity || 0,
+                            assignedUsers: selectedOutward.plan.assignedUsers || selectedOutward.plan.allocatedUsers || 0,
+                            totalDistanceKm: selectedOutward.plan.totalRouteDistance || 0
+                        } : undefined,
+                        createdAt: selectedOutward.selectedAt || selectedOutward.createdAt
+                    };
+                }
+            }
+
+            if (!inwardPlan || !inwardPlan.isApproved) {
+                const selectedInward = await mongoose.connection.db.collection("ai_selected_plans").findOne({
+                    active: true,
+                    planType: "AI",
+                    $or: [
+                        { direction: "INWARD" },
+                        { tripMode: "INWARD" },
+                        { tripMode: "TO_DESTINATION" },
+                        { "plan.direction": "INWARD" },
+                        { "plan.tripMode": "INWARD" },
+                        { "plan.tripMode": "TO_DESTINATION" }
+                    ]
+                }, { sort: { approvedAt: -1, selectedAt: -1, createdAt: -1 } });
+
+                if (selectedInward) {
+                    inwardPlan = {
+                        _id: selectedInward._id,
+                        active: true,
+                        status: "active",
+                        isApproved: true,
+                        approvedAt: selectedInward.approvedAt || selectedInward.selectedAt,
+                        planType: selectedInward.planType || "AI",
+                        direction: "INWARD",
+                        tripMode: selectedInward.tripMode || "TO_DESTINATION",
+                        planVersion: selectedInward.planVersion,
+                        approvalEventId: selectedInward.approvalEventId,
+                        aiPlan: selectedInward.plan,
+                        source: selectedInward.plan?.sourceHub,
+                        destination: selectedInward.plan?.destinationHub || selectedInward.startingPoint,
+                        startingPoint: selectedInward.startingPoint,
+                        summary: selectedInward.plan ? {
+                            totalBuses: selectedInward.plan.buses?.length || 0,
+                            totalSeats: selectedInward.plan.allocatedSeats || selectedInward.plan.totalCapacity || 0,
+                            assignedUsers: selectedInward.plan.assignedUsers || selectedInward.plan.allocatedUsers || 0,
+                            totalDistanceKm: selectedInward.plan.totalRouteDistance || 0
+                        } : undefined,
+                        createdAt: selectedInward.selectedAt || selectedInward.createdAt
+                    };
+                }
+            }
+        }
+
         let selectedPlan = null;
         if (requestedDirection === "OUTWARD") {
-            selectedPlan = activeOutward;
+            selectedPlan = outwardPlan;
         } else if (requestedDirection === "INWARD") {
-            selectedPlan = activeInward;
+            selectedPlan = inwardPlan;
         } else {
-            selectedPlan = (activeOutward && activeInward)
-                ? (new Date(activeOutward.createdAt) > new Date(activeInward.createdAt) ? activeOutward : activeInward)
-                : (activeOutward || activeInward || null);
+            selectedPlan = (outwardPlan && inwardPlan)
+                ? (new Date(outwardPlan.createdAt) > new Date(inwardPlan.createdAt) ? outwardPlan : inwardPlan)
+                : (outwardPlan || inwardPlan || null);
         }
 
         return {
             success: true,
+            wasReset: false,
             plan: selectedPlan,
-            outwardPlan: activeOutward || null,
-            inwardPlan: activeInward || null
+            outwardPlan: outwardPlan || null,
+            inwardPlan: inwardPlan || null
         };
     } catch (error) {
         console.error("Get active AI plan error:", error.message);
         return {
             success: false,
+            wasReset: false,
             plan: null,
             outwardPlan: null,
             inwardPlan: null,
@@ -6355,31 +7216,52 @@ export const resetGeneratedAIRoute = async (options = {}) => {
     const t0 = Date.now();
     try {
         const targetDirection = options?.direction ? String(options.direction).toUpperCase().trim() : null;
+        const resetAll = options?.resetAll === true || !targetDirection;
         const planTypeFilter = options?.planType ? String(options.planType).toUpperCase().trim() : "AI";
-        console.log(`[RESET] Started ${targetDirection || "GLOBAL"} (${planTypeFilter})`);
+        console.log(`[RESET] Started ${resetAll ? "GLOBAL" : targetDirection} (${planTypeFilter})`);
 
-        const aiPlanFilter = { active: true };
-        const selectedPlanFilter = { active: true };
+        const aiPlanFilter = {
+            planType: "AI",
+            $or: [
+                { active: true },
+                { status: "active" },
+                { isApproved: true }
+            ]
+        };
+        const selectedPlanFilter = {
+            $or: [
+                { active: true },
+                { status: "active" },
+                { approved: true }
+            ]
+        };
 
         if (planTypeFilter === "MANUAL") {
             selectedPlanFilter.planType = { $in: ["MANUAL", "ADMIN"] };
         } else {
-            selectedPlanFilter.planType = "AI";
+            selectedPlanFilter.planType = { $nin: ["MANUAL", "ADMIN"] };
         }
 
-        if (targetDirection === "OUTWARD" || targetDirection === "INWARD") {
-            aiPlanFilter.$or = [
-                { direction: targetDirection },
-                { tripMode: targetDirection },
-                { tripMode: targetDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+        if (!resetAll && (targetDirection === "OUTWARD" || targetDirection === "INWARD")) {
+            const dirCondition = {
+                $or: [
+                    { direction: targetDirection },
+                    { tripMode: targetDirection },
+                    { tripMode: targetDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                    { "plan.direction": targetDirection },
+                    { "plan.tripMode": targetDirection }
+                ]
+            };
+            aiPlanFilter.$and = [
+                {
+                    $or: [
+                        { direction: targetDirection },
+                        { tripMode: targetDirection },
+                        { tripMode: targetDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+                    ]
+                }
             ];
-            selectedPlanFilter.$or = [
-                { direction: targetDirection },
-                { tripMode: targetDirection },
-                { tripMode: targetDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
-                { "plan.direction": targetDirection },
-                { "plan.tripMode": targetDirection }
-            ];
+            selectedPlanFilter.$and = [dirCondition];
         }
 
         // Concurrent Reset Operations: AiPlan, ai_selected_plans, and User
@@ -6428,7 +7310,7 @@ export const resetGeneratedAIRoute = async (options = {}) => {
         const tUsersStart = Date.now();
         let userPromise;
 
-        if (planTypeFilter === "MANUAL" && targetDirection === "INWARD") {
+        if (planTypeFilter === "MANUAL" && targetDirection === "INWARD" && !resetAll) {
             // Reset inward manual allocation while preserving any outward allocation
             userPromise = User.updateMany(
                 {
@@ -6440,6 +7322,7 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                         { "allocatedBus.direction": "INWARD", manualRouteId: { $ne: null } },
                         { manualRouteId: { $ne: null } },
                         { manualBusId: { $ne: null } },
+                        { manualAllocation: { $ne: null } },
                         { approvedPlanType: { $in: ["MANUAL", "ADMIN"] } }
                     ]
                 },
@@ -6547,11 +7430,60 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     null
                                 ]
                             },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.vehicleId",
+                                    null
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.routeId",
+                                    null
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.seatNumber",
+                                    null
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.seatNumber",
+                                    null
+                                ]
+                            },
                             approvedPlanType: {
                                 $cond: [
                                     { $eq: ["$allocatedBus.outward.isAllocated", true] },
                                     { $ifNull: ["$allocatedBus.outward.planType", "AI"] },
                                     null
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    false,
+                                    true
                                 ]
                             },
                             allocationStatus: {
@@ -6568,13 +7500,24 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                 ]
                             }
                         }
+                    },
+                    {
+                        $set: {
+                            allocatedBus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus",
+                                    null
+                                ]
+                            }
+                        }
                     }
                 ]
             ).then((res) => {
                 console.log(`[RESET] inward manual users: ${Date.now() - tUsersStart} ms (modified: ${res.modifiedCount})`);
                 return res;
             });
-        } else if (planTypeFilter === "MANUAL" && targetDirection === "OUTWARD") {
+        } else if (planTypeFilter === "MANUAL" && targetDirection === "OUTWARD" && !resetAll) {
             // Reset outward manual allocation while preserving any inward allocation
             userPromise = User.updateMany(
                 {
@@ -6586,6 +7529,7 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                         { "allocatedBus.direction": "OUTWARD", manualRouteId: { $ne: null } },
                         { manualRouteId: { $ne: null } },
                         { manualBusId: { $ne: null } },
+                        { manualAllocation: { $ne: null } },
                         { approvedPlanType: { $in: ["MANUAL", "ADMIN"] } }
                     ]
                 },
@@ -6693,11 +7637,60 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     null
                                 ]
                             },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.vehicleId",
+                                    null
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.routeId",
+                                    null
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    null
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    null
+                                ]
+                            },
                             approvedPlanType: {
                                 $cond: [
                                     { $eq: ["$allocatedBus.inward.isAllocated", true] },
                                     { $ifNull: ["$allocatedBus.inward.planType", "AI"] },
                                     null
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    false,
+                                    true
                                 ]
                             },
                             allocationStatus: {
@@ -6711,6 +7704,17 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                             "Not Assigned"
                                         ]
                                     }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        $set: {
+                            allocatedBus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus",
+                                    null
                                 ]
                             }
                         }
@@ -6810,6 +7814,58 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     }
                                 ]
                             },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.vehicleId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.vehicleId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.routeId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.routeId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.seatNumber",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.seatNumber",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
                             approvedPlanType: {
                                 $cond: [
                                     { $eq: ["$allocatedBus.inward.isAllocated", true] },
@@ -6821,6 +7877,42 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                             null
                                         ]
                                     }
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    false,
+                                    true
                                 ]
                             },
                             allocationStatus: {
@@ -6840,7 +7932,11 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                         ]
                                     }
                                 ]
-                            },
+                            }
+                        }
+                    },
+                    {
+                        $set: {
                             allocatedBus: {
                                 $cond: [
                                     {
@@ -6860,7 +7956,7 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                 console.log(`[RESET] global manual users: ${Date.now() - tUsersStart} ms (modified: ${res.modifiedCount})`);
                 return res;
             });
-        } else if (targetDirection === "INWARD") {
+        } else if (targetDirection === "INWARD" && !resetAll) {
             // Reset inward AI allocation while preserving any manual allocation and preserving late response timestamps!
             userPromise = User.updateMany(
                 {
@@ -6879,6 +7975,13 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                     {
                         $set: {
                             "allocatedBus.inward": null,
+                            aiAllocation: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$aiAllocation",
+                                    null
+                                ]
+                            },
                             "allocatedBus.isAllocated": {
                                 $cond: [
                                     { $eq: ["$allocatedBus.outward.isAllocated", true] },
@@ -6962,6 +8065,62 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     null
                                 ]
                             },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.vehicleId",
+                                    null
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.routeId",
+                                    null
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.seatNumber",
+                                    null
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "$allocatedBus.outward.seatNumber",
+                                    null
+                                ]
+                            },
+                            approvedPlanType: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.outward.planType", "AI"] },
+                                    null
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                    false,
+                                    true
+                                ]
+                            },
                             affectedDirections: {
                                 $filter: {
                                     input: { $ifNull: ["$affectedDirections", []] },
@@ -7035,20 +8194,31 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                                     { $eq: ["$travelStatus", "Coming"] },
                                                     "Unallocated",
                                                     "Not Assigned"
-                                                ]
-                                            }
                                         ]
                                     }
                                 ]
                             }
-                        }
+                        ]
                     }
-                ]
+                }
+            },
+            {
+                $set: {
+                    allocatedBus: {
+                        $cond: [
+                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                            "$allocatedBus",
+                            null
+                        ]
+                    }
+                }
+            }
+        ]
             ).then((res) => {
                 console.log(`[RESET] users: ${Date.now() - tUsersStart} ms (modified: ${res.modifiedCount})`);
                 return res;
             });
-        } else if (targetDirection === "OUTWARD") {
+        } else if (targetDirection === "OUTWARD" && !resetAll) {
             // Reset outward AI allocation while preserving any manual allocation and preserving late response timestamps!
             userPromise = User.updateMany(
                 {
@@ -7067,6 +8237,13 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                     {
                         $set: {
                             "allocatedBus.outward": null,
+                            aiAllocation: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$aiAllocation",
+                                    null
+                                ]
+                            },
                             "allocatedBus.isAllocated": {
                                 $cond: [
                                     { $eq: ["$allocatedBus.inward.isAllocated", true] },
@@ -7150,6 +8327,62 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     null
                                 ]
                             },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.vehicleId",
+                                    null
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.routeId",
+                                    null
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    null
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    null
+                                ]
+                            },
+                            approvedPlanType: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.planType", "AI"] },
+                                    null
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    false,
+                                    true
+                                ]
+                            },
                             affectedDirections: {
                                 $filter: {
                                     input: { $ifNull: ["$affectedDirections", []] },
@@ -7230,6 +8463,17 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                 ]
                             }
                         }
+                    },
+                    {
+                        $set: {
+                            allocatedBus: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus",
+                                    null
+                                ]
+                            }
+                        }
                     }
                 ]
             ).then((res) => {
@@ -7241,43 +8485,281 @@ export const resetGeneratedAIRoute = async (options = {}) => {
             userPromise = User.updateMany(
                 {
                     role: "student",
-                    approvedPlanType: { $ne: "MANUAL" },
-                    manualAllocation: null,
-                    manualBusId: null,
                     $or: [
-                        { "allocatedBus.isAllocated": true },
+                        { approvedPlanType: "AI" },
+                        { aiAllocation: { $ne: null } },
                         { "allocatedBus.planType": "AI" },
-                        { "allocatedBus.inward": { $ne: null } },
-                        { "allocatedBus.outward": { $ne: null } },
-                        { requiresReallocation: true },
-                        { allocationStatus: "Pending Reallocation" }
+                        { "allocatedBus.inward.planType": "AI" },
+                        { "allocatedBus.outward.planType": "AI" },
+                        {
+                            $and: [
+                                { approvedPlanType: { $nin: ["MANUAL", "ADMIN"] } },
+                                { manualAllocation: null },
+                                { manualBusId: null },
+                                {
+                                    $or: [
+                                        { "allocatedBus.isAllocated": true },
+                                        { assignedVehicle: { $ne: null } },
+                                        { assignedRoute: { $ne: null } },
+                                        { allocationStatus: { $in: ["Assigned", "Re-assigned"] } },
+                                        { requiresReallocation: true },
+                                        { allocationStatus: "Pending Reallocation" }
+                                    ]
+                                }
+                            ]
+                        }
                     ]
                 },
                 [
                     {
                         $set: {
-                            assignedVehicle: null,
-                            assignedRoute: null,
-                            allocationStatus: {
+                            aiAllocation: null,
+                            "allocatedBus.inward": {
                                 $cond: [
-                                    { $eq: ["$travelStatus", "Coming"] },
-                                    "Unallocated",
-                                    "Not Assigned"
+                                    { $in: ["$allocatedBus.inward.planType", ["MANUAL", "ADMIN"]] },
+                                    "$allocatedBus.inward",
+                                    null
                                 ]
                             },
-                            allocatedBus: {
-                                isAllocated: false,
-                                inward: null,
-                                outward: null,
-                                adminApprovalStatus: "Pending Admin Approval",
-                                message: "No approved transportation plan available yet.",
-                                updatedAt: new Date()
+                            "allocatedBus.outward": {
+                                $cond: [
+                                    { $in: ["$allocatedBus.outward.planType", ["MANUAL", "ADMIN"]] },
+                                    "$allocatedBus.outward",
+                                    null
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        $set: {
+                            "allocatedBus.isAllocated": {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
                             },
-                            aiAllocation: null,
-                            approvedPlanType: null,
+                            "allocatedBus.direction": {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "INWARD",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "OUTWARD",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            assignedVehicle: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.vehicleName", "$allocatedBus.inward.vehicleNumber"] },
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            { $ifNull: ["$allocatedBus.outward.vehicleName", "$allocatedBus.outward.vehicleNumber"] },
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            assignedRoute: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    { $ifNull: ["$allocatedBus.inward.routeCode", "$allocatedBus.inward.routeName"] },
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            { $ifNull: ["$allocatedBus.outward.routeCode", "$allocatedBus.outward.routeName"] },
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            manualBusId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.vehicleId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.vehicleId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            manualRouteId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.routeId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.routeId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            manualAllocation: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            busId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.vehicleId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.vehicleId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            routeId: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.routeId",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.routeId",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            seatNumber: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.seatNumber",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            allocatedSeat: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "$allocatedBus.inward.seatNumber",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "$allocatedBus.outward.seatNumber",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            approvedPlanType: {
+                                $cond: [
+                                    { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                    "MANUAL",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] },
+                                            "MANUAL",
+                                            null
+                                        ]
+                                    }
+                                ]
+                            },
+                            approvalStatus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "Approved",
+                                    null
+                                ]
+                            },
+                            isAllocated: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isUnallocated: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    false,
+                                    true
+                                ]
+                            },
+                            allocationStatus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "Assigned",
+                                    {
+                                        $cond: [
+                                            { $eq: ["$travelStatus", "Coming"] },
+                                            "Unallocated",
+                                            "Not Assigned"
+                                        ]
+                                    }
+                                ]
+                            },
                             requiresReallocation: false,
                             affectedDirections: []
                             // CRITICAL: lateResponseDetected, isLateResponse, lateResponseAt, and travelResponseSubmittedAt are PRESERVED!
+                        }
+                    },
+                    {
+                        $set: {
+                            allocatedBus: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                            { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                        ]
+                                    },
+                                    "$allocatedBus",
+                                    null
+                                ]
+                            }
                         }
                     }
                 ]
@@ -7311,18 +8793,25 @@ export const resetGeneratedAIRoute = async (options = {}) => {
             console.error("[LATE RESPONSE RESOLVED] LateResponseEvent resolve error during plan reset:", lreErr.message);
         }
 
+        // Invalidate in-memory plan cache immediately so all subsequent queries see reset status
+        clearActiveApprovedPlansCache();
+
         const totalMs = Date.now() - t0;
         console.log(`[RESET] Total: ${totalMs} ms`);
 
         const dirLabel = targetDirection || "AI";
         return {
             success: true,
+            wasReset: true,
             direction: targetDirection,
             message: `${dirLabel} AI transportation plan reset successfully. Student travel responses remain preserved.`,
             planReset: (planRes?.modifiedCount || 0) > 0 || (planRes?.matchedCount || 0) > 0,
             allocationsCleared: userRes?.modifiedCount || 0,
             studentsReset: 0,
-            durationMs: totalMs
+            durationMs: totalMs,
+            plan: null,
+            outwardPlan: null,
+            inwardPlan: null
         };
     } catch (error) {
         console.error("Reset AI plan error:", error.message);

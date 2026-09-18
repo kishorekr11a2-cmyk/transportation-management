@@ -17,8 +17,10 @@ import {
 import LocationSearchBox from "../components/LocationSearchBox";
 import {
     getManualPlan,
-    confirmManualPlan
+    confirmManualPlan,
+    resetManualPlan
 } from "../services/aiAgentService";
+import ResetManualPlanModal from "../components/ResetManualPlanModal";
 import "../css/RouteManagement.css";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -72,6 +74,8 @@ export default function RouteManagement() {
     const [manualPlanLoading, setManualPlanLoading] = useState(false);
     const [planActionLoading, setPlanActionLoading] = useState(false);
     const [activePlanDirection, setActivePlanDirection] = useState("INWARD");
+    const [showManualResetModal, setShowManualResetModal] = useState(false);
+    const [manualPlanResetting, setManualPlanResetting] = useState(false);
 
     // ==================================================
     // 1. VEHICLE ALLOCATION AVAILABILITY (SCHEDULED + AVAILABLE + UNASSIGNED)
@@ -388,6 +392,51 @@ export default function RouteManagement() {
             toast.error(msg);
         } finally {
             setPlanActionLoading(false);
+        }
+    };
+
+    const handleResetManualPlan = async () => {
+        try {
+            setManualPlanResetting(true);
+            setError("");
+            setSuccessMessage("");
+            const res = await resetManualPlan({ direction: activePlanDirection });
+            if (res?.success) {
+                const msg = res.message || `Admin manual ${activePlanDirection} plan reset successfully.`;
+                setSuccessMessage(msg);
+                toast.success(msg);
+                setShowManualResetModal(false);
+
+                try {
+                    localStorage.removeItem("active_manual_plan_direction");
+                    const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
+                    if (activeSelection?.planType === "ADMIN" || activeSelection?.planType === "MANUAL") {
+                        localStorage.removeItem("active_ai_selection");
+                    }
+                    if (activePlanDirection === "OUTWARD") {
+                        const storedOut = JSON.parse(localStorage.getItem("active_outward_plan") || "null");
+                        if (storedOut?.planType === "ADMIN" || storedOut?.planType === "MANUAL") {
+                            localStorage.removeItem("active_outward_plan");
+                        }
+                    } else {
+                        const storedIn = JSON.parse(localStorage.getItem("active_inward_plan") || "null");
+                        if (storedIn?.planType === "ADMIN" || storedIn?.planType === "MANUAL") {
+                            localStorage.removeItem("active_inward_plan");
+                        }
+                    }
+                } catch (e) {}
+
+                await Promise.all([loadDataSilently(), fetchManualPlan(activePlanDirection)]);
+            } else {
+                throw new Error(res?.message || "Failed to reset manual plan.");
+            }
+        } catch (err) {
+            console.error("Reset manual plan error:", err);
+            const msg = err.response?.data?.message || err.message || "Failed to reset manual plan.";
+            setError(msg);
+            toast.error(msg);
+        } finally {
+            setManualPlanResetting(false);
         }
     };
 
@@ -748,11 +797,7 @@ export default function RouteManagement() {
                 toast.success(msg);
             }
 
-            const routeRes = await api.get("/routes");
-            const routeData = Array.isArray(routeRes.data)
-                ? routeRes.data
-                : routeRes.data?.routes || routeRes.data?.data || [];
-            setRoutes(routeData);
+            await loadDataSilently();
             clearRoute();
 
             if (routeDirection && routeDirection !== activePlanDirection) {
@@ -823,7 +868,7 @@ export default function RouteManagement() {
         try {
             setLoading(true);
             await api.delete(`/routes/${route._id}`);
-            setRoutes((prev) => prev.filter((r) => r._id !== route._id));
+            await loadDataSilently();
             if (editingRoute?._id === route._id) {
                 clearRoute();
             }
@@ -1033,13 +1078,26 @@ export default function RouteManagement() {
                                 type="button"
                                 className="btn-ok-manual"
                                 onClick={handleManualPlanOk}
-                                disabled={planActionLoading}
+                                disabled={planActionLoading || manualPlanResetting}
                                 title={((manualPlan?.totalRoutes || 0) > 0) ? `Confirm & submit ${activePlanDirection} plan to AI Route Management` : `Assign a bus to at least one ${activePlanDirection} route first`}
                                 style={{
-                                    cursor: planActionLoading ? "wait" : "pointer"
+                                    cursor: (planActionLoading || manualPlanResetting) ? "wait" : "pointer"
                                 }}
                             >
                                 {planActionLoading ? "⏳ Submitting..." : "✓ OK"}
+                            </button>
+
+                            <button
+                                type="button"
+                                className="btn-reset-manual"
+                                onClick={() => setShowManualResetModal(true)}
+                                disabled={planActionLoading || manualPlanResetting}
+                                title={`Reset Admin Manual ${activePlanDirection} Plan and clear manual allocations`}
+                                style={{
+                                    cursor: (planActionLoading || manualPlanResetting) ? "wait" : "pointer"
+                                }}
+                            >
+                                {manualPlanResetting ? "⏳ Resetting..." : "🔄 Reset Manual Plan"}
                             </button>
                         </div>
                     </div>
@@ -1498,6 +1556,15 @@ export default function RouteManagement() {
                     </div>
                 )}
             </div>
+
+            {/* Safe Reset Manual Plan Confirmation Modal */}
+            <ResetManualPlanModal
+                isOpen={showManualResetModal}
+                onClose={() => !manualPlanResetting && setShowManualResetModal(false)}
+                onConfirm={handleResetManualPlan}
+                isResetting={manualPlanResetting}
+                direction={activePlanDirection}
+            />
         </div>
     );
 }

@@ -38,6 +38,14 @@ function ExcelUpload() {
                 response.data.message || "Excel Uploaded Successfully"
             );
 
+            try {
+                sessionStorage.removeItem("cached_users");
+                localStorage.removeItem("active_ai_plan");
+                localStorage.removeItem("active_ai_selection");
+                localStorage.removeItem("active_outward_plan");
+                localStorage.removeItem("active_inward_plan");
+            } catch {}
+
             setFile(null);
             const fileInput = document.getElementById("excelFile");
             if (fileInput) fileInput.value = "";

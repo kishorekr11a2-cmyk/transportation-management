@@ -14,22 +14,9 @@ import "../css/UserManagement.css";
 function UserManagement() {
     const navigate = useNavigate();
 
-    // Data states with instant session hydration
-    const [users, setUsers] = useState(() => {
-        try {
-            const cached = sessionStorage.getItem("cached_users");
-            return cached ? JSON.parse(cached) : [];
-        } catch {
-            return [];
-        }
-    });
-    const [loading, setLoading] = useState(() => {
-        try {
-            return !sessionStorage.getItem("cached_users");
-        } catch {
-            return true;
-        }
-    });
+    // Data states (always fresh from backend)
+    const [users, setUsers] = useState([]);
+    const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState(null);
 
     // Search and Filter states
@@ -92,11 +79,6 @@ function UserManagement() {
                     console.log(`[LateResponse] Users loaded: ${userData.length}`);
                     setUsers(userData);
                     setLoading(false);
-                    try {
-                        sessionStorage.setItem("cached_users", JSON.stringify(userData));
-                    } catch {
-                        // Ignore storage limits
-                    }
                     return userData;
                 });
 
@@ -466,9 +448,6 @@ function UserManagement() {
 
             if (response.data?.success) {
                 localStorage.removeItem("active_ai_plan");
-                try {
-                    sessionStorage.removeItem("cached_users");
-                } catch {}
 
                 setUsers((prevUsers) =>
                     prevUsers.map((u) => ({
@@ -521,9 +500,6 @@ function UserManagement() {
             setResettingUserIds((prev) => new Set(prev).add(userId));
             const response = await api.put(`/users/${userId}/reset-travel-status`);
             if (response.data?.success) {
-                try {
-                    sessionStorage.removeItem("cached_users");
-                } catch {}
                 const updatedUser = response.data.user;
                 setUsers((prev) =>
                     prev.map((u) => (u.userId === userId || u._id === userId ? {
@@ -566,6 +542,7 @@ function UserManagement() {
                 setUsers((prev) => prev.filter((u) => u._id !== targetId && u.userId !== targetId));
                 toast.success(`User ${userToDelete.name || userToDelete.userId} deleted`);
                 setUserToDelete(null);
+                await fetchUsers(false);
             }
         } catch (error) {
             console.error("Delete User Error:", error);
@@ -603,6 +580,7 @@ function UserManagement() {
                     country: "India",
                     travelStatus: "Coming"
                 });
+                await fetchUsers(false);
             }
         } catch (error) {
             console.error("Add User Error:", error);

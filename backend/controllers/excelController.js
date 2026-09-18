@@ -2,6 +2,7 @@ import xlsx from "xlsx";
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import { isDbConnected } from "../config/db.js";
+import { clearActiveApprovedPlansCache } from "../services/studentTransportStatusService.js";
 
 // Helper to look up key case-insensitively with alias support
 const getFieldValue = (row, ...keys) => {
@@ -201,6 +202,8 @@ export const uploadExcel = async (req, res) => {
             role: "student",
             userId: { $nin: validUserIds }
         });
+
+        clearActiveApprovedPlansCache();
 
         res.status(200).json({
             success: true,

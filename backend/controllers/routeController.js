@@ -8,6 +8,7 @@ import {
     resetGeneratedAIRoute
 } from "../services/aiAgentService.js";
 import { generateManualPlanRecommendations } from "../services/manualPlanRecommendationService.js";
+import { clearActiveApprovedPlansCache } from "../services/studentTransportStatusService.js";
 
 const isValidStop = (stop) => {
     return (
@@ -195,6 +196,8 @@ export const addRoute = async (req, res) => {
             "vehicleName capacity"
         );
 
+        clearActiveApprovedPlansCache();
+
         res.status(201).json({
             success: true,
             message: "Route created successfully.",
@@ -366,6 +369,8 @@ export const updateRoute = async (req, res) => {
             });
         }
 
+        clearActiveApprovedPlansCache();
+
         res.json({
             success: true,
             message: "Route updated successfully.",
@@ -398,6 +403,8 @@ export const deleteRoute = async (req, res) => {
                 message: "Route not found."
             });
         }
+
+        clearActiveApprovedPlansCache();
 
         res.json({
             success: true,
@@ -559,6 +566,8 @@ export const approveManualPlan = async (req, res) => {
             allocationMode: "MANUAL"
         });
 
+        clearActiveApprovedPlansCache();
+
         res.json({
             success: true,
             message: `Admin manual ${canonicalDirection} transportation plan approved and bus allocations published to all confirmed students successfully.`,
@@ -630,6 +639,8 @@ export const resetManualPlan = async (req, res) => {
             ]);
         }
 
+        clearActiveApprovedPlansCache();
+
         res.json({
             success: true,
             message: "Admin Manual Route Plan reset successfully.",
@@ -641,6 +652,67 @@ export const resetManualPlan = async (req, res) => {
         res.status(500).json({
             success: false,
             message: error.message || "Unable to reset manual plan."
+        });
+    }
+};
+
+// ======================================
+// RESET MANUAL PLAN ALLOCATIONS ONLY
+// Removes only user-to-vehicle allocations created by manual plan
+// Preserves manual routes, vehicles, student travel status, and AI plan
+// ======================================
+export const resetManualAllocations = async (req, res) => {
+    try {
+        const direction = req.body?.direction || req.query?.direction || null;
+        const canonicalDirection = direction ? ((String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD") : null;
+
+        // Reset manual user allocations and ai_selected_plans (MANUAL/ADMIN) without deleting Route models or submissions
+        const result = await resetGeneratedAIRoute({ direction: canonicalDirection, planType: "MANUAL" });
+
+        if (mongoose.connection?.db) {
+            const selPlanDirQuery = canonicalDirection ? {
+                $or: [
+                    { direction: canonicalDirection },
+                    { tripMode: canonicalDirection },
+                    { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                    { "plan.direction": canonicalDirection },
+                    { "plan.tripMode": canonicalDirection }
+                ]
+            } : {};
+
+            await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                {
+                    planType: { $in: ["ADMIN", "MANUAL"] },
+                    ...selPlanDirQuery
+                },
+                {
+                    $set: {
+                        active: false,
+                        status: "reset",
+                        approved: false,
+                        resetAt: new Date(),
+                        requiresReview: false,
+                        hasLateResponses: false,
+                        pendingReallocation: false,
+                        affectedDirections: []
+                    }
+                }
+            );
+        }
+
+        clearActiveApprovedPlansCache();
+
+        res.json({
+            success: true,
+            message: "Manual plan allocations reset successfully",
+            direction: canonicalDirection,
+            result
+        });
+    } catch (error) {
+        console.error("Reset manual allocations error:", error);
+        res.status(500).json({
+            success: false,
+            message: error.message || "Unable to reset manual plan allocations."
         });
     }
 };

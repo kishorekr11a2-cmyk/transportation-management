@@ -11,7 +11,7 @@ import {
     getManualPlan,
     getManualPlanRecommendations,
     approveManualPlan,
-    resetManualPlan,
+    resetManualPlanAllocations,
     saveSelectedPlan,
     getSelectedPlan,
     fetchLateResponses,
@@ -21,7 +21,7 @@ import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
 import OptimizationResultSummary from "../components/OptimizationResultSummary";
 import ResetRouteModal from "../components/ResetRouteModal";
-import ResetManualPlanModal from "../components/ResetManualPlanModal";
+import ResetManualAllocationModal from "../components/ResetManualAllocationModal";
 import SelectGeneratedRouteModal from "../components/SelectGeneratedRouteModal";
 import RecommendedRouteMapModal from "../components/RecommendedRouteMapModal";
 import api from "../services/api";
@@ -182,40 +182,32 @@ export default function AIAgent() {
     const [planData, setPlanData] = useState(() => {
         try {
             const cached = localStorage.getItem("active_ai_plan");
+            if (cached) {
+                const p = JSON.parse(cached);
+                if (p && (p.aiPlan || (Array.isArray(p.buses) && p.buses.length > 0))) {
+                    return p;
+                }
+            }
+        } catch {
+            // fallback
+        }
+        return null;
+    });
+    const [outwardPlan, setOutwardPlan] = useState(() => {
+        try {
+            const cached = localStorage.getItem("active_outward_plan");
             return cached ? JSON.parse(cached) : null;
         } catch {
             return null;
         }
     });
-
-    const [outwardPlan, setOutwardPlan] = useState(() => {
-        try {
-            const cached = localStorage.getItem("active_outward_plan");
-            if (cached) return JSON.parse(cached);
-            const active = localStorage.getItem("active_ai_plan");
-            if (active) {
-                const p = JSON.parse(active);
-                if (p?.direction === "OUTWARD" || p?.tripMode === "FROM_SOURCE" || p?.tripMode === "OUTWARD") return p;
-            }
-        } catch {
-            // fallback
-        }
-        return null;
-    });
-
     const [inwardPlan, setInwardPlan] = useState(() => {
         try {
             const cached = localStorage.getItem("active_inward_plan");
-            if (cached) return JSON.parse(cached);
-            const active = localStorage.getItem("active_ai_plan");
-            if (active) {
-                const p = JSON.parse(active);
-                if (p?.direction === "INWARD" || p?.tripMode === "TO_DESTINATION" || p?.tripMode === "INWARD") return p;
-            }
+            return cached ? JSON.parse(cached) : null;
         } catch {
-            // fallback
+            return null;
         }
-        return null;
     });
 
     const [planDirectionTab, setPlanDirectionTab] = useState(() => {
@@ -237,23 +229,7 @@ export default function AIAgent() {
         return "OUTWARD";
     });
 
-    const [selectedPlanType, setSelectedPlanType] = useState(() => {
-        try {
-            const cachedSel = localStorage.getItem("active_ai_selection");
-            if (cachedSel) {
-                const s = JSON.parse(cachedSel);
-                return s?.planType || "AI";
-            }
-            const cached = localStorage.getItem("active_ai_plan");
-            if (cached) {
-                const p = JSON.parse(cached);
-                if (p?.isApproved) return "AI";
-            }
-        } catch {
-            // fallback
-        }
-        return "";
-    });
+    const [selectedPlanType, setSelectedPlanType] = useState("");
 
     const [savingSelection, setSavingSelection] =
         useState(false);
@@ -263,14 +239,7 @@ export default function AIAgent() {
 
     const navigate = useNavigate();
 
-    const [lastSelection, setLastSelection] = useState(() => {
-        try {
-            const cached = localStorage.getItem("active_ai_selection");
-            return cached ? JSON.parse(cached) : null;
-        } catch {
-            return null;
-        }
-    });
+    const [lastSelection, setLastSelection] = useState(null);
 
     const isPlanSaved = useMemo(() => {
         const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
@@ -283,16 +252,16 @@ export default function AIAgent() {
     const [showResetModal, setShowResetModal] =
         useState(false);
 
-    const [showManualResetModal, setShowManualResetModal] =
+    const [showManualAllocResetModal, setShowManualAllocResetModal] =
+        useState(false);
+
+    const [manualAllocResetting, setManualAllocResetting] =
         useState(false);
 
     const [showSelectRouteModal, setShowSelectRouteModal] =
         useState(false);
 
     const [resetting, setResetting] =
-        useState(false);
-
-    const [manualPlanResetting, setManualPlanResetting] =
         useState(false);
 
     const [resetSuccessMessage, setResetSuccessMessage] =
@@ -342,13 +311,7 @@ export default function AIAgent() {
 
 
 
-    const [loading, setLoading] = useState(() => {
-        try {
-            return !localStorage.getItem("active_ai_plan");
-        } catch {
-            return true;
-        }
-    });
+    const [loading, setLoading] = useState(true);
 
     const handleSelectAiRouteToView = (route) => {
         setShowSelectRouteModal(false);
@@ -431,20 +394,10 @@ export default function AIAgent() {
                 setData(response);
                 setMetricsLoading(false);
             }
-
-            // If travel status has been reset and there are 0 confirmed passengers, clear generated routes
-            const comingCount = Number(response?.confirmedUserCount ?? response?.comingUsers ?? 0);
-            if (comingCount === 0) {
-                localStorage.removeItem("active_ai_plan");
-                localStorage.removeItem("active_ai_selection");
-                localStorage.removeItem("active_outward_plan");
-                localStorage.removeItem("active_inward_plan");
-                if (isMounted) {
-                    setPlanData(null);
-                    setSelectedPlanType("");
-                    setLastSelection(null);
-                }
-            }
+            // NOTE: Do NOT clear the AI plan here based on comingCount.
+            // Student headcount from metrics is a live snapshot and may be 0 due to DB lag,
+            // a race condition, or students not yet having responded — none of which mean the
+            // plan was reset. Only an explicit "Reset AI Generated Route" action must clear the plan.
         } catch (error) {
             console.error(
                 "Unable to load AI data:",
@@ -459,85 +412,131 @@ export default function AIAgent() {
 
     const loadActivePlan = async (isInitial = false) => {
         try {
-            const response = await getActivePlan();
+            const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+            const response = await getActivePlan({ direction: currentDir });
 
-            if (response?.success) {
-                const outP = response.outwardPlan || null;
-                const inP = response.inwardPlan || null;
-                setOutwardPlan(outP);
-                setInwardPlan(inP);
+            // Only the backend's explicit reset signal (wasReset:true) may clear frontend plan state.
+            // A null plan, success:false, or any transient error must NEVER wipe persisted state,
+            // because those can result from DB lag, race conditions, or suppression logic —
+            // none of which mean the admin actually clicked "Reset AI Generated Route".
+
+            if (response?.wasReset === true) {
+                // Server confirmed an explicit reset — clear everything
+                localStorage.removeItem("active_ai_plan");
+                localStorage.removeItem("active_ai_selection");
+                localStorage.removeItem("active_outward_plan");
+                localStorage.removeItem("active_inward_plan");
+                sessionStorage.removeItem("active_ai_plan");
+                sessionStorage.removeItem("active_ai_selection");
+                sessionStorage.removeItem("active_outward_plan");
+                sessionStorage.removeItem("active_inward_plan");
+                setPlanData(null);
+                setOutwardPlan(null);
+                setInwardPlan(null);
+                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
+                return;
+            }
+
+            if (!response?.success) {
+                // Transient failure (network, DB timeout, 5xx) — do NOT touch plan state.
+                // The persisted plan in localStorage/React state remains unchanged.
+                console.warn("loadActivePlan: non-success response, preserving existing state.", response);
+                return;
+            }
+
+            // success === true path
+            const outP = response.outwardPlan || null;
+            const inP = response.inwardPlan || null;
+            setOutwardPlan(outP);
+            setInwardPlan(inP);
+
+            try {
+                if (outP) localStorage.setItem("active_outward_plan", JSON.stringify(outP));
+                // Do NOT removeItem when outP/inP is null — absence in this fetch does not
+                // mean the plan was deleted; it may simply be the wrong direction or hidden
+                // by a backend filter. Only clear when wasReset===true (handled above).
+                if (inP) localStorage.setItem("active_inward_plan", JSON.stringify(inP));
+            } catch {
+                // Ignore quota error
+            }
+
+            // Strictly match the current direction tab; do NOT fall back across directions
+            const activePlan = (currentDir === "OUTWARD" ? outP : inP) || (isInitial ? response.plan : null);
+
+            if (activePlan) {
+                setPlanData(activePlan);
+                const activeDir = activePlan.direction || (activePlan.tripMode === "FROM_SOURCE" || activePlan.tripMode === "OUTWARD" ? "OUTWARD" : "INWARD");
+                setPlanDirectionTab(activeDir);
 
                 try {
-                    if (outP) localStorage.setItem("active_outward_plan", JSON.stringify(outP));
-                    else localStorage.removeItem("active_outward_plan");
-                    if (inP) localStorage.setItem("active_inward_plan", JSON.stringify(inP));
-                    else localStorage.removeItem("active_inward_plan");
+                    localStorage.setItem("active_ai_plan", JSON.stringify(activePlan));
                 } catch {
                     // Ignore quota error
                 }
 
-                const activePlan = response.plan || inP || outP || null;
+                // Restore endpoint ONLY on initial hydration if user has not yet interacted
+                if (isInitial && !userInteractedRef.current) {
+                    const hasPlanSource = activePlan.source && hasValidCoordinates(activePlan.source);
+                    const hasPlanDest = activePlan.destination && hasValidCoordinates(activePlan.destination);
+                    const hasPlanStart = activePlan.startingPoint && hasValidCoordinates(activePlan.startingPoint);
 
-                if (activePlan) {
-                    setPlanData(activePlan);
-                    const activeDir = activePlan.direction || (activePlan.tripMode === "FROM_SOURCE" || activePlan.tripMode === "OUTWARD" ? "OUTWARD" : "INWARD");
-                    setPlanDirectionTab(activeDir);
-
-                    try {
-                        localStorage.setItem("active_ai_plan", JSON.stringify(activePlan));
-                    } catch {
-                        // Ignore quota error
-                    }
-
-                    // Restore endpoint ONLY on initial hydration if user has not yet interacted
-                    if (isInitial && !userInteractedRef.current) {
-                        const hasPlanSource = activePlan.source && hasValidCoordinates(activePlan.source);
-                        const hasPlanDest = activePlan.destination && hasValidCoordinates(activePlan.destination);
-                        const hasPlanStart = activePlan.startingPoint && hasValidCoordinates(activePlan.startingPoint);
-
-                        if (activePlan.tripMode === "FROM_SOURCE" || (hasPlanSource && !hasPlanDest)) {
-                            if (hasPlanSource) {
-                                setSourceLocation(activePlan.source);
-                                setDestinationLocation(null);
-                                setActiveEndpointField("source");
-                                setTripMode("FROM_SOURCE");
-                            }
-                        } else if (activePlan.tripMode === "TO_DESTINATION" || hasPlanDest || hasPlanStart) {
-                            const dest = hasPlanDest ? activePlan.destination : (hasPlanStart ? activePlan.startingPoint : null);
-                            if (dest) {
-                                setDestinationLocation(dest);
-                                setSourceLocation(null);
-                                setActiveEndpointField("destination");
-                                setTripMode("TO_DESTINATION");
-                            }
-                        } else if (hasPlanSource) {
+                    if (activePlan.tripMode === "FROM_SOURCE" || (hasPlanSource && !hasPlanDest)) {
+                        if (hasPlanSource) {
                             setSourceLocation(activePlan.source);
                             setDestinationLocation(null);
                             setActiveEndpointField("source");
                             setTripMode("FROM_SOURCE");
                         }
+                    } else if (activePlan.tripMode === "TO_DESTINATION" || hasPlanDest || hasPlanStart) {
+                        const dest = hasPlanDest ? activePlan.destination : (hasPlanStart ? activePlan.startingPoint : null);
+                        if (dest) {
+                            setDestinationLocation(dest);
+                            setSourceLocation(null);
+                            setActiveEndpointField("destination");
+                            setTripMode("TO_DESTINATION");
+                        }
+                    } else if (hasPlanSource) {
+                        setSourceLocation(activePlan.source);
+                        setDestinationLocation(null);
+                        setActiveEndpointField("source");
+                        setTripMode("FROM_SOURCE");
                     }
-                } else {
-                    localStorage.removeItem("active_ai_plan");
-                    localStorage.removeItem("active_ai_selection");
-                    setPlanData(null);
-                    setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
                 }
-            } else {
-                localStorage.removeItem("active_ai_plan");
-                localStorage.removeItem("active_ai_selection");
-                localStorage.removeItem("active_outward_plan");
-                localStorage.removeItem("active_inward_plan");
-                setPlanData(null);
-                setOutwardPlan(null);
-                setInwardPlan(null);
-                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
+            } else if (isInitial) {
+                // Priority 2: Safe localStorage recovery if backend has no active plan and wasReset is false
+                try {
+                    const cached = localStorage.getItem("active_ai_plan");
+                    if (cached) {
+                        const parsed = JSON.parse(cached);
+                        if (parsed && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
+                            setPlanData((prev) => prev || parsed);
+                        }
+                    }
+                } catch {
+                    // Ignore parsing error
+                }
             }
+            // If activePlan is null but wasReset is NOT true: a valid plan may exist for the
+            // other direction or the backend suppressed it temporarily. Preserve current state.
         } catch (error) {
+            // Network or unexpected error — do NOT clear plan state.
             console.error(
                 "Unable to load active AI plan:",
                 error
             );
+            if (isInitial) {
+                try {
+                    const cached = localStorage.getItem("active_ai_plan");
+                    if (cached) {
+                        const parsed = JSON.parse(cached);
+                        if (parsed && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
+                            setPlanData((prev) => prev || parsed);
+                        }
+                    }
+                } catch {
+                    // Ignore error
+                }
+            }
         }
     };
 
@@ -665,16 +664,15 @@ export default function AIAgent() {
         }
     };
 
-    const handleResetAdminManualPlan = async () => {
+    const handleResetManualPlanAllocations = async () => {
         const currentDir = manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
         try {
-            setManualPlanResetting(true);
-            const res = await resetManualPlan({ direction: currentDir });
+            setManualAllocResetting(true);
+            const res = await resetManualPlanAllocations({ direction: currentDir });
             if (res?.success) {
-                toast.success("Admin Manual Route Plan reset successfully.");
-                setShowManualResetModal(false);
+                toast.success("Manual plan allocations reset successfully");
+                setShowManualAllocResetModal(false);
 
-                // Clean up only manual-plan-related local storage, NEVER touch AI plan cache!
                 try {
                     localStorage.removeItem("active_manual_plan_direction");
                     const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
@@ -706,14 +704,25 @@ export default function AIAgent() {
                     fetchLateResponses()
                 ]);
             } else {
-                throw new Error(res?.message || "Failed to reset manual plan.");
+                throw new Error(res?.message || "Failed to reset manual plan allocations.");
             }
         } catch (err) {
-            console.error("Reset manual plan error:", err);
-            toast.error(err.response?.data?.message || err.message || "Failed to reset manual plan.");
+            console.error("Reset manual plan allocations error:", err);
+            toast.error(err.response?.data?.message || err.message || "Failed to reset manual plan allocations.");
         } finally {
-            setManualPlanResetting(false);
+            setManualAllocResetting(false);
         }
+    };
+
+    const handleResetManualPlanAllocationsClick = () => {
+        if (typeof window !== "undefined" && window.confirm && window.confirm.toString().indexOf("[native code]") === -1) {
+            const confirmed = window.confirm("Are you sure you want to remove all manual plan allocations? This will not delete your manual routes or affect the AI plan.");
+            if (confirmed) {
+                handleResetManualPlanAllocations();
+            }
+            return;
+        }
+        setShowManualAllocResetModal(true);
     };
 
     const handleFetchManualRecommendations = async () => {
@@ -963,6 +972,11 @@ export default function AIAgent() {
 
             try {
                 localStorage.setItem("active_ai_plan", JSON.stringify(response));
+                if (isOutward) {
+                    localStorage.setItem("active_outward_plan", JSON.stringify(response));
+                } else {
+                    localStorage.setItem("active_inward_plan", JSON.stringify(response));
+                }
             } catch {
                 // Ignore storage quota errors
             }
@@ -988,7 +1002,7 @@ export default function AIAgent() {
             stageTimersRef.current.forEach(clearTimeout);
             stageTimersRef.current = [];
 
-            setPlanData(null);
+            // Do not clear setPlanData(null); preserve previously visible valid plan on generation error
 
             setGenerationError(
                 error?.response?.data?.message ||
@@ -1007,68 +1021,42 @@ export default function AIAgent() {
             setResetting(true);
 
             const targetDirection = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const response =
-                await resetAIPlan({ direction: targetDirection });
+            const response = await resetAIPlan({ direction: targetDirection, resetAll: true });
 
             if (response?.success) {
                 userInteractedRef.current = true;
                 setShowResetModal(false);
 
-                if (targetDirection === "INWARD") {
-                    setInwardPlan(null);
-                    try { localStorage.removeItem("active_inward_plan"); } catch {}
-                    if (outwardPlan) {
-                        setPlanData(outwardPlan);
-                        setPlanDirectionTab("OUTWARD");
-                        setActiveEndpointField("source");
-                        setTripMode("FROM_SOURCE");
-                    } else {
-                        localStorage.removeItem("active_ai_plan");
-                        localStorage.removeItem("active_ai_selection");
-                        setPlanData(null);
-                        setSelectedPlanType("");
-                        setLastSelection(null);
-                    }
-                } else if (targetDirection === "OUTWARD") {
-                    setOutwardPlan(null);
-                    try { localStorage.removeItem("active_outward_plan"); } catch {}
-                    if (inwardPlan) {
-                        setPlanData(inwardPlan);
-                        setPlanDirectionTab("INWARD");
-                        setActiveEndpointField("destination");
-                        setTripMode("TO_DESTINATION");
-                    } else {
-                        localStorage.removeItem("active_ai_plan");
-                        localStorage.removeItem("active_ai_selection");
-                        setPlanData(null);
-                        setSelectedPlanType("");
-                        setLastSelection(null);
-                    }
-                } else {
+                // Fully clear all AI plan state from frontend memory
+                setPlanData(null);
+                setInwardPlan(null);
+                setOutwardPlan(null);
+                setSelectedPlanType("");
+                setLastSelection(null);
+                setGenerationError("");
+                setSelectionMessage("");
+
+                // Remove all generated AI plan storage keys across localStorage and sessionStorage
+                try {
                     localStorage.removeItem("active_ai_plan");
                     localStorage.removeItem("active_ai_selection");
                     localStorage.removeItem("active_outward_plan");
                     localStorage.removeItem("active_inward_plan");
-                    setPlanData(null);
-                    setOutwardPlan(null);
-                    setInwardPlan(null);
-                    setSelectedPlanType("");
-                    setLastSelection(null);
+                    sessionStorage.removeItem("active_ai_plan");
+                    sessionStorage.removeItem("active_ai_selection");
+                    sessionStorage.removeItem("active_outward_plan");
+                    sessionStorage.removeItem("active_inward_plan");
+                } catch {
+                    // Ignore storage errors
                 }
 
-                setGenerationError("");
-                setSelectionMessage("");
-
                 const dirName = targetDirection === "INWARD" ? "Inward" : targetDirection === "OUTWARD" ? "Outward" : "AI";
-                const msg =
-                    `${dirName} route recommendation reset successfully. Student travel responses remain preserved.`;
+                const msg = `${dirName} route recommendation reset successfully. Student travel responses remain preserved.`;
 
                 setResetSuccessMessage(msg);
-
-                toast.success(msg);
-                setResetting(false);
-                loadAIData(); // Refresh in background without delaying reset feedback
-                fetchLateResponses(); // Update late response counts immediately
+                toast.success("AI plan allocations reset successfully");
+                loadAIData(); // Refresh counts in background
+                fetchLateResponses(); // Update late response events immediately
             } else {
                 throw new Error(
                     response?.message ||
@@ -1278,11 +1266,16 @@ export default function AIAgent() {
         Number(aiPlan?.unassignedUsers || 0);
 
     const aiCapacity =
-        Number(aiPlan?.totalCapacity || 0);
+        Number(aiPlan?.allocatedSeats || aiPlan?.totalCapacity || 0);
 
     const aiAvailableCapacity =
         Number(
-            aiPlan?.availableTotalCapacity || 0
+            aiPlan?.totalAvailableCapacity || aiPlan?.availableTotalCapacity || summary?.totalAvailableCapacity || 0
+        );
+
+    const aiPhysicalCapacity =
+        Number(
+            aiPlan?.physicalFleetCapacity || aiPlan?.totalPhysicalCapacity || aiPlan?.totalFleetCapacity || summary?.totalPhysicalCapacity || summary?.totalAvailableCapacity || aiAvailableCapacity || aiCapacity || 0
         );
 
     const aiUtilization =
@@ -2137,7 +2130,7 @@ export default function AIAgent() {
                                 <div className="check-item">
                                     {aiBuses.every((b) => b.isRoadVerified)
                                         ? "✓ Road continuity & directional progress verified (OSRM)"
-                                        : "⚠ Road network routing unavailable (Straight-line estimate)"}
+                                        : "⚠ Road validation unavailable — fallback estimate used"}
                                 </div>
 
                                 <div className="check-item">
@@ -2324,15 +2317,15 @@ export default function AIAgent() {
                                     <p>
                                         {aiPlan.unallocatedReason === "VEHICLE_CAPACITY" ? (
                                             <>
-                                                Passenger demand exceeds total fleet capacity: <b>{aiPlan.comingUsers}</b> coming users vs <b>{aiPlan.physicalFleetCapacity || aiAvailableCapacity}</b> total physical fleet seats. <b>{aiUnassigned}</b> users could not be allocated.
+                                                Passenger demand exceeds total fleet capacity: <b>{aiPlan.comingUsers}</b> coming users vs <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> total physical fleet seats. <b>{aiUnassigned}</b> users could not be allocated.
                                             </>
                                         ) : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY" ? (
                                             <>
-                                                Active schedule limits available fleet capacity to <b>{aiAvailableCapacity}</b> seats for <b>{aiPlan.comingUsers}</b> coming users. <b>{aiUnassigned}</b> users could not be scheduled.
+                                                Active schedule limits available fleet capacity to <b>{aiAvailableCapacity || aiCapacity}</b> seats for <b>{aiPlan.comingUsers}</b> coming users. <b>{aiUnassigned}</b> users could not be scheduled.
                                             </>
                                         ) : (
                                             <>
-                                                <b>{aiUnassigned}</b> passengers could not be assigned to available routes due to corridor/bus capacity constraints. Total fleet capacity is <b>{aiPlan.physicalFleetCapacity || aiAvailableCapacity}</b> seats (<b>{aiAvailableCapacity}</b> scheduled) for <b>{aiPlan.comingUsers}</b> coming users.
+                                                <b>{aiUnassigned}</b> passengers could not be assigned to available routes due to corridor/bus capacity constraints. Total fleet capacity is <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> seats (<b>{aiAvailableCapacity || aiCapacity}</b> scheduled) for <b>{aiPlan.comingUsers}</b> coming users.
                                             </>
                                         )}
                                     </p>
@@ -2351,7 +2344,7 @@ export default function AIAgent() {
                             {aiUnassigned === 0 && (
                                 <div className="success-box">
                                     ✓ All {aiPlan.comingUsers} confirmed passengers successfully accommodated within vehicle seat limits
-                                    {aiBuses.every((b) => b.isRoadVerified) ? " with road continuity verified." : " (road network offline, straight-line distance computed)."}
+                                    {aiBuses.every((b) => b.isRoadVerified) ? " with Continuous OSRM road progression verified." : " (Road validation unavailable — fallback estimate used)."}
                                 </div>
                             )}
 
@@ -2392,6 +2385,38 @@ export default function AIAgent() {
                                                             <td style={{ padding: "6px 8px", fontWeight: "bold", color: "#0284c7" }}>+{audit.passengersMoved}</td>
                                                             <td style={{ padding: "6px 8px" }}>{audit.beforeCapacity} → {audit.afterCapacity}</td>
                                                             <td style={{ padding: "6px 8px", color: "#64748b" }}>{audit.reason}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                            {/* Demand-Based Shared Stopping Areas */}
+                            {Array.isArray(aiPlan.sharedStoppingAreas) &&
+                                aiPlan.sharedStoppingAreas.length > 0 && (
+                                    <div className="ai-insights-box" style={{ borderLeft: "3px solid #0284c7", background: "#f0f9ff", marginTop: "12px" }}>
+                                        <strong>📍 Demand-Based Shared Stopping Areas ({aiPlan.sharedStoppingAreas.length}):</strong>
+                                        <div style={{ overflowX: "auto", marginTop: "8px" }}>
+                                            <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                                                <thead>
+                                                    <tr style={{ borderBottom: "1px solid #bae6fd", textAlign: "left", color: "#0369a1" }}>
+                                                        <th style={{ padding: "6px 8px" }}>Stopping Area</th>
+                                                        <th style={{ padding: "6px 8px" }}>Serving Buses</th>
+                                                        <th style={{ padding: "6px 8px" }}>Total Demand</th>
+                                                        <th style={{ padding: "6px 8px" }}>Justification Reason</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {aiPlan.sharedStoppingAreas.map((shared, idx) => (
+                                                        <tr key={idx} style={{ borderBottom: "1px solid #e0f2fe" }}>
+                                                            <td style={{ padding: "6px 8px", fontWeight: "600" }}>{shared.stopName}</td>
+                                                            <td style={{ padding: "6px 8px" }}>
+                                                                {shared.busesServing?.map((b) => `${b.routeCode || b.vehicleName} (${b.boardedCount} pax)`).join(", ") || "Multiple Buses"}
+                                                            </td>
+                                                            <td style={{ padding: "6px 8px", fontWeight: "bold", color: "#0284c7" }}>{shared.totalDemand} passengers</td>
+                                                            <td style={{ padding: "6px 8px", color: "#475569" }}>{shared.reason}</td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -2532,9 +2557,9 @@ export default function AIAgent() {
                                                     <span>
                                                         👥{" "}
                                                         <b>{assigned}</b>{" "}
-                                                        {(bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planData?.tripMode === "OUTWARD" || planData?.tripMode === "FROM_SOURCE")
-                                                            ? "passengers boarding"
-                                                            : "passengers dropped"}
+                                                        {(bus.direction === "OUTWARD" || bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planDirectionTab === "OUTWARD")
+                                                            ? "passengers dropped off"
+                                                            : "passengers boarding"}
                                                     </span>
 
                                                     <span>
@@ -2542,7 +2567,7 @@ export default function AIAgent() {
                                                         <b>
                                                             {Array.isArray(bus.stops) ? bus.stops.length : 0}
                                                         </b>{" "}
-                                                        {(bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planData?.tripMode === "OUTWARD" || planData?.tripMode === "FROM_SOURCE")
+                                                        {(bus.direction === "OUTWARD" || bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planDirectionTab === "OUTWARD")
                                                             ? "drop-off stops"
                                                             : "pickup stops"}
                                                     </span>
@@ -2556,14 +2581,14 @@ export default function AIAgent() {
                                                     )}
 
                                                     <span
-                                                        className={`status-pill ${bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
+                                                        className={`status-pill ${bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
                                                             ? "continuous"
                                                             : "warning"
                                                             }`}
                                                     >
-                                                        {bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
-                                                            ? "✓ Road Optimized (Continuous)"
-                                                            : (bus.roadRouteStatus || "Discontinuous Corridor / Review Needed")}
+                                                        {bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
+                                                            ? "✓ Continuous OSRM road progression verified"
+                                                            : (bus.roadRouteStatus || "Road validation unavailable — fallback estimate used")}
                                                     </span>
 
                                                     {bus.isConsolidated && (
@@ -2714,10 +2739,10 @@ export default function AIAgent() {
                                                 {/* Route Timeline */}
                                                 <div className="route-timeline">
 
-                                                    {(bus.tripMode === "OUTWARD" ||
+                                                    {(bus.direction === "OUTWARD" ||
+                                                        bus.tripMode === "OUTWARD" ||
                                                         bus.tripMode === "FROM_SOURCE" ||
-                                                        planData?.tripMode === "OUTWARD" ||
-                                                        planData?.tripMode === "FROM_SOURCE") && (
+                                                        planDirectionTab === "OUTWARD") && (
                                                             <div className="timeline-start source-terminal-hub">
 
                                                                 <span className="timeline-dot source-dot"></span>
@@ -2730,7 +2755,7 @@ export default function AIAgent() {
                                                                                 ?.source
                                                                                 ?.name ||
                                                                             sourceLocation?.name ||
-                                                                            "Trip Departure Source"}
+                                                                            "Departure Hub"}
                                                                     </strong>
 
                                                                     <small>
@@ -2754,10 +2779,10 @@ export default function AIAgent() {
                                                                 stopIndex
                                                             ) => {
                                                                 const isOutward =
+                                                                    bus.direction === "OUTWARD" ||
                                                                     bus.tripMode === "OUTWARD" ||
                                                                     bus.tripMode === "FROM_SOURCE" ||
-                                                                    planData?.tripMode === "OUTWARD" ||
-                                                                    planData?.tripMode === "FROM_SOURCE";
+                                                                    planDirectionTab === "OUTWARD";
 
                                                                 const userCount =
                                                                     getAIStopUsers(
@@ -2907,10 +2932,10 @@ export default function AIAgent() {
                                                             }
                                                         )}
 
-                                                    {(bus.tripMode !== "OUTWARD" &&
+                                                    {(bus.direction !== "OUTWARD" &&
+                                                        bus.tripMode !== "OUTWARD" &&
                                                         bus.tripMode !== "FROM_SOURCE" &&
-                                                        planData?.tripMode !== "OUTWARD" &&
-                                                        planData?.tripMode !== "FROM_SOURCE") && (
+                                                        planDirectionTab !== "OUTWARD") && (
                                                             <div className="timeline-start terminal-hub">
 
                                                                 <span className="timeline-dot terminal-dot"></span>
@@ -2926,7 +2951,7 @@ export default function AIAgent() {
                                                                             planData
                                                                                 ?.startingPoint
                                                                                 ?.name ||
-                                                                            "Campus Main Terminal"}
+                                                                            "Arrival Destination"}
                                                                     </strong>
 
                                                                     <small>
@@ -2973,6 +2998,18 @@ export default function AIAgent() {
 
                         </div>
                         </>
+                    )}
+
+                    {!aiPlan && !generating && (
+                        <div className="ai-empty-state" style={{ textAlign: "center", padding: "48px 24px", background: "#f8fafc", borderRadius: "12px", border: "1px dashed #cbd5e1", marginTop: "16px" }}>
+                            <div style={{ fontSize: "2.8rem", marginBottom: "12px" }}>🚌</div>
+                            <h3 style={{ fontSize: "1.2rem", fontWeight: "700", color: "#1e293b", marginBottom: "8px" }}>
+                                No AI route generated.
+                            </h3>
+                            <p style={{ color: "#64748b", fontSize: "0.95rem", margin: 0 }}>
+                                Set a Source or Destination and click Generate AI Route.
+                            </p>
+                        </div>
                     )}
 
                 </div>
@@ -3088,14 +3125,6 @@ export default function AIAgent() {
                                                 ? `${manualPlanData?.direction || manualPlanDirection} Submitted`
                                                 : `${manualPlanData?.direction || manualPlanDirection} Not Submitted`)}
                                     </span>
-                                    <button
-                                        type="button"
-                                        className="reset-manual-plan-btn"
-                                        onClick={() => setShowManualResetModal(true)}
-                                        title="Reset Admin Manual Route Plan"
-                                    >
-                                        🔄 Reset Manual Plan
-                                    </button>
                                 </div>
                                 <div style={{
                                     fontSize: "12px",
@@ -3408,6 +3437,16 @@ export default function AIAgent() {
                                     : `✓ Approve ${manualPlanData?.direction || manualPlanDirection} Manual Transportation Plan`}
                             </button>
 
+                            <button
+                                type="button"
+                                className="reset-manual-plan-btn"
+                                onClick={handleResetManualPlanAllocationsClick}
+                                disabled={manualAllocResetting || manualPlanApproving}
+                                title="Remove all manual plan allocations while preserving manual routes and AI plan"
+                            >
+                                {manualAllocResetting ? "Resetting Allocations..." : "Reset Manual Plan Allocation"}
+                            </button>
+
                             {/* PROMINENT REVIEW-ONLY AI RECOMMENDATION BUTTON */}
                             <button
                                 type="button"
@@ -3417,16 +3456,6 @@ export default function AIAgent() {
                                 title="AI Agent analyzes your saved manual routes for coverage, fleet utilization, and seat optimization without modifying anything"
                             >
                                 {recommendationsLoading ? "⏳ Analyzing Routes..." : "✨ AI Recommendation"}
-                            </button>
-
-                            <button
-                                type="button"
-                                className="reset-manual-plan-btn"
-                                onClick={() => setShowManualResetModal(true)}
-                                disabled={manualPlanResetting || manualPlanApproving}
-                                title="Reset Admin Manual Route Plan and clear manual allocations"
-                            >
-                                🔄 Reset Manual Plan
                             </button>
 
                             <button
@@ -3587,7 +3616,7 @@ export default function AIAgent() {
                                                         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                                                             {roadVal.roadRouteStatus && (
                                                                 <span className={`rec-road-badge ${roadVal.isRoadVerified ? "verified" : "fallback"}`}>
-                                                                    {roadVal.isRoadVerified ? "✓ OSRM Road Verified" : "⚠️ Admin Verification Required"}
+                                                                    {roadVal.isRoadVerified ? "✓ OSRM Road Verified" : (roadVal.roadRouteStatus || "Road validation unavailable — fallback estimate used")}
                                                                     {roadVal.distanceKm ? ` (${roadVal.distanceKm} km • ~${roadVal.durationMin || 0} min)` : ""}
                                                                 </span>
                                                             )}
@@ -3958,12 +3987,16 @@ export default function AIAgent() {
                             </small>
 
                             <h3>
-                                AI Recommended Plan
+                                {aiPlan && (aiUnassigned > 0 || (Array.isArray(aiPlan?.warnings) && aiPlan.warnings.length > 0) || (Array.isArray(aiBuses) && aiBuses.some((b) => b.isFallback || !b.isRoadVerified)))
+                                    ? "AI Recommended Plan — Review Required"
+                                    : "AI Recommended Plan"}
                             </h3>
 
                             <p>
                                 {aiPlan
-                                    ? `${aiBuses.length} continuous bus corridors`
+                                    ? (aiBuses.length > 0 && aiBuses.every((b) => b.isRoadVerified)
+                                        ? `${aiBuses.length} continuous bus corridors (Continuous OSRM road progression verified)`
+                                        : `${aiBuses.length} bus corridors (Road validation unavailable — fallback estimate used)`)
                                     : "Generate AI plan above first"}
                             </p>
                         </div>
@@ -4119,12 +4152,12 @@ export default function AIAgent() {
                 direction={planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD")}
             />
 
-            {/* Safe Reset Manual Plan Confirmation Modal */}
-            <ResetManualPlanModal
-                isOpen={showManualResetModal}
-                onClose={() => setShowManualResetModal(false)}
-                onConfirm={handleResetAdminManualPlan}
-                isResetting={manualPlanResetting}
+            {/* Reset Manual Plan Allocation Confirmation Modal */}
+            <ResetManualAllocationModal
+                isOpen={showManualAllocResetModal}
+                onClose={() => !manualAllocResetting && setShowManualAllocResetModal(false)}
+                onConfirm={handleResetManualPlanAllocations}
+                isResetting={manualAllocResetting}
                 direction={manualPlanData?.direction || manualPlanDirection || planDirectionTab || "INWARD"}
             />
 

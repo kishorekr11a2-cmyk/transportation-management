@@ -93,10 +93,25 @@ export default function OptimizationResultSummary({
         ? "OUTWARD"
         : "INWARD";
 
+    // isRoadVerified: true only if ALL buses are OSRM-verified AND continuous (both set by the backend after full validation)
     const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
-        ? aiPlan.buses.every((b) => b.isRoadVerified === true)
+        ? aiPlan.buses.every((b) => b.isRoadVerified === true && b.isContinuous === true)
         : false;
-    const roadValidationText = isRoadVerified ? "OSRM Verified" : "Calibrated Fallback (Network Unavailable)";
+    // roadValidationText: derive from the backend-assigned roadRouteStatus fields (not hard-coded).
+    // Uses the most conservative status across all buses; falls back to generic messages only if status is absent.
+    const roadValidationText = (() => {
+        const buses = Array.isArray(aiPlan?.buses) ? aiPlan.buses : [];
+        if (buses.length === 0) return "Road validation unavailable — fallback estimate used";
+        // All buses fully verified by backend
+        if (buses.every((b) => b.roadRouteStatus === "Continuous OSRM road progression verified")) {
+            return "Continuous OSRM road progression verified";
+        }
+        // Any bus requiring review
+        if (buses.some((b) => b.roadRouteStatus?.includes("review required"))) {
+            return "Road validation unavailable — review required";
+        }
+        return "Road validation unavailable — fallback estimate used";
+    })();
 
     return (
         <div className="optimization-result-summary-card">
@@ -306,9 +321,9 @@ export default function OptimizationResultSummary({
                     </div>
                 )}
 
-                <div className="highlight-pill">
-                    <span className="highlight-check">✓</span>
-                    <span>2-Opt continuous road progression verified</span>
+                <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`}>
+                    <span className="highlight-check">{isRoadVerified ? "✓" : "⏳"}</span>
+                    <span>{isRoadVerified ? "Continuous OSRM road progression verified" : "Continuous road verification pending"}</span>
                 </div>
 
                 <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`} id="pill-road-validation">

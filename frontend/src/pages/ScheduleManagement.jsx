@@ -176,6 +176,7 @@ const ScheduleManagement = () => {
                     ];
                 }
             });
+            await loadData(false);
         } catch (error) {
             console.error("Toggle Availability Error:", error);
             toast.error(

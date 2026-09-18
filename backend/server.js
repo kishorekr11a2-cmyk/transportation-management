@@ -64,6 +64,15 @@ app.use((req, res, next) => {
     next();
 });
 
+// Disable HTTP caching on all API endpoints so fresh DB state is always returned
+app.use("/api", (req, res, next) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    res.set("Surrogate-Control", "no-store");
+    next();
+});
+
 app.use(
     "/uploads",
     express.static(path.join(__dirname, "uploads"))

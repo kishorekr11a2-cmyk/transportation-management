@@ -45,6 +45,9 @@ api.interceptors.request.use(
             config.headers.Authorization = `Bearer ${token}`;
         }
 
+        config.headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+        config.headers["Pragma"] = "no-cache";
+
         if (import.meta.env?.DEV) {
             console.log("[API START]", (config.method || "get").toUpperCase(), config.url);
         }

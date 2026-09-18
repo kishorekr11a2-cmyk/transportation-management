@@ -21,7 +21,7 @@ import {
     approveLateResponseDraft,
     discardLateResponseDraft
 } from "../services/lateResponseRegenerationService.js";
-import { resetManualPlan } from "../controllers/routeController.js";
+import { resetManualPlan, resetManualAllocations } from "../controllers/routeController.js";
 
 const router =
     express.Router();
@@ -376,6 +376,10 @@ router.get(
         res
     ) => {
         try {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+
             const result =
                 await getActiveAIPlan(req.query);
 
@@ -419,9 +423,14 @@ router.post(
         res
     ) => {
         try {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+
             const direction = req.body?.direction || req.query?.direction || null;
+            const resetAll = req.body?.resetAll === true || req.query?.resetAll === "true";
             const result =
-                await resetGeneratedAIRoute({ direction });
+                await resetGeneratedAIRoute({ direction, resetAll });
 
             res.json(
                 result
@@ -457,6 +466,13 @@ router.post(
     authMiddleware,
     adminMiddleware,
     resetManualPlan
+);
+
+router.post(
+    "/reset-manual-allocations",
+    authMiddleware,
+    adminMiddleware,
+    resetManualAllocations
 );
 
 /*

@@ -13,7 +13,8 @@ import {
     getManualPlanRecommendations,
     confirmManualPlan,
     approveManualPlan,
-    resetManualPlan
+    resetManualPlan,
+    resetManualAllocations
 } from "../controllers/routeController.js";
 
 const router = express.Router();
@@ -55,6 +56,13 @@ router.post(
     authMiddleware,
     adminMiddleware,
     resetManualPlan
+);
+
+router.post(
+    "/reset-manual-allocations",
+    authMiddleware,
+    adminMiddleware,
+    resetManualAllocations
 );
 
 router.post(

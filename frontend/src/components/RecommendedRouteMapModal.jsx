@@ -211,7 +211,7 @@ export default function RecommendedRouteMapModal({
                                 color: roadVal.isRoadVerified ? "#86efac" : "#fde047",
                                 fontWeight: "700"
                             }}>
-                                {roadVal.isRoadVerified ? "✓ OSRM Road Verified" : "⚠️ Admin Verification Required"}
+                                {roadVal.isRoadVerified ? "✓ OSRM Road Verified" : (roadVal.roadRouteStatus || "Road validation unavailable — fallback estimate used")}
                             </span>
                         </div>
                         <h3 style={{ margin: "6px 0 0", fontSize: "17px", fontWeight: "800", color: "#ffffff" }}>

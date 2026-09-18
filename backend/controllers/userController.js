@@ -246,8 +246,13 @@ export const getUsers = async (req, res) => {
                 manualBusId: 1,
                 routeId: 1,
                 busId: 1,
+                seatNumber: 1,
+                allocatedSeat: 1,
+                isAllocated: 1,
+                isUnallocated: 1,
                 approvalStatus: 1,
                 manualAllocation: 1,
+                aiAllocation: 1,
                 createdAt: 1,
                 "allocatedBus.isAllocated": 1,
                 "allocatedBus.vehicleName": 1,
@@ -439,6 +444,8 @@ export const acknowledgeLateNotifications = async (req, res) => {
                 }
             }
         );
+        // Invalidate in-memory plan cache
+        clearActiveApprovedPlansCache();
 
         return res.status(200).json({
             success: true,
@@ -709,6 +716,8 @@ export const updateTravelStatus = async (req, res) => {
                 console.warn("LateResponseEvent resolve on Not Coming warning:", lreErr.message);
             }
 
+            clearActiveApprovedPlansCache();
+
             return res.status(200).json({
                 success: true,
                 message: "Travel status updated successfully. No bus seat will be reserved.",
@@ -748,6 +757,8 @@ export const updateTravelStatus = async (req, res) => {
             user.submittedPlanVersion = 0;
             user.submittedApprovalEventId = null;
             await user.save();
+
+            clearActiveApprovedPlansCache();
 
             return res.status(200).json({
                 success: true,
@@ -869,6 +880,8 @@ export const updateTravelStatus = async (req, res) => {
                 console.warn("Plan review update warning:", planErr.message);
             }
 
+            clearActiveApprovedPlansCache();
+
             return res.status(200).json({
                 success: true,
                 message: "Travel response recorded as Coming. Transportation allocation is pending administrator manual route assignment.",
@@ -901,6 +914,8 @@ export const updateTravelStatus = async (req, res) => {
         user.isAllocated = isAllocatedInApprovedPlan;
         user.isUnallocated = !isAllocatedInApprovedPlan;
         await user.save();
+
+        clearActiveApprovedPlansCache();
 
         return res.status(200).json({
             success: true,
@@ -1404,6 +1419,8 @@ export const addUser = async (req, res) => {
         const user = new User(req.body);
         await user.save();
 
+        clearActiveApprovedPlansCache();
+
         res.status(201).json({
             success: true,
             message: "User added successfully",
@@ -1437,6 +1454,8 @@ export const deleteUser = async (req, res) => {
                 message: "User not found"
             });
         }
+
+        clearActiveApprovedPlansCache();
 
         res.status(200).json({
             success: true,

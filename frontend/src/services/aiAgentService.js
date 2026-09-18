@@ -24,6 +24,8 @@ api.interceptors.request.use(
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
+        config.headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+        config.headers["Pragma"] = "no-cache";
         return config;
     },
     (error) => Promise.reject(error)
@@ -98,7 +100,12 @@ export const generateRecommendations = async (payload) => {
 ------------------------------------------------------- */
 
 export const getActivePlan = async (params = {}) => {
-    const response = await api.get("/ai-agent/active-plan", { params });
+    const response = await api.get("/ai-agent/active-plan", {
+        params: {
+            ...params,
+            _t: Date.now()
+        }
+    });
     return response.data;
 };
 
@@ -150,6 +157,11 @@ export const approveManualPlan = async (payload = {}) => {
 
 export const resetManualPlan = async (payload = {}) => {
     const response = await api.post("/routes/reset-plan", payload);
+    return response.data;
+};
+
+export const resetManualPlanAllocations = async (payload = {}) => {
+    const response = await api.post("/routes/reset-manual-allocations", payload);
     return response.data;
 };
 
@@ -215,6 +227,7 @@ export default {
     confirmManualPlan,
     approveManualPlan,
     resetManualPlan,
+    resetManualPlanAllocations,
     searchPlaces,
     resolveLocation,
     generateRecommendations,

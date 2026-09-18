@@ -17,6 +17,7 @@ import {
     normalizeStopName
 } from "./manualPlanRecommendationService.js";
 import { resolveLateResponsesForPreviousPlan } from "./lateResponseLifecycleService.js";
+import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 
 const isDbConnected = () => mongoose.connection?.readyState === 1;
 
@@ -1192,6 +1193,9 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         direction: canonicalDirection
     });
 
+    // Invalidate plan cache so status checks immediately reflect the approved plan
+    clearActiveApprovedPlansCache();
+
     return {
         success: true,
         message: `✓ ${canonicalDirection} Regenerated Transportation Plan approved! ${allocatedStudentsCount} student(s) allocated. ${standbyUserIds.size > 0 ? `${standbyUserIds.size} on standby.` : ""}`,
@@ -1213,6 +1217,8 @@ export const discardLateResponseDraft = async ({ direction = "OUTWARD" } = {}) =
     await mongoose.connection.db.collection("late_response_drafts").deleteMany({
         direction: canonicalDirection
     });
+
+    clearActiveApprovedPlansCache();
 
     return {
         success: true,
