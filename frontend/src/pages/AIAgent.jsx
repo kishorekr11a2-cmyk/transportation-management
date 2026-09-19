@@ -2581,14 +2581,14 @@ export default function AIAgent() {
                                                     )}
 
                                                     <span
-                                                        className={`status-pill ${bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
+                                                        className={`status-pill ${bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected && bus.roadRouteStatus === "Continuous OSRM road progression verified"
                                                             ? "continuous"
                                                             : "warning"
                                                             }`}
                                                     >
-                                                        {bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected
+                                                        {bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected && bus.roadRouteStatus === "Continuous OSRM road progression verified"
                                                             ? "✓ Continuous OSRM road progression verified"
-                                                            : (bus.roadRouteStatus || "Road validation unavailable — fallback estimate used")}
+                                                            : (bus.roadRouteStatus || "⚠ Continuous OSRM geometry unavailable")}
                                                     </span>
 
                                                     {bus.isConsolidated && (

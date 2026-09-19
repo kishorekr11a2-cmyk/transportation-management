@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { FiX, FiMapPin, FiNavigation, FiClock, FiUsers, FiCheckCircle, FiAlertTriangle } from "react-icons/fi";
+import { extractPolylineLatLngs } from "../utils/routeGeometry";
 
 export default function RecommendedRouteMapModal({
     isOpen,
@@ -33,7 +34,15 @@ export default function RecommendedRouteMapModal({
             maxZoom: 19
         }).addTo(map);
 
-        const routePoints = recommendation.recommendedRoute || [];
+        let routePoints = recommendation.recommendedRoute;
+        if (!Array.isArray(routePoints) || routePoints.length === 0) {
+            const src = recommendation.sourceHub || recommendation.source;
+            const stops = Array.isArray(recommendation.stops) ? recommendation.stops : [];
+            routePoints = [
+                ...(src && typeof src === "object" ? [{ ...src, isHub: true, name: src.name || "Institutional Source" }] : []),
+                ...stops
+            ];
+        }
         const bounds = L.latLngBounds([]);
 
         // 1. Add markers for each ordered stop
@@ -91,26 +100,18 @@ export default function RecommendedRouteMapModal({
             }
         });
 
-        // 2. Draw polyline
-        const rawGeometry = recommendation.roadValidation?.geometry;
-        if (Array.isArray(rawGeometry) && rawGeometry.length >= 2) {
-            const polyCoords = rawGeometry.map((pt) => {
-                if (Array.isArray(pt)) {
-                    return [Number(pt[0]), Number(pt[1])];
-                }
-                return [Number(pt.latitude), Number(pt.longitude)];
-            }).filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+        // 2. Draw polyline using continuous OSRM road geometry
+        const polyCoords = extractPolylineLatLngs(recommendation);
+        if (polyCoords.length >= 2) {
+            const polyline = L.polyline(polyCoords, {
+                color: "#4f46e5",
+                weight: 5,
+                opacity: 0.85,
+                lineJoin: "round",
+                lineCap: "round"
+            }).addTo(map);
 
-            if (polyCoords.length >= 2) {
-                const polyline = L.polyline(polyCoords, {
-                    color: "#4f46e5",
-                    weight: 5,
-                    opacity: 0.85,
-                    lineJoin: "round"
-                }).addTo(map);
-
-                polyCoords.forEach((c) => bounds.extend(c));
-            }
+            polyCoords.forEach((c) => bounds.extend(c));
         } else if (routePoints.length >= 2) {
             // Fallback connecting stops
             const fallbackPts = routePoints

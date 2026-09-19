@@ -101,16 +101,12 @@ export default function OptimizationResultSummary({
     // Uses the most conservative status across all buses; falls back to generic messages only if status is absent.
     const roadValidationText = (() => {
         const buses = Array.isArray(aiPlan?.buses) ? aiPlan.buses : [];
-        if (buses.length === 0) return "Road validation unavailable — fallback estimate used";
+        if (buses.length === 0) return "⚠ Continuous OSRM geometry unavailable";
         // All buses fully verified by backend
-        if (buses.every((b) => b.roadRouteStatus === "Continuous OSRM road progression verified")) {
+        if (buses.every((b) => b.roadRouteStatus === "Continuous OSRM road progression verified" && b.isRoadVerified === true && b.isContinuous === true)) {
             return "Continuous OSRM road progression verified";
         }
-        // Any bus requiring review
-        if (buses.some((b) => b.roadRouteStatus?.includes("review required"))) {
-            return "Road validation unavailable — review required";
-        }
-        return "Road validation unavailable — fallback estimate used";
+        return "⚠ Continuous OSRM geometry unavailable";
     })();
 
     return (
@@ -322,8 +318,8 @@ export default function OptimizationResultSummary({
                 )}
 
                 <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`}>
-                    <span className="highlight-check">{isRoadVerified ? "✓" : "⏳"}</span>
-                    <span>{isRoadVerified ? "Continuous OSRM road progression verified" : "Continuous road verification pending"}</span>
+                    <span className="highlight-check">{isRoadVerified ? "✓" : "⚠️"}</span>
+                    <span>{isRoadVerified ? "Continuous OSRM road progression verified" : "⚠ Continuous OSRM geometry unavailable"}</span>
                 </div>
 
                 <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`} id="pill-road-validation">

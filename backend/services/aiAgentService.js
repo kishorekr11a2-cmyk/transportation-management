@@ -8,6 +8,7 @@ import LateResponseEvent from "../models/LateResponseEvent.js";
 import { isDbConnected } from "../config/db.js";
 import { resolveLateResponsesForPreviousPlan } from "./lateResponseLifecycleService.js";
 import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
+import { buildConsecutiveSegmentRoadGeometry } from "./roadMatrixService.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -3382,7 +3383,7 @@ export const optimizeOutwardBusRoute = async (busCluster, sourceHub) => {
         );
     }
 
-    const roadRoute = await getRoadRouteGeometry(waypoints);
+    const roadRoute = await buildConsecutiveSegmentRoadGeometry(waypoints, { useOnlineOsrm: true });
 
     let cumDist = 0;
     let cumDur = 0;
@@ -3410,8 +3411,8 @@ export const optimizeOutwardBusRoute = async (busCluster, sourceHub) => {
     });
 
     const sumLegDistanceKm = Number(stopsWithLegs.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
-    const routeDistanceKm = roadRoute ? sumLegDistanceKm : Number((straightLineKm * 1.25).toFixed(2));
-    const routeDurationMin = roadRoute ? Number((roadRoute.durationSeconds / 60).toFixed(1)) : Number((routeDistanceKm / 0.5).toFixed(1));
+    const routeDistanceKm = roadRoute?.distanceKm || sumLegDistanceKm;
+    const routeDurationMin = roadRoute?.durationMin || Number((routeDistanceKm / 0.5).toFixed(1));
 
     const busResult = {
         vehicleId: busCluster.vehicleId,
@@ -3429,8 +3430,8 @@ export const optimizeOutwardBusRoute = async (busCluster, sourceHub) => {
         straightLineBaselineKm: Number(straightLineKm.toFixed(2)),
         roadGeometry: roadRoute?.geometry || [],
         isRoadVerified: Boolean(roadRoute && roadRoute.isRoadVerified),
-        isFallback: Boolean(!roadRoute || roadRoute.isFallback),
-        roadRouteStatus: (roadRoute && roadRoute.isRoadVerified) ? "OSRM Verified" : "Road validation unavailable — fallback estimate used",
+        isFallback: Boolean(!roadRoute || roadRoute.failedSegments > 0),
+        roadRouteStatus: roadRoute?.roadRouteStatus || "Road validation unavailable — fallback estimate used",
         users: stopsWithLegs.flatMap((s) => s.userIds || [])
     };
 
@@ -4103,7 +4104,7 @@ export const buildAIPlan = async ({
                     finalWaypoints[i + 1].latitude, finalWaypoints[i + 1].longitude
                 );
             }
-            const finalRoadRoute = await getRoadRouteGeometry(finalWaypoints);
+            const finalRoadRoute = await buildConsecutiveSegmentRoadGeometry(finalWaypoints, { useOnlineOsrm: true });
             let cumDist = 0;
             let cumDur = 0;
             bus.stops = bus.stops.map((st, idx) => {
@@ -4131,14 +4132,17 @@ export const buildAIPlan = async ({
                 };
             });
             const sumOfLegs = Number(bus.stops.reduce((sum, s) => sum + s.legDistanceKm, 0).toFixed(2));
-            bus.routeDistanceKm = sumOfLegs;
-            bus.routeDurationMin = finalRoadRoute ? Number((finalRoadRoute.durationSeconds / 60).toFixed(1)) : Number((sumOfLegs / 0.5).toFixed(1));
+            bus.routeDistanceKm = finalRoadRoute?.distanceKm || sumOfLegs;
+            bus.routeDurationMin = finalRoadRoute?.durationMin || Number((sumOfLegs / 0.5).toFixed(1));
             bus.straightLineBaselineKm = Number(straightKm.toFixed(2));
             bus.roadGeometry = finalRoadRoute?.geometry || bus.roadGeometry || [];
-            // Compound isRoadVerified: OSRM must have succeeded AND every leg must have non-zero distance/duration.
-            // A zero-distance leg (e.g. near-duplicate stops that survived merge) means the route is not fully valid.
-            bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified && allLegsValid(finalRoadRoute));
-            bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.isFallback);
+            bus.coordinates = bus.roadGeometry;
+            bus.geometry = finalRoadRoute?.geoJson || {
+                type: "LineString",
+                coordinates: (bus.roadGeometry || []).map(([lat, lng]) => [lng, lat])
+            };
+            bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified);
+            bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.failedSegments > 0);
             bus.lastOutwardStop = bus.stops[bus.stops.length - 1] || null;
 
             const continuity = validateRouteCorridorContinuity(
@@ -4148,21 +4152,37 @@ export const buildAIPlan = async ({
                 "FROM_SOURCE"
             );
             bus.continuityValidation = continuity;
-            bus.isContinuous = continuity.isContinuous;
+            bus.isContinuous = Boolean(finalRoadRoute && finalRoadRoute.isContinuous && continuity.isContinuous);
             bus.detourRatio = continuity.detourRatio;
             bus.isDetour = continuity.isDetour;
+
+            // Required debug logging for outward continuous geometry
+            console.log(`\n======================================================`);
+            console.log(`OUTWARD ROUTE GEOMETRY DEBUG`);
+            console.log(`Route ID: ${bus.routeCode || bus.vehicleName || "Outward Route"}`);
+            console.log(`Ordered stops: ${[resolvedSourceHub?.name || "College", ...bus.stops.map((s) => s.name)].join(" → ")}`);
+            console.log(`Expected segment count: ${finalRoadRoute.segmentCount}`);
+            console.log(`Successful segment count: ${finalRoadRoute.successfulSegments}`);
+            console.log(`Failed segments: ${finalRoadRoute.failedSegments}`);
+            console.log(`Combined coordinate count: ${finalRoadRoute.geometry?.length || 0}`);
+            console.log(`Segment coordinate counts: [${(finalRoadRoute.segmentCoordinateCounts || []).join(", ")}]`);
+            console.log(`Stops matched to combined geometry: ${finalRoadRoute.stopsMatchedCount}/${finalRoadRoute.totalWaypoints}`);
+            console.log(`Uses combined OSRM geometry: ${finalRoadRoute.usesCombinedOsrmGeometry}`);
+            console.log(`Straight-line fallback used: ${finalRoadRoute.straightLineFallbackUsed}`);
+            console.log(`Geometry continuous: ${bus.isContinuous}`);
+            console.log(`======================================================\n`);
 
             // Label is derived AFTER continuity — requires OSRM validity + continuity + no backtracking + no inversion
             {
                 const roadFullyVerified = bus.isRoadVerified
                     && bus.isContinuous
+                    && finalRoadRoute.failedSegments === 0
+                    && finalRoadRoute.successfulSegments === finalRoadRoute.segmentCount
                     && !continuity.backtrackingDetected
                     && !continuity.directionalInversionDetected;
                 bus.roadRouteStatus = roadFullyVerified
                     ? "Continuous OSRM road progression verified"
-                    : (bus.isRoadVerified
-                        ? "Road validation unavailable — review required"
-                        : "Road validation unavailable — fallback estimate used");
+                    : "⚠ Continuous OSRM geometry unavailable";
                 bus.roadVerificationStatus = bus.roadRouteStatus;
                 bus.roadValidationStatus = bus.roadRouteStatus;
             }
@@ -4416,9 +4436,12 @@ export const buildAIPlan = async ({
                 routeDistanceKm: routeObj.routeDistanceKm,
                 routeDurationMin: routeObj.routeDurationMin,
                 roadGeometry: routeObj.roadGeometry,
+                geometry: routeObj.geometry,
+                coordinates: routeObj.roadGeometry,
                 isRoadVerified: routeObj.isRoadVerified,
                 isContinuous: routeObj.isContinuous,
-                continuity: routeObj.continuityValidation
+                continuity: routeObj.continuityValidation,
+                roadRouteStatus: routeObj.roadRouteStatus
             };
 
             routeObj.inward = {
@@ -5857,6 +5880,8 @@ export const generateAgentRecommendations = async (payload = {}) => {
         },
         stoppingGroups,
         aiPlan,
+        routingSource: aiPlan?.routingSource || "osrm",
+        continuityStatus: aiPlan?.continuityStatus || (aiPlan?.buses?.every((b) => b.isContinuous) ? "Continuous" : "Discontinuous"),
         manualPlan: null,
         recommendations: aiPlan ? [aiPlan] : []
     };
@@ -6703,6 +6728,112 @@ export const getUserAllocatedBus = async (user) => {
             message: "Unable to retrieve bus allocation details at this time."
         };
     }
+};
+
+/*
+|--------------------------------------------------------------------------
+| VALIDATE PLAN ACTIVATION SAFEGUARDS
+|--------------------------------------------------------------------------
+*/
+
+export const validatePlanActivationSafeguards = async ({ plan, planType = "AI", direction = "OUTWARD" }) => {
+    const failedChecks = [];
+    const warnings = [];
+    const unallocatedUsers = [];
+    const uncoveredStoppingAreas = [];
+
+    if (!plan || !Array.isArray(plan.buses) || plan.buses.length === 0) {
+        return {
+            status: "blocked",
+            reason: "VALIDATION_FAILED",
+            failedChecks: ["EMPTY_PLAN_OR_BUSES"],
+            warnings,
+            unallocatedUsers,
+            uncoveredStoppingAreas
+        };
+    }
+
+    const seenUserIds = new Set();
+    const allocatedUserIds = [];
+
+    for (let bIdx = 0; bIdx < plan.buses.length; bIdx++) {
+        const bus = plan.buses[bIdx];
+        const assignedCount = Number(bus.assignedUsers || bus.allocatedSeats || bus.users?.length || 0);
+        const capacity = Number(bus.capacity || 0);
+
+        // 1. Capacity Check
+        if (capacity > 0 && assignedCount > capacity) {
+            failedChecks.push(`CAPACITY_EXCEEDED_ROUTE_${bIdx + 1}`);
+            warnings.push(`Bus ${bus.vehicleName || bIdx + 1} capacity (${capacity}) exceeded by ${assignedCount - capacity} passengers.`);
+        }
+
+        // 2. Duplicate Passenger Check
+        const uids = Array.isArray(bus.users) ? bus.users : (Array.isArray(bus.userIds) ? bus.userIds : []);
+        for (const uid of uids) {
+            const strId = String(uid);
+            if (seenUserIds.has(strId)) {
+                failedChecks.push("DUPLICATE_ALLOCATION");
+                warnings.push(`User ${strId} is allocated to multiple routes.`);
+            }
+            seenUserIds.add(strId);
+            allocatedUserIds.push(strId);
+        }
+
+        // 3. Fallback routing on certified plan check
+        if (plan.certification?.isCertified && (bus.isFallback || bus.routingSource?.includes("fallback"))) {
+            failedChecks.push("UNRESOLVED_FALLBACK_ROUTING");
+            warnings.push(`Route ${bus.vehicleName || bIdx + 1} uses unverified fallback routing.`);
+        }
+
+        // 4. Geometry Check
+        const geom = bus.roadGeometry || bus.geometry;
+        if (!Array.isArray(geom) || geom.length < 2) {
+            warnings.push(`Route ${bus.vehicleName || bIdx + 1} has insufficient road geometry.`);
+        }
+    }
+
+    // 5. DB Verification if connected
+    if (isDbConnected() && allocatedUserIds.length > 0) {
+        try {
+            const usersInDb = await User.find({
+                $or: [
+                    { userId: { $in: allocatedUserIds } },
+                    { _id: { $in: allocatedUserIds.filter((id) => mongoose.isValidObjectId(id)) } }
+                ]
+            }).select("userId travelStatus").lean();
+
+            const dbMap = new Map();
+            usersInDb.forEach((u) => dbMap.set(String(u.userId || u._id), u.travelStatus));
+
+            for (const uid of allocatedUserIds) {
+                const status = dbMap.get(uid);
+                if (status && status !== "Coming") {
+                    failedChecks.push(`INVALID_USER_TRAVEL_STATUS_${uid}`);
+                    warnings.push(`User ${uid} has status '${status}' but is allocated to route.`);
+                }
+            }
+        } catch {
+            // DB check error
+        }
+    }
+
+    if (failedChecks.length > 0) {
+        return {
+            status: "blocked",
+            reason: "VALIDATION_FAILED",
+            failedChecks,
+            warnings,
+            unallocatedUsers,
+            uncoveredStoppingAreas
+        };
+    }
+
+    return {
+        status: "passed",
+        warnings,
+        unallocatedUsers,
+        uncoveredStoppingAreas
+    };
 };
 
 /*

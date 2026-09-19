@@ -20,6 +20,7 @@ import {
     confirmManualPlan,
     resetManualPlan
 } from "../services/aiAgentService";
+import { extractPolylineLatLngs } from "../utils/routeGeometry";
 import ResetManualPlanModal from "../components/ResetManualPlanModal";
 import "../css/RouteManagement.css";
 import "leaflet/dist/leaflet.css";
@@ -576,7 +577,14 @@ export default function RouteManagement() {
             locations.push(...stops);
             const dst = aiRoute.destination || aiRoute.destinationHub;
             if (dst && isValidCoordinate(dst)) {
-                locations.push(dst);
+                const lastStop = locations[locations.length - 1];
+                const isDuplicateLast =
+                    lastStop &&
+                    Math.abs(Number(lastStop.latitude) - Number(dst.latitude)) < 0.0001 &&
+                    Math.abs(Number(lastStop.longitude) - Number(dst.longitude)) < 0.0001;
+                if (!isDuplicateLast) {
+                    locations.push(dst);
+                }
             }
         } else {
             const inStart =
@@ -593,43 +601,43 @@ export default function RouteManagement() {
             }
         }
 
-        if (locations.length < 2) return;
+        const validLocations = locations.filter((loc) => isValidCoordinate(loc));
+        drawRouteMarkers(validLocations);
+
+        if (validLocations.length < 2) return;
 
         try {
             setRoutingLoading(true);
-            let pathCoords = [];
+            let pathCoords = extractPolylineLatLngs(aiRoute);
 
-            // 1. Fast path: use pre-calculated road geometry if available on this direction's route
-            const activeGeometry = aiRoute.roadGeometry;
-
-            if (Array.isArray(activeGeometry) && activeGeometry.length > 1) {
-                pathCoords = activeGeometry.map((p) => [Number(p.latitude), Number(p.longitude)]);
-            } else {
-                const route = await getRouteFromGoogle(locations);
+            if (pathCoords.length < 2) {
+                const route = await getRouteFromGoogle(validLocations);
                 if (route && Array.isArray(route.geometry?.coordinates)) {
                     pathCoords = route.geometry.coordinates.map(([lng, lat]) => [
                         Number(lat),
                         Number(lng)
                     ]);
                 } else {
-                    pathCoords = locations.map((loc) => [
+                    pathCoords = validLocations.map((loc) => [
                         Number(loc.latitude),
                         Number(loc.longitude)
                     ]);
                 }
             }
 
-            lineRef.current = L.polyline(pathCoords, {
-                color: isToDestination ? "#059669" : "#2563eb",
-                weight: 6,
-                opacity: 0.9,
-                lineJoin: "round",
-                lineCap: "round"
-            }).addTo(mapRef.current);
+            if (pathCoords.length >= 2) {
+                lineRef.current = L.polyline(pathCoords, {
+                    color: isToDestination ? "#059669" : "#2563eb",
+                    weight: 6,
+                    opacity: 0.9,
+                    lineJoin: "round",
+                    lineCap: "round"
+                }).addTo(mapRef.current);
 
-            mapRef.current.fitBounds(lineRef.current.getBounds(), {
-                padding: [50, 50]
-            });
+                mapRef.current.fitBounds(lineRef.current.getBounds(), {
+                    padding: [50, 50]
+                });
+            }
         } catch (err) {
             console.error("AI Road Route Error:", err);
         } finally {
@@ -840,14 +848,14 @@ export default function RouteManagement() {
         }
 
         // Fast path: if route has pre-saved road geometry, display directly without OSRM/Google network call
-        if (Array.isArray(route.roadGeometry) && route.roadGeometry.length > 1 && mapRef.current) {
+        const savedPathCoords = extractPolylineLatLngs(route);
+        if (savedPathCoords.length > 1 && mapRef.current) {
             drawRouteMarkers(stopsList);
             if (lineRef.current) {
                 lineRef.current.remove();
                 lineRef.current = null;
             }
-            const pathCoords = route.roadGeometry.map((p) => [Number(p.latitude), Number(p.longitude)]);
-            lineRef.current = L.polyline(pathCoords, {
+            lineRef.current = L.polyline(savedPathCoords, {
                 color: "#2563eb",
                 weight: 6,
                 opacity: 0.9,
