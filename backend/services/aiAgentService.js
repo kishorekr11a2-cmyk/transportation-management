@@ -9,6 +9,7 @@ import { isDbConnected } from "../config/db.js";
 import { resolveLateResponsesForPreviousPlan } from "./lateResponseLifecycleService.js";
 import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 import { buildConsecutiveSegmentRoadGeometry } from "./roadMatrixService.js";
+import { recordActivatedPlanPerformance, seedHistoricalRoutesIfEmpty } from "./historicalRouteService.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -7034,6 +7035,15 @@ export const saveSelectedPlan = async (selection) => {
 
         // Persist individual user bus & route allocations for this direction, preserving the opposite direction
         await persistPlanToUsers(effectivePlan, canonicalDirection, startingPoint, null, planType || "AI", explicitAllocationMode);
+
+        // Record activated plan operational telemetry for continuous learning
+        recordActivatedPlanPerformance({
+            plan: effectivePlan,
+            direction: canonicalDirection,
+            planId: approvalEventId,
+            planVersion,
+            sourceHub: startingPoint
+        }).catch((err) => console.warn("[HISTORICAL_RECORDING] Telemetry recording error:", err.message));
 
         // Invalidate in-memory plan cache immediately so all subsequent reads get the latest plan
         clearActiveApprovedPlansCache();

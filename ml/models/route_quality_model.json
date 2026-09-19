@@ -1,0 +1,26 @@
+{
+  "model_type": "Tabular Weighted Optimizer",
+  "features": [
+    "utilization_ratio",
+    "normalized_stops",
+    "normalized_distance"
+  ],
+  "weights": [
+    0.55,
+    0.25,
+    0.2
+  ],
+  "intercept": 0.15,
+  "dataset_size": 13,
+  "metrics": {
+    "MAE": 0.0661,
+    "RMSE": 0.0777,
+    "R2_approximation": 0.4817
+  },
+  "feature_importance": {
+    "utilization": 0.55,
+    "number_of_stops": 0.25,
+    "road_distance_km": 0.2
+  },
+  "status": "TRAINED_AND_VALIDATED"
+}

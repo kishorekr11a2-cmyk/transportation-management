@@ -1,0 +1,3047 @@
+[
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Anna Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Anuppanadi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Arappalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Avaniyapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Bibikulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Alagappan Nagar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Anuppanadi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Arappalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Avaniyapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Bibikulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anna Nagar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Arappalayam",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Avaniyapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Bibikulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Anuppanadi",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Avaniyapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Bibikulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Arappalayam",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Bibikulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Avaniyapuram",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Goripalayam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Bibikulam",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Iyer Bungalow",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Goripalayam",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Jaihindpuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Iyer Bungalow",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "K.K. Nagar West",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Jaihindpuram",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "K.Pudur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.K. Nagar West",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "KK Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "K.Pudur",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Kalavasal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "KK Nagar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Kochadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Kalavasal",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Koodal Nagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Kochadai",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Mattuthavani",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Koodal Nagar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Narimedu",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Mattuthavani",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Othakadai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Narimedu",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Palanganatham",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Othakadai",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Periyar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Palanganatham",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Sellur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Periyar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Simmakkal",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Sellur",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Tallakulam",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Simmakkal",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Teppakulam",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Tallakulam",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Thirunagar",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Teppakulam",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Thirunagar",
+    "stop_b": "Thiruppalai",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thirunagar",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thirunagar",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thirunagar",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Thirunagar",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thiruppalai",
+    "stop_b": "Vandiyur",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thiruppalai",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 2,
+    "compatibility_label": 1,
+    "compatibility_score": 1.0
+  },
+  {
+    "stop_a": "Thiruppalai",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Thiruppalai",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Vandiyur",
+    "stop_b": "Vilangudi",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Vandiyur",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Vandiyur",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 1,
+    "compatibility_label": 1,
+    "compatibility_score": 0.7
+  },
+  {
+    "stop_a": "Vilangudi",
+    "stop_b": "Villapuram",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Vilangudi",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  },
+  {
+    "stop_a": "Villapuram",
+    "stop_b": "Viraganoor",
+    "cooccurrence_count": 0,
+    "compatibility_label": 0,
+    "compatibility_score": 0.15
+  }
+]

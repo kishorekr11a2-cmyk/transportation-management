@@ -12,7 +12,9 @@
  * - Non-fatal resilience: gracefully handles OSRM timeouts and rate limits
  */
 
+import mongoose from "mongoose";
 import { isValidCoordinate, calculateDistanceKm } from "./mapGeocodingService.js";
+import RoadMatrixCache from "../models/RoadMatrixCache.js";
 
 // ============================================================================
 // CONFIGURATION & CONSTANTS
@@ -102,6 +104,29 @@ export const getRoadDistanceDurationMatrix = async (locations = [], options = {}
             ...cached,
             routingSource: cached.osrmVerified ? "cached_osrm" : "cached_fallback"
         };
+    }
+
+    // Check persistent MongoDB cache if available
+    if (mongoose.connection && mongoose.connection.readyState === 1) {
+        try {
+            const dbCached = await RoadMatrixCache.findOne({ cacheKey }).lean();
+            if (dbCached && Array.isArray(dbCached.distances) && dbCached.distances.length === N) {
+                const res = {
+                    distances: dbCached.distances,
+                    durations: dbCached.durations,
+                    routingSource: "cached_osrm",
+                    osrmVerified: dbCached.source === "osrm",
+                    geometryVerified: dbCached.source === "osrm",
+                    requiresRevalidation: dbCached.source !== "osrm",
+                    provider: dbCached.source || "cached_db",
+                    locationCount: N
+                };
+                matrixCache.set(cacheKey, res);
+                return res;
+            }
+        } catch {
+            // non-fatal
+        }
     }
 
     let isRoadVerified = false;
@@ -197,6 +222,23 @@ export const getRoadDistanceDurationMatrix = async (locations = [], options = {}
     };
 
     matrixCache.set(cacheKey, result);
+
+    if (mongoose.connection && mongoose.connection.readyState === 1) {
+        RoadMatrixCache.updateOne(
+            { cacheKey },
+            {
+                $set: {
+                    cacheKey,
+                    distances: result.distances,
+                    durations: result.durations,
+                    source: isRoadVerified ? "osrm" : "calibrated_fallback",
+                    locationCount: N
+                }
+            },
+            { upsert: true }
+        ).catch(() => {});
+    }
+
     return result;
 };
 

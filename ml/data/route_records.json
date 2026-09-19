@@ -1,0 +1,145 @@
+[
+  {
+    "route_id": "HIST-19-R01",
+    "bus_id": "BUS-01",
+    "number_of_stops": 7,
+    "vehicle_capacity": 70,
+    "passenger_count": 65,
+    "utilization": 92.9,
+    "road_distance_km": 29.4,
+    "travel_time_min": 65.6,
+    "quality_score": 0.907
+  },
+  {
+    "route_id": "HIST-19-R02",
+    "bus_id": "BUS-02",
+    "number_of_stops": 6,
+    "vehicle_capacity": 70,
+    "passenger_count": 70,
+    "utilization": 100.0,
+    "road_distance_km": 25.2,
+    "travel_time_min": 56.2,
+    "quality_score": 0.95
+  },
+  {
+    "route_id": "HIST-19-R03",
+    "bus_id": "BUS-03",
+    "number_of_stops": 4,
+    "vehicle_capacity": 70,
+    "passenger_count": 51,
+    "utilization": 72.9,
+    "road_distance_km": 16.8,
+    "travel_time_min": 37.5,
+    "quality_score": 0.787
+  },
+  {
+    "route_id": "HIST-19-R04",
+    "bus_id": "BUS-04",
+    "number_of_stops": 4,
+    "vehicle_capacity": 70,
+    "passenger_count": 70,
+    "utilization": 100.0,
+    "road_distance_km": 16.8,
+    "travel_time_min": 37.5,
+    "quality_score": 0.95
+  },
+  {
+    "route_id": "HIST-19-R05",
+    "bus_id": "BUS-07",
+    "number_of_stops": 4,
+    "vehicle_capacity": 70,
+    "passenger_count": 70,
+    "utilization": 100.0,
+    "road_distance_km": 16.8,
+    "travel_time_min": 37.5,
+    "quality_score": 0.95
+  },
+  {
+    "route_id": "HIST-19-R06",
+    "bus_id": "BUS-05",
+    "number_of_stops": 5,
+    "vehicle_capacity": 60,
+    "passenger_count": 60,
+    "utilization": 100.0,
+    "road_distance_km": 21.0,
+    "travel_time_min": 46.9,
+    "quality_score": 0.95
+  },
+  {
+    "route_id": "HIST-21-R01",
+    "bus_id": "BUS-01",
+    "number_of_stops": 7,
+    "vehicle_capacity": 70,
+    "passenger_count": 65,
+    "utilization": 92.9,
+    "road_distance_km": 29.4,
+    "travel_time_min": 65.6,
+    "quality_score": 0.907
+  },
+  {
+    "route_id": "HIST-21-R02",
+    "bus_id": "BUS-06",
+    "number_of_stops": 2,
+    "vehicle_capacity": 45,
+    "passenger_count": 18,
+    "utilization": 40.0,
+    "road_distance_km": 8.4,
+    "travel_time_min": 18.8,
+    "quality_score": 0.59
+  },
+  {
+    "route_id": "HIST-21-R03",
+    "bus_id": "BUS-02",
+    "number_of_stops": 6,
+    "vehicle_capacity": 70,
+    "passenger_count": 70,
+    "utilization": 100.0,
+    "road_distance_km": 25.2,
+    "travel_time_min": 56.2,
+    "quality_score": 0.95
+  },
+  {
+    "route_id": "HIST-21-R04",
+    "bus_id": "BUS-03",
+    "number_of_stops": 5,
+    "vehicle_capacity": 70,
+    "passenger_count": 64,
+    "utilization": 91.4,
+    "road_distance_km": 21.0,
+    "travel_time_min": 46.9,
+    "quality_score": 0.898
+  },
+  {
+    "route_id": "HIST-21-R05",
+    "bus_id": "BUS-04",
+    "number_of_stops": 4,
+    "vehicle_capacity": 70,
+    "passenger_count": 68,
+    "utilization": 97.1,
+    "road_distance_km": 16.8,
+    "travel_time_min": 37.5,
+    "quality_score": 0.933
+  },
+  {
+    "route_id": "HIST-21-R06",
+    "bus_id": "BUS-07",
+    "number_of_stops": 3,
+    "vehicle_capacity": 70,
+    "passenger_count": 64,
+    "utilization": 91.4,
+    "road_distance_km": 12.6,
+    "travel_time_min": 28.1,
+    "quality_score": 0.898
+  },
+  {
+    "route_id": "HIST-21-R07",
+    "bus_id": "BUS-05",
+    "number_of_stops": 3,
+    "vehicle_capacity": 60,
+    "passenger_count": 48,
+    "utilization": 80.0,
+    "road_distance_km": 12.6,
+    "travel_time_min": 28.1,
+    "quality_score": 0.83
+  }
+]

@@ -22,6 +22,11 @@ import {
     discardLateResponseDraft
 } from "../services/lateResponseRegenerationService.js";
 import { resetManualPlan, resetManualAllocations } from "../controllers/routeController.js";
+import { ML_SYSTEM_STATUS } from "../services/mlPredictionService.js";
+import {
+    BASELINE_HISTORICAL_ROUTES,
+    buildStopHistoricalGraphs
+} from "../services/historicalRouteService.js";
 
 const router =
     express.Router();
@@ -41,6 +46,55 @@ router.get("/metrics", async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Unable to load AI transportation metrics."
+        });
+    }
+});
+
+/*
+|--------------------------------------------------------------------------
+| ML & OPTIMIZATION ENGINE METRICS
+|--------------------------------------------------------------------------
+*/
+
+router.get("/ml-metrics", async (req, res) => {
+    try {
+        const graphs = await buildStopHistoricalGraphs();
+        res.json({
+            success: true,
+            status: "ACTIVE",
+            engine: "HYBRID_AI_OPTIMIZATION_ENGINE",
+            mlStatus: ML_SYSTEM_STATUS,
+            baselineRoutesCount: BASELINE_HISTORICAL_ROUTES.length,
+            distinctStopsCount: graphs.distinctStopsCount,
+            cooccurrencePairsCount: graphs.cooccurrence.size
+        });
+    } catch (error) {
+        console.error("ML metrics error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Unable to load ML optimization metrics."
+        });
+    }
+});
+
+/*
+|--------------------------------------------------------------------------
+| HISTORICAL ROUTES DATA
+|--------------------------------------------------------------------------
+*/
+
+router.get("/historical-routes", async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            count: BASELINE_HISTORICAL_ROUTES.length,
+            routes: BASELINE_HISTORICAL_ROUTES
+        });
+    } catch (error) {
+        console.error("Historical routes error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Unable to load historical routes."
         });
     }
 });

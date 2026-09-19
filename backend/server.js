@@ -18,6 +18,7 @@ import aiAgentRoutes from "./routes/aiAgentRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 
 import { getAIMetrics } from "./services/aiAgentService.js";
+import { seedHistoricalRoutesIfEmpty } from "./services/historicalRouteService.js";
 
 dotenv.config();
 
@@ -78,7 +79,9 @@ app.use(
     express.static(path.join(__dirname, "uploads"))
 );
 
-connectDB();
+connectDB().then(() => {
+    seedHistoricalRoutesIfEmpty().catch(() => {});
+});
 
 app.get("/api/admin/dashboard/metrics", async (req, res) => {
     try {

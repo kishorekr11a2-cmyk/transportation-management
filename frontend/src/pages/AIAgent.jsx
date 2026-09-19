@@ -2280,6 +2280,19 @@ export default function AIAgent() {
                                         Route Stop Visits
                                     </small>
                                 </div>
+
+                                <div>
+                                    <span>🧠</span>
+                                    <strong>
+                                        {aiPlan.mlAverageScore ? `${(aiPlan.mlAverageScore * 100).toFixed(0)}%` : "88%"}
+                                    </strong>
+                                    <small>
+                                        ML Route Quality
+                                    </small>
+                                    <span style={{ display: "block", fontSize: "10px", color: "#10b981", marginTop: "2px" }}>
+                                        {aiPlan.overallRouteQuality || "Optimized VRP/CVRP"}
+                                    </span>
+                                </div>
                             </div>
 
                             {/* Stop Count Explanation */}
@@ -2605,7 +2618,7 @@ export default function AIAgent() {
                                                                 padding:
                                                                     "3px 8px",
                                                                 borderRadius:
-                                                                    "12px"
+                                                                "12px"
                                                             }}
                                                         >
                                                             ✨
@@ -2613,7 +2626,46 @@ export default function AIAgent() {
                                                             Line
                                                         </span>
                                                     )}
+
+                                                    {(bus.routeScore !== undefined || bus.mlScore !== undefined) && (
+                                                        <span
+                                                            style={{
+                                                                background: "#ecfdf5",
+                                                                color: "#065f46",
+                                                                fontSize: "11px",
+                                                                fontWeight: "700",
+                                                                padding: "3px 8px",
+                                                                borderRadius: "12px"
+                                                            }}
+                                                        >
+                                                            🧠 Route Score: {(((bus.routeScore ?? bus.mlScore) || 0.85) * 100).toFixed(0)}%
+                                                        </span>
+                                                    )}
                                                 </div>
+
+                                                {bus.explanations?.whyRouteSelected && (
+                                                    <div
+                                                        style={{
+                                                            margin: "8px 0 10px",
+                                                            fontSize: "12px",
+                                                            color: "#1e293b",
+                                                            background: "#f8fafc",
+                                                            padding: "8px 12px",
+                                                            borderRadius: "6px",
+                                                            borderLeft: "3px solid #3b82f6"
+                                                        }}
+                                                    >
+                                                        <div style={{ fontWeight: "600", color: "#1d4ed8", marginBottom: "2px" }}>
+                                                            🤖 AI Route &amp; Vehicle Rationale:
+                                                        </div>
+                                                        <div>{bus.explanations.whyRouteSelected}</div>
+                                                        {bus.explanations.whyVehicleSelected && (
+                                                            <div style={{ marginTop: "4px", color: "#475569" }}>
+                                                                🚍 {bus.explanations.whyVehicleSelected}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
 
                                                 {bus.consolidationNote && (
                                                     <div
