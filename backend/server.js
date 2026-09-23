@@ -16,6 +16,7 @@ import stopRoutes from "./routes/stopRoutes.js";
 import mapLocationRoutes from "./routes/mapLocationRoutes.js";
 import aiAgentRoutes from "./routes/aiAgentRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
+import inwardStartingPlaceRoutes from "./routes/inwardStartingPlaceRoutes.js";
 
 import { getAIMetrics } from "./services/aiAgentService.js";
 import { seedHistoricalRoutesIfEmpty } from "./services/historicalRouteService.js";
@@ -107,6 +108,7 @@ app.use("/api/map-locations", mapLocationRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/locations", locationRoutes);
+app.use("/api/inward-starting-places", inwardStartingPlaceRoutes);
 
 app.get("/", (req, res) => {
     res.json({

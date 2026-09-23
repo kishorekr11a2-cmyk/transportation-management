@@ -11,6 +11,8 @@ import {
     generateLateResponseEventKey as lifecycleGenerateEventKey,
     getCurrentApprovedPlan,
     createLateResponseEvent as lifecycleCreateLateResponseEvent,
+    createOrGetLateResponseEvent,
+    resolveLateResponsesForPlan,
     resolveLateResponsesForPreviousPlan,
     getActiveLateResponses as lifecycleGetActiveLateResponses
 } from "../services/lateResponseLifecycleService.js";
@@ -489,6 +491,8 @@ export const getCurrentUser = async (req, res) => {
             travelStatus: calculated.travelStatus,
             allocationStatus: calculated.allocationStatus,
             allocatedBus: calculated.allocatedBus,
+            outward: calculated.outward,
+            inward: calculated.inward,
             route: calculated.allocatedRoute,
             planVersion: calculated.activePlanVersion || 1,
             planId: calculated.planId,
@@ -532,6 +536,8 @@ export const getUserAllocation = async (req, res) => {
             allocatedBus: calculated.allocatedBus,
             travelStatus: calculated.travelStatus,
             allocationStatus: calculated.allocationStatus,
+            outward: calculated.outward,
+            inward: calculated.inward,
             route: calculated.allocatedRoute,
             planVersion: calculated.activePlanVersion || 1,
             planId: calculated.planId,
@@ -640,7 +646,9 @@ export const updateTravelStatus = async (req, res) => {
                 affectedDirections: u.affectedDirections,
                 isAllocated,
                 isUnallocated,
-                unallocatedCategory
+                unallocatedCategory,
+                outward: u.outward || u.allocatedBus?.outward || null,
+                inward: u.inward || u.allocatedBus?.inward || null
             };
         };
 
@@ -689,6 +697,11 @@ export const updateTravelStatus = async (req, res) => {
         // CASE 1: Student selects "Not Coming"
         // =====================================================
         if (travelStatus === "Not Coming") {
+            const responseVersion = (user.responseVersion || 0) + 1;
+            const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
+            user.responseEventId = responseEventId;
+            user.lastResponseEventId = responseEventId;
+            user.responseVersion = responseVersion;
             user.previousTravelStatus = previousTravelStatus;
             user.travelStatus = "Not Coming";
             user.travelResponseSubmittedAt = responseSubmittedAt;
@@ -700,20 +713,21 @@ export const updateTravelStatus = async (req, res) => {
             user.assignedRoute = null;
             user.allocatedBus = null;
             user.lateResponseDetected = false;
+            user.lateResponse = false;
             user.isLateResponse = false;
             user.lateResponseAt = null;
             user.requiresReallocation = false;
             user.affectedDirections = [];
             await user.save();
 
-            // Resolve any existing un-resolved late response events for this user
+            // Cancel any open late response events for this user
             try {
                 await LateResponseEvent.updateMany(
-                    { userId: String(user.userId || ""), status: { $nin: ["RESOLVED", "ALLOCATED"] } },
-                    { $set: { status: "RESOLVED", resolvedAt: new Date(), updatedAt: new Date(), resolutionReason: "Changed status to Not Coming" } }
+                    { userId: String(user.userId || ""), status: { $in: ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] } },
+                    { $set: { status: "CANCELLED", resolvedAt: new Date(), updatedAt: new Date(), resolutionReason: "Changed status to Not Coming" } }
                 );
             } catch (lreErr) {
-                console.warn("LateResponseEvent resolve on Not Coming warning:", lreErr.message);
+                console.warn("LateResponseEvent update on Not Coming warning:", lreErr.message);
             }
 
             clearActiveApprovedPlansCache();
@@ -732,6 +746,11 @@ export const updateTravelStatus = async (req, res) => {
         // =====================================================
         // CASE 2: Student selects "Coming"
         // =====================================================
+        const responseVersion = (user.responseVersion || 0) + 1;
+        const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
+        user.responseEventId = responseEventId;
+        user.lastResponseEventId = responseEventId;
+        user.responseVersion = responseVersion;
         user.travelResponseSubmittedAt = responseSubmittedAt;
         user.lastTravelResponseAt = responseSubmittedAt;
 
@@ -786,117 +805,57 @@ export const updateTravelStatus = async (req, res) => {
         // If student submits Coming after approved plan:
         // Mark student as LATE RESPONSE: Unallocated, no vehicle/bus assigned
         if (isLateComing) {
-            console.log("[LATE RESPONSE DETECTED]", {
+            const lateLifecycleRes = await createOrGetLateResponseEvent({
                 userId: user.userId,
-                responseSubmittedAt: responseSubmittedAt.toISOString(),
-                planApprovedAt: new Date(latestApprovalTime).toISOString()
+                user,
+                direction: activeApprovedPlan?.direction || null,
+                planType: activeApprovedPlan?.planType || "AI",
+                approvedPlan: activeApprovedPlan,
+                responseEventId,
+                responseSubmittedAt,
+                previousTravelStatus
             });
 
-            user.travelStatus = "Coming";
-            user.allocationStatus = "Unallocated";
-            user.lateResponse = true;
-            user.isLateResponse = true;
-            user.lateResponseDetected = true;
-            user.lateResponseAt = responseSubmittedAt;
-            user.previousTravelStatus = previousTravelStatus;
-            user.requiresReallocation = true;
-            user.affectedDirections = [];
-            user.submittedPlanVersion = currentPlanVersion;
-            user.submittedApprovalEventId = currentApprovalEventId;
-            user.isAllocated = false;
-            user.isUnallocated = true;
-            user.allocatedBus = null;
-            user.assignedVehicle = null;
-            user.assignedRoute = null;
-            user.allocatedVehicle = null;
-            user.allocatedRoute = null;
-            user.manualRouteId = null;
-            user.manualBusId = null;
-            user.routeId = null;
-            user.busId = null;
-
-            const eventKey = generateLateResponseEventKey(user.userId, currentApprovalEventId, latestApprovalTime);
-            user.lateResponseEventId = eventKey;
-            await user.save();
-
-            // Create or update single LateResponseEvent
-            try {
-                await LateResponseEvent.updateOne(
-                    {
-                        $or: [
-                            { eventKey },
-                            { userId: String(user.userId || ""), approvalEventId: currentApprovalEventId, status: "ACTIVE" }
-                        ]
-                    },
-                    {
-                        $set: {
-                            status: "ACTIVE",
-                            isLateResponse: true,
-                            planVersion: currentPlanVersion || 1,
-                            approvalEventId: currentApprovalEventId,
-                            responseSubmittedAt,
-                            updatedAt: new Date()
-                        },
-                        $setOnInsert: {
-                            eventKey,
-                            userId: String(user.userId || ""),
-                            planId: activeApprovedPlan?.planId || null,
-                            planVersion: currentPlanVersion || 1,
-                            approvalEventId: currentApprovalEventId,
-                            direction: null,
-                            previousTravelStatus: previousTravelStatus || "Pending",
-                            currentTravelStatus: "Coming",
-                            responseTimestamp: responseSubmittedAt,
-                            responseSubmittedAt,
-                            planApprovedAt: latestApprovalTime ? new Date(latestApprovalTime) : null,
-                            planType: activeApprovedPlan?.planType || "AI",
-                            isLateResponse: true,
-                            status: "ACTIVE",
-                            isNotified: false,
-                            createdAt: new Date()
-                        }
-                    },
-                    { upsert: true }
-                );
-            } catch (lreErr) {
-                console.error("[LATE RESPONSE ERROR] Failed to upsert LateResponseEvent:", lreErr.message);
-            }
-
-            // Mark plan as requiring review
-            const planReviewUpdate = {
-                $set: {
-                    requiresReview: true,
-                    hasLateResponses: true,
-                    pendingReallocation: true,
-                    lastLateResponseAt: responseSubmittedAt
+            // Mark plan as requiring review if event was newly created
+            if (lateLifecycleRes.isNew) {
+                const planReviewUpdate = {
+                    $set: {
+                        requiresReview: true,
+                        hasLateResponses: true,
+                        pendingReallocation: true,
+                        lastLateResponseAt: responseSubmittedAt
+                    }
+                };
+                try {
+                    await AiPlan.updateMany({ active: true, isApproved: true }, planReviewUpdate);
+                    if (mongoose.connection?.db) {
+                        await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true }, planReviewUpdate);
+                    }
+                } catch (planErr) {
+                    console.warn("Plan review update warning:", planErr.message);
                 }
-            };
-            try {
-                await AiPlan.updateMany({ active: true, isApproved: true }, planReviewUpdate);
-                if (mongoose.connection?.db) {
-                    await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true }, planReviewUpdate);
-                }
-            } catch (planErr) {
-                console.warn("Plan review update warning:", planErr.message);
             }
 
             clearActiveApprovedPlansCache();
 
+            // Refresh user document
+            const refreshedUser = await User.findById(user._id);
+
             return res.status(200).json({
                 success: true,
                 message: "Travel response recorded as Coming. Transportation allocation is pending administrator manual route assignment.",
-                travelStatus: user.travelStatus,
-                allocationStatus: user.allocationStatus,
+                travelStatus: refreshedUser.travelStatus,
+                allocationStatus: refreshedUser.allocationStatus,
                 isAllocated: false,
                 isUnallocated: true,
-                lateResponse: true,
-                isLateResponse: true,
-                lateResponseDetected: true,
+                lateResponse: lateLifecycleRes.status !== "RESOLVED",
+                isLateResponse: lateLifecycleRes.status !== "RESOLVED",
+                lateResponseDetected: lateLifecycleRes.status !== "RESOLVED",
                 planVersion: currentPlanVersion,
                 approvalEventId: currentApprovalEventId,
                 responseSubmittedAt,
-                lateResponseEventKey: eventKey,
-                user: buildSanitizedUser(user)
+                lateResponseEventKey: lateLifecycleRes.event?.eventKey || lateLifecycleRes.eventKey,
+                user: buildSanitizedUser(refreshedUser)
             });
         }
 

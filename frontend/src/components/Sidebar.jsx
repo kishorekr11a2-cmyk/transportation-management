@@ -26,12 +26,25 @@ function Sidebar() {
                 Route Management
             </Link>
 
+            <Link to="/admin/inward-starting-places">
+                Inward Starting Places
+            </Link>
+
+            <Link to="/admin/manual-plan">
+                Admin Manual Plan
+            </Link>
+
             <Link to="/schedule">
                 Schedule Management
             </Link>
+
             <Link to="/ai-agent">
-    AI Agent
-</Link>
+                AI Agent
+            </Link>
+
+            <Link to="/admin/plan-confirmation">
+                Plan Confirmation
+            </Link>
 
         </div>
 

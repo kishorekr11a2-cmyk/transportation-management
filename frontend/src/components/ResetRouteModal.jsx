@@ -36,9 +36,9 @@ export default function ResetRouteModal({
                         <FiAlertTriangle />
                     </div>
                     <div>
-                        <h2>Reset {dirLabel ? `${dirLabel} ` : ""}AI Generated Route?</h2>
+                        <h2>Reset {dirLabel ? `${dirLabel} ` : ""}Transportation Plan?</h2>
                         <span className="ai-modal-subtitle">
-                            Confirmation required before clearing {dirLabel ? `${dirLabel.toLowerCase()} ` : ""}recommendation
+                            Confirmation required before clearing {dirLabel ? `${dirLabel.toLowerCase()} ` : ""}transportation plan
                         </span>
                     </div>
                 </div>
@@ -46,7 +46,7 @@ export default function ResetRouteModal({
                 {/* Modal Body */}
                 <div className="ai-modal-body">
                     <p className="ai-modal-lead">
-                        This will remove the currently generated {dirLabel ? `${dirLabel} ` : ""}AI recommendation and associated student allocations. {dirLabel ? `The opposite direction (if independently approved) remains completely untouched.` : ""}
+                        This will remove the currently generated {dirLabel ? `${dirLabel} ` : ""}transportation plan and associated student allocations. {dirLabel ? `The opposite direction (if independently approved) remains completely untouched.` : ""}
                     </p>
                     <div className="ai-modal-safe-callout">
                         <span className="safe-badge">✓ SAFE ACTION</span>
@@ -76,7 +76,7 @@ export default function ResetRouteModal({
                         onClick={onConfirm}
                         disabled={isResetting}
                     >
-                        {isResetting ? "Resetting AI Route..." : "Reset AI Route"}
+                        {isResetting ? `Resetting ${dirLabel ? `${dirLabel} ` : ""}Plan...` : `Reset ${dirLabel ? `${dirLabel} ` : ""}Plan`}
                     </button>
                 </div>
             </div>

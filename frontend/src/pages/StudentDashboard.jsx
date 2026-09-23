@@ -206,40 +206,52 @@ const StudentDashboard = () => {
     const allocatedBus = student.allocatedBus;
     const affectedDirections = Array.isArray(student.affectedDirections) ? student.affectedDirections : [];
 
-    // Strict direction-specific verification:
-    // Only consider inward allocated if inward is explicitly present, approved, allocated, AND not in affectedDirections
-    const inwardAlloc = (!affectedDirections.includes("INWARD") && allocatedBus?.inward && (allocatedBus.inward.approved === true || allocatedBus.inward.adminApprovalStatus === "Approved") && allocatedBus.inward.isAllocated)
-        ? allocatedBus.inward
-        : null;
+    // Direction allocations derived authoritatively from student.outward / student.inward or allocatedBus
+    const outwardAlloc = (student.outward?.isAllocated)
+        ? (student.outward.allocatedBus || student.outward)
+        : ((!affectedDirections.includes("OUTWARD") && allocatedBus?.outward && (allocatedBus.outward.approved === true || allocatedBus.outward.adminApprovalStatus === "Approved") && allocatedBus.outward.isAllocated)
+            ? allocatedBus.outward
+            : null);
 
-    // Only consider outward allocated if outward is explicitly present, approved, allocated, AND not in affectedDirections
-    const outwardAlloc = (!affectedDirections.includes("OUTWARD") && allocatedBus?.outward && (allocatedBus.outward.approved === true || allocatedBus.outward.adminApprovalStatus === "Approved") && allocatedBus.outward.isAllocated)
-        ? allocatedBus.outward
-        : null;
+    const inwardAlloc = (student.inward?.isAllocated)
+        ? (student.inward.allocatedBus || student.inward)
+        : ((!affectedDirections.includes("INWARD") && allocatedBus?.inward && (allocatedBus.inward.approved === true || allocatedBus.inward.adminApprovalStatus === "Approved") && allocatedBus.inward.isAllocated)
+            ? allocatedBus.inward
+            : null);
+
+    const isOutwardPendingRealloc = Boolean(
+        !outwardAlloc && (student.outward?.isPendingReallocation || affectedDirections.includes("OUTWARD"))
+    );
+
+    const isInwardPendingRealloc = Boolean(
+        !inwardAlloc && (student.inward?.isPendingReallocation || affectedDirections.includes("INWARD"))
+    );
 
     const effectiveTravelStatus = student.travelStatus || (student.lateResponse || student.isLateResponse ? "Coming" : "Pending");
     const isComing = effectiveTravelStatus === "Coming";
 
+    const hasDirectionalAlloc = Boolean(inwardAlloc || outwardAlloc);
+
+    const isAllocated = isComing && Boolean(
+        hasDirectionalAlloc ||
+        (student.isAllocated === true && (student.allocationStatus === "Assigned" || student.allocationStatus === "Re-assigned")) ||
+        Boolean(allocatedBus?.isAllocated && (allocatedBus.approved === true || allocatedBus.adminApprovalStatus === "Approved")) ||
+        Boolean(student.allocatedVehicle && (student.allocationStatus === "Assigned" || student.allocationStatus === "Re-assigned"))
+    );
+
+    // isLate applies ONLY when user is not allocated and has a pending late response
     const isLate = Boolean(
         isComing &&
-        (student.lateResponse === true ||
+        !isAllocated &&
+        (isOutwardPendingRealloc ||
+         isInwardPendingRealloc ||
+         student.lateResponse === true ||
          student.lateResponseDetected === true ||
          student.isLateResponse === true ||
          student.lateResponseStatus === "ACTIVE" ||
          student.allocationStatus === "Pending Reallocation" ||
          student.allocationStatus === "Waiting for admin reallocation" ||
          (typeof student.reason === "string" && student.reason.toLowerCase().includes("late response")))
-    );
-
-    const hasDirectionalAlloc = Boolean(inwardAlloc || outwardAlloc);
-
-    const isAllocated = isComing && Boolean(
-        hasDirectionalAlloc ||
-        (!isLate && (
-            student.isAllocated === true ||
-            Boolean(allocatedBus?.isAllocated && (allocatedBus.approved === true || allocatedBus.adminApprovalStatus === "Approved")) ||
-            Boolean(student.allocatedVehicle && (student.allocationStatus === "Assigned" || student.allocationStatus === "Re-assigned"))
-        ))
     );
 
     // If student is actively allocated, they are NOT pending reallocation globally.
@@ -265,8 +277,9 @@ const StudentDashboard = () => {
         })
         : null;
 
-    const isInwardPendingRealloc = affectedDirections.includes("INWARD") || (isLate && !inwardAlloc && outwardAlloc);
-    const isOutwardPendingRealloc = affectedDirections.includes("OUTWARD") || (isLate && !outwardAlloc && inwardAlloc);
+    const displayPlanVersion = outwardAlloc?.planVersion || inwardAlloc?.planVersion || student.outward?.planVersion || student.inward?.planVersion || student.activePlanVersion || student.planVersion || 1;
+    const activeVehicleName = outwardAlloc?.vehicleName || inwardAlloc?.vehicleName || student.allocatedVehicle || fallbackAlloc?.vehicleName || "Assigned Bus";
+    const activeRouteCode = outwardAlloc?.routeCode || inwardAlloc?.routeCode || student.allocatedRoute || fallbackAlloc?.routeCode || "Assigned Route";
 
     const isLocked = Boolean(
         isAllocated ||
@@ -338,6 +351,7 @@ const StudentDashboard = () => {
                         <h3 className="bus-route-title">{alloc.routeName}</h3>
                         <div className="bus-meta-tags">
                             <span className="meta-pill sector-pill">📍 {alloc.sectorName}</span>
+                            <span className="meta-pill" style={{ background: "#e0f2fe", color: "#0369a1" }}>📋 Plan Version {alloc.planVersion || displayPlanVersion}</span>
                             <span className="meta-pill capacity-pill">👥 {alloc.assignedUsersCount} / {alloc.capacity} Seats Allocated</span>
                             {alloc.roadRouteStatus && (
                                 <span className="meta-pill" style={{
@@ -376,7 +390,7 @@ const StudentDashboard = () => {
                             {alloc.seatNumber ? `✓ Seat #${alloc.seatNumber}` : "✓ Confirmed"}
                         </span>
                         <span className="metric-hint">
-                            {alloc.remainingSeats} standby seats left on bus
+                            {alloc.planVersion ? `Plan Version ${alloc.planVersion}` : (displayPlanVersion ? `Plan Version ${displayPlanVersion}` : `${alloc.remainingSeats} standby seats left on bus`)}
                         </span>
                     </div>
                 </div>
@@ -502,7 +516,11 @@ const StudentDashboard = () => {
                 <div className="student-card travel-status-card">
                     <div className="card-header-line">
                         <h2>🚦 Daily Travel Response</h2>
-                        {isLate ? (
+                        {isAllocated ? (
+                            <span className="badge badge-success">
+                                {effectiveTravelStatus}
+                            </span>
+                        ) : isLate ? (
                             <span className="badge badge-warning" style={{ background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", fontWeight: "700" }}>
                                 Waiting for admin reallocation
                             </span>
@@ -622,7 +640,7 @@ const StudentDashboard = () => {
                             <div>
                                 <strong style={{ fontSize: "14px", display: "block" }}>Allocation Confirmed &amp; Submission Locked</strong>
                                 <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#15803d", lineHeight: "1.4" }}>
-                                    You are already allocated to an active bus (<strong>{student.allocatedVehicle || fallbackAlloc?.vehicleName || outwardAlloc?.vehicleName || inwardAlloc?.vehicleName || "Assigned Bus"}</strong>, Route <strong>{student.allocatedRoute || fallbackAlloc?.routeCode || outwardAlloc?.routeCode || inwardAlloc?.routeCode || "Assigned Route"}</strong>) in Plan Version {student.activePlanVersion || student.planVersion || 1}. Daily travel response submission is locked.
+                                    You are already allocated to an active bus (<strong>{activeVehicleName}</strong>, Route <strong>{activeRouteCode}</strong>) in Plan Version {displayPlanVersion}. Daily travel response submission is locked.
                                 </p>
                             </div>
                         </div>
@@ -631,7 +649,7 @@ const StudentDashboard = () => {
                     {/* Status Feedback & Notice */}
                     {effectiveTravelStatus && effectiveTravelStatus !== "Pending" && (
                         <div className="travel-response-lock-box">
-                            {isLate ? (
+                            {!isAllocated && isLate ? (
                                 <div className="late-response-flag-alert" style={{
                                     marginTop: "12px",
                                     background: "#fffbeb",
@@ -653,7 +671,7 @@ const StudentDashboard = () => {
                                         </p>
                                     </div>
                                 </div>
-                            ) : (
+                            ) : !isAllocated ? (
                                 <div className="status-lock-notice">
                                     <span className="lock-icon">{effectiveTravelStatus === "Coming" ? "✓" : "ℹ️"}</span>
                                     <span>
@@ -662,7 +680,7 @@ const StudentDashboard = () => {
                                             : "Your response is recorded as Not Coming. You cannot change from Not Coming to Coming. Please contact the administrator."}
                                     </span>
                                 </div>
-                            )}
+                            ) : null}
                         </div>
                     )}
                 </div>

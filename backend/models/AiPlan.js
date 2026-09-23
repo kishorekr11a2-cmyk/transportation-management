@@ -10,7 +10,7 @@ const aiPlanSchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ["active", "reset", "superseded"],
+            enum: ["active", "reset", "superseded", "stale"],
             default: "active",
             index: true
         },
@@ -148,6 +148,8 @@ const aiPlanSchema = new mongoose.Schema(
 
 aiPlanSchema.index({ active: 1, status: 1, direction: 1, createdAt: -1 });
 aiPlanSchema.index({ active: 1, status: 1, isApproved: 1, direction: 1 });
+aiPlanSchema.index({ active: 1, status: 1, isApproved: -1, createdAt: -1 });
+aiPlanSchema.index({ status: 1, direction: 1, resetAt: -1 });
 aiPlanSchema.index({ active: 1, isApproved: 1, requiresReview: 1 });
 aiPlanSchema.index({ active: 1, isApproved: 1, hasLateResponses: 1 });
 

@@ -128,6 +128,15 @@ export const saveSelectedPlan = async (payload) => {
 };
 
 /* -------------------------------------------------------
+   CONFIRM & ALLOCATE FINAL PLAN (EXPLICIT CONFIRMATION)
+------------------------------------------------------- */
+
+export const confirmAndAllocatePlan = async (payload) => {
+    const response = await api.post("/ai-agent/confirm-and-allocate", payload);
+    return response.data;
+};
+
+/* -------------------------------------------------------
    GET LAST SELECTED PLAN
 ------------------------------------------------------- */
 
@@ -217,6 +226,35 @@ export const fetchLateResponses = async () => {
 };
 
 export const getLateResponses = fetchLateResponses;
+
+/* -------------------------------------------------------
+   INWARD STARTING PLACES API
+------------------------------------------------------- */
+
+export const getInwardStartingPlaces = async (params = {}) => {
+    const response = await api.get("/inward-starting-places", { params });
+    return response.data;
+};
+
+export const addInwardStartingPlace = async (data) => {
+    const response = await api.post("/inward-starting-places", data);
+    return response.data;
+};
+
+export const updateInwardStartingPlace = async (id, data) => {
+    const response = await api.put(`/inward-starting-places/${id}`, data);
+    return response.data;
+};
+
+export const deleteInwardStartingPlace = async (id) => {
+    const response = await api.delete(`/inward-starting-places/${id}`);
+    return response.data;
+};
+
+export const toggleInwardStartingPlaceStatus = async (id) => {
+    const response = await api.patch(`/inward-starting-places/${id}/toggle`);
+    return response.data;
+};
 
 export default {
     getAIMetrics,

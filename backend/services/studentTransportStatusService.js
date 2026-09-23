@@ -169,6 +169,401 @@ export const normalizeActivePlans = (plans, options = {}) => {
     return normalized;
 };
 
+export const calculateDirectionTransportState = (userOrDoc, activePlans, direction, options = {}) => {
+    const dir = String(direction || "OUTWARD").toUpperCase().trim();
+    const planDoc = activePlans?.[dir];
+    const isPlanApproved = Boolean(
+        planDoc?.isApproved ||
+        planDoc?.adminApprovalStatus === "Approved" ||
+        planDoc?.approved === true ||
+        planDoc?.plan?.adminApprovalStatus === "Approved" ||
+        (planDoc?.approvalEventId && planDoc?.isApproved !== false && planDoc?.adminApprovalStatus !== "Draft")
+    );
+    const planVersion = Number(planDoc?.planVersion || planDoc?.version || planDoc?.plan?.version || 1);
+    const planType = planDoc?.planType || planDoc?.type || "AI";
+    const approvalEventId = planDoc?.approvalEventId || null;
+    const planApprovedAt = planDoc?.approvedAt || planDoc?.selectedAt || planDoc?.plan?.approvedAt;
+    const planApprovedTime = planApprovedAt ? new Date(planApprovedAt).getTime() : 0;
+
+    const uId = normalizeId(userOrDoc?.userId);
+    const mongoId = normalizeId(userOrDoc?._id || userOrDoc?.id);
+    const uStop = String(userOrDoc?.stoppings || "").trim();
+    const travelStatus = userOrDoc?.travelStatus || "Pending";
+
+    // 1. Pending response
+    if (travelStatus === "Pending") {
+        return {
+            direction: dir,
+            travelStatus: "Pending",
+            allocationStatus: "Unallocated",
+            isAllocated: false,
+            isUnallocated: true,
+            isPendingReallocation: false,
+            isLate: false,
+            lateResponseStatus: "NONE",
+            planVersion,
+            planType,
+            approvalEventId,
+            vehicle: null,
+            vehicleName: null,
+            route: null,
+            routeCode: null,
+            routeName: null,
+            boardingStop: uStop || null,
+            stopOrder: 1,
+            totalStops: 1,
+            seatNumber: null,
+            seatStatus: null,
+            capacity: 0,
+            assignedUsersCount: 0,
+            remainingSeats: 0,
+            routeStops: [],
+            isRoadVerified: false,
+            roadRouteStatus: null
+        };
+    }
+
+    // 2. Not Coming
+    if (travelStatus === "Not Coming") {
+        return {
+            direction: dir,
+            travelStatus: "Not Coming",
+            allocationStatus: "Not Traveling",
+            isAllocated: false,
+            isUnallocated: true,
+            isPendingReallocation: false,
+            isLate: false,
+            lateResponseStatus: "NONE",
+            planVersion,
+            planType,
+            approvalEventId,
+            vehicle: null,
+            vehicleName: null,
+            route: null,
+            routeCode: null,
+            routeName: null,
+            boardingStop: uStop || null,
+            stopOrder: 1,
+            totalStops: 1,
+            seatNumber: null,
+            seatStatus: null,
+            capacity: 0,
+            assignedUsersCount: 0,
+            remainingSeats: 0,
+            routeStops: [],
+            isRoadVerified: false,
+            roadRouteStatus: null
+        };
+    }
+
+    // 3. User is "Coming": Check allocation in active plan
+    let foundAlloc = null;
+
+    if (isPlanApproved && planDoc) {
+        const planData = planDoc.plan || planDoc;
+        const planAllocatedIds = planData?.allocatedUserIds || planDoc?.allocatedUserIds;
+        if (planAllocatedIds) {
+            const hasUser = planAllocatedIds instanceof Set
+                ? (planAllocatedIds.has(uId) || (userOrDoc?.userId && planAllocatedIds.has(userOrDoc.userId)) || (mongoId && planAllocatedIds.has(mongoId)))
+                : (Array.isArray(planAllocatedIds) && planAllocatedIds.some(id => normalizeId(id) === uId || (userOrDoc?.userId && normalizeId(id) === normalizeId(userOrDoc.userId))));
+            if (hasUser) {
+                const vehicleName = userOrDoc.allocatedBus?.vehicleName || userOrDoc.assignedVehicle || "Assigned Bus";
+                const routeCode = userOrDoc.allocatedBus?.routeCode || userOrDoc.assignedRoute || "Assigned Route";
+                foundAlloc = {
+                    isAllocated: true,
+                    approved: true,
+                    vehicle: vehicleName,
+                    vehicleName,
+                    vehicleNumber: vehicleName,
+                    route: routeCode,
+                    routeCode,
+                    routeName: userOrDoc.allocatedBus?.routeName || routeCode,
+                    direction: dir,
+                    planVersion: planDoc.planVersion || planDoc.version || planVersion,
+                    planType,
+                    approvalEventId,
+                    boardingStop: uStop || "Assigned Stop",
+                    stopOrder: 1,
+                    totalStops: 1,
+                    seatNumber: userOrDoc.allocatedBus?.seatNumber || null,
+                    seatStatus: "Assigned",
+                    capacity: 70,
+                    assignedUsersCount: 1,
+                    remainingSeats: 0,
+                    allocationStatus: "Assigned",
+                    adminApprovalStatus: "Approved",
+                    source: "active_plan"
+                };
+            }
+        }
+
+        const buses = Array.isArray(planData?.buses) ? planData.buses : (Array.isArray(planData?.routes) ? planData.routes : []);
+
+        for (const bus of buses) {
+            const users = bus.users || bus.allocatedStudents || bus.passengers || bus.assignedUsers || [];
+            let isUserInBus = false;
+            let seatNumber = bus.seatNumber || null;
+
+            for (const u of users) {
+                const candId = typeof u === "string" ? normalizeId(u) : normalizeId(u.userId || u._id || u.id);
+                if ((uId && candId === uId) || (mongoId && candId === mongoId)) {
+                    isUserInBus = true;
+                    if (typeof u === "object" && u.seatNumber) seatNumber = u.seatNumber;
+                    break;
+                }
+            }
+
+            let matchedStop = null;
+            const stops = Array.isArray(bus.stops) ? bus.stops : [];
+            for (const st of stops) {
+                const stopUserIds = (st.userIds || []).map(normalizeId);
+                if ((uId && stopUserIds.includes(uId)) || (mongoId && stopUserIds.includes(mongoId))) {
+                    isUserInBus = true;
+                    matchedStop = st;
+                    break;
+                }
+            }
+
+            if (isUserInBus) {
+                const vehicleName = bus.vehicleName || bus.vehicleNumber || "Assigned Bus";
+                const routeCode = bus.routeCode || bus.routeName || `R-${String(bus.routeNumber || 1).padStart(2, "0")}`;
+                const routeName = bus.routeName || `${routeCode}: ${vehicleName}`;
+                const stopName = matchedStop?.name || matchedStop?.stopName || uStop || "Assigned Stop";
+                const stopOrder = matchedStop?.order || 1;
+                const totalStops = stops.length || 1;
+                const capacity = Number(bus.capacity) || 70;
+                const assignedUsersCount = Number(bus.assignedUsers || users.length || 0);
+                const remainingSeats = bus.remainingSeats ?? Math.max(0, capacity - assignedUsersCount);
+
+                foundAlloc = {
+                    isAllocated: true,
+                    approved: true,
+                    vehicle: vehicleName,
+                    vehicleName,
+                    vehicleNumber: vehicleName,
+                    route: routeCode,
+                    routeCode,
+                    routeName,
+                    direction: dir,
+                    planVersion: planDoc.planVersion || planDoc.version || planVersion,
+                    planType,
+                    approvalEventId,
+                    boardingStop: stopName,
+                    stopOrder,
+                    totalStops,
+                    seatNumber,
+                    seatStatus: seatNumber ? `#${seatNumber}` : "Assigned",
+                    capacity,
+                    assignedUsersCount,
+                    remainingSeats,
+                    sectorName: bus.sectorName || "Transit Line",
+                    routeStops: stops.map((s) => ({
+                        order: s.order,
+                        name: s.name,
+                        passengers: s.userCount || s.passengersDropped || s.passengersBoarded || 0,
+                        legDistanceKm: s.legDistanceKm ?? null,
+                        isUserStop: s.name?.toLowerCase().trim() === stopName.toLowerCase().trim()
+                    })),
+                    roadRouteStatus: bus.roadRouteStatus || (bus.isRoadVerified ? "OSRM Verified" : "Active Route"),
+                    isRoadVerified: Boolean(bus.isRoadVerified),
+                    allocationStatus: "Assigned",
+                    adminApprovalStatus: "Approved",
+                    source: "active_plan"
+                };
+                break;
+            }
+        }
+    }
+
+    // Direct check from user document (saved by persistPlanToUsers or admin allocation)
+    if (!foundAlloc && userOrDoc.allocatedBus) {
+        const dirKey = dir.toLowerCase();
+        const cand = userOrDoc.allocatedBus[dirKey] ||
+            (userOrDoc.allocatedBus.direction === dir ? userOrDoc.allocatedBus : null);
+        if (cand && cand.isAllocated && (cand.approved === true || cand.adminApprovalStatus === "Approved")) {
+            foundAlloc = {
+                ...cand,
+                direction: dir,
+                planVersion: cand.planVersion || planVersion,
+                planType: cand.planType || planType,
+                isAllocated: true,
+                approved: true,
+                source: "user_doc"
+            };
+        }
+    }
+
+    // If student is allocated in this direction:
+    if (foundAlloc) {
+        return {
+            direction: dir,
+            travelStatus: "Coming",
+            allocationStatus: userOrDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned",
+            isAllocated: true,
+            isUnallocated: false,
+            isPendingReallocation: false,
+            isLate: false,
+            lateResponseStatus: "RESOLVED",
+            planVersion: foundAlloc.planVersion || planVersion,
+            planType: foundAlloc.planType || planType,
+            approvalEventId: foundAlloc.approvalEventId || approvalEventId,
+            vehicle: foundAlloc.vehicleName || foundAlloc.vehicle,
+            vehicleName: foundAlloc.vehicleName || foundAlloc.vehicle,
+            route: foundAlloc.routeCode || foundAlloc.route,
+            routeCode: foundAlloc.routeCode || foundAlloc.route,
+            routeName: foundAlloc.routeName,
+            boardingStop: foundAlloc.boardingStop || uStop || "Assigned Stop",
+            stopOrder: foundAlloc.stopOrder || 1,
+            totalStops: foundAlloc.totalStops || 1,
+            seatNumber: foundAlloc.seatNumber || null,
+            seatStatus: foundAlloc.seatStatus || (foundAlloc.seatNumber ? `#${foundAlloc.seatNumber}` : "Assigned"),
+            capacity: foundAlloc.capacity || 70,
+            assignedUsersCount: foundAlloc.assignedUsersCount || 1,
+            remainingSeats: foundAlloc.remainingSeats ?? 0,
+            sectorName: foundAlloc.sectorName || "Transit Line",
+            routeStops: foundAlloc.routeStops || [],
+            roadRouteStatus: foundAlloc.roadRouteStatus || null,
+            isRoadVerified: Boolean(foundAlloc.isRoadVerified),
+            source: foundAlloc.source || "active_plan"
+        };
+    }
+
+    // 4. Student is NOT allocated in this direction:
+    // If the plan for this direction is not approved, the student is simply unallocated awaiting plan generation/approval.
+    // A late response can only exist against an APPROVED plan for this direction.
+    if (!isPlanApproved) {
+        return {
+            direction: dir,
+            travelStatus: "Coming",
+            allocationStatus: "Unallocated",
+            isAllocated: false,
+            isUnallocated: true,
+            isPendingReallocation: false,
+            isLate: false,
+            lateResponseStatus: "NONE",
+            planVersion,
+            planType,
+            approvalEventId,
+            vehicle: null,
+            vehicleName: null,
+            route: null,
+            routeCode: null,
+            routeName: null,
+            boardingStop: uStop || null,
+            stopOrder: 1,
+            totalStops: 1,
+            seatNumber: null,
+            seatStatus: null,
+            capacity: 0,
+            assignedUsersCount: 0,
+            remainingSeats: 0,
+            routeStops: [],
+            isRoadVerified: false,
+            roadRouteStatus: null,
+            message: "Transportation plan is pending admin approval."
+        };
+    }
+
+    // Determine whether this student has an active late response specifically for THIS direction.
+    const responseTime = userOrDoc.travelResponseSubmittedAt || userOrDoc.lastTravelResponseAt || (userOrDoc.lateResponseDetected ? userOrDoc.lateResponseAt : null);
+    const responseTimestamp = responseTime ? new Date(responseTime).getTime() : 0;
+
+    let hasActiveLateUser = false;
+    if (options.activeLateUserIdsByDir?.[dir]) {
+        hasActiveLateUser = options.activeLateUserIdsByDir[dir].has(uId);
+    } else if (options.activeLateUserIds instanceof Set) {
+        hasActiveLateUser = options.activeLateUserIds.has(uId);
+    }
+
+    const isSubmittedAfterPlanApproval = Boolean(
+        isPlanApproved &&
+        planApprovedTime > 0 &&
+        responseTimestamp > planApprovedTime
+    );
+
+    const existingAffectedDirs = Array.isArray(userOrDoc.affectedDirections)
+        ? userOrDoc.affectedDirections.map((d) => String(d).toUpperCase().trim())
+        : [];
+
+    const isExplicitlyPendingInDir = Boolean(
+        (userOrDoc.lateResponse === true || userOrDoc.isLateResponse === true || userOrDoc.lateResponseDetected === true || userOrDoc.requiresReallocation === true) &&
+        !userOrDoc.lateResponseResolvedAt &&
+        (existingAffectedDirs.length === 0 ? (!userOrDoc.direction || String(userOrDoc.direction).toUpperCase().trim() === dir) : existingAffectedDirs.includes(dir))
+    );
+
+    const isLateForDir = Boolean(
+        hasActiveLateUser ||
+        isSubmittedAfterPlanApproval ||
+        isExplicitlyPendingInDir
+    );
+
+    if (isLateForDir) {
+        return {
+            direction: dir,
+            travelStatus: "Coming",
+            allocationStatus: "Unallocated",
+            isAllocated: false,
+            isUnallocated: true,
+            isPendingReallocation: true,
+            isLate: true,
+            lateResponseStatus: "ACTIVE",
+            planVersion,
+            planType,
+            approvalEventId,
+            vehicle: null,
+            vehicleName: null,
+            route: null,
+            routeCode: null,
+            routeName: null,
+            boardingStop: uStop || null,
+            stopOrder: 1,
+            totalStops: 1,
+            seatNumber: null,
+            seatStatus: null,
+            capacity: 0,
+            assignedUsersCount: 0,
+            remainingSeats: 0,
+            routeStops: [],
+            isRoadVerified: false,
+            roadRouteStatus: null,
+            reason: "Late response requires admin reallocation",
+            message: `Your Coming response was submitted after the ${dir.toLowerCase()} plan was approved. Please wait until the administrator regenerates and approves the plan.`
+        };
+    }
+
+    // 5. Default on-time unallocated (e.g. capacity full / standby, or plan not approved)
+    return {
+        direction: dir,
+        travelStatus: "Coming",
+        allocationStatus: "Unallocated",
+        isAllocated: false,
+        isUnallocated: true,
+        isPendingReallocation: false,
+        isLate: false,
+        lateResponseStatus: "NONE",
+        planVersion,
+        planType,
+        approvalEventId,
+        vehicle: null,
+        vehicleName: null,
+        route: null,
+        routeCode: null,
+        routeName: null,
+        boardingStop: uStop || null,
+        stopOrder: 1,
+        totalStops: 1,
+        seatNumber: null,
+        seatStatus: null,
+        capacity: 0,
+        assignedUsersCount: 0,
+        remainingSeats: 0,
+        routeStops: [],
+        isRoadVerified: false,
+        roadRouteStatus: null,
+        message: isPlanApproved ? "You are on the standby list. Please contact transportation administrator." : "Transportation plan is pending admin approval."
+    };
+};
+
 export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options = {}) => {
     if (!userOrDoc || !userOrDoc.travelStatus || userOrDoc.travelStatus === "Pending") {
         return {
@@ -210,287 +605,76 @@ export const getActiveAllocationForStudent = (userOrDoc, rawActivePlans, options
 
     const targetDir = options?.direction ? String(options.direction).toUpperCase().trim() : null;
     const activePlans = normalizeActivePlans(rawActivePlans, { direction: targetDir });
-    const uId = normalizeId(userOrDoc.userId);
-    const mongoId = normalizeId(userOrDoc._id || userOrDoc.id);
-    const uStop = String(userOrDoc.stoppings || "").trim();
 
-    const currentPlanEventId = activePlans?.primaryPlan?.approvalEventId ||
-        (activePlans?.primaryPlan?.planVersion ? `v${activePlans.primaryPlan.planVersion}` : null);
-    const inwardPlanTime = activePlans.INWARD?.approvedAt ? new Date(activePlans.INWARD.approvedAt) : null;
-    const outwardPlanTime = activePlans.OUTWARD?.approvedAt ? new Date(activePlans.OUTWARD.approvedAt) : null;
-    const responseTime = userOrDoc.travelResponseSubmittedAt || userOrDoc.lastTravelResponseAt || (userOrDoc.lateResponseDetected ? userOrDoc.lateResponseAt : null);
+    const inward = calculateDirectionTransportState(userOrDoc, activePlans, "INWARD", options);
+    const outward = calculateDirectionTransportState(userOrDoc, activePlans, "OUTWARD", options);
 
-    const activeLateUserIds = options.activeLateUserIds;
-    const hasActiveLateEvent = Boolean(activeLateUserIds && activeLateUserIds.has(uId));
-    const existingAffectedDirs = Array.isArray(userOrDoc.affectedDirections)
-        ? userOrDoc.affectedDirections.map((d) => String(d).toUpperCase().trim())
-        : [];
-
-    const isSubmittedAfterInward = Boolean(
-        activePlans.INWARD?.isApproved &&
-        inwardPlanTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > inwardPlanTime.getTime()
-    );
-    const isSubmittedAfterOutward = Boolean(
-        activePlans.OUTWARD?.isApproved &&
-        outwardPlanTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > outwardPlanTime.getTime()
-    );
-
-    const isLateInward = Boolean(
-        isSubmittedAfterInward ||
-        (hasActiveLateEvent && existingAffectedDirs.includes("INWARD")) ||
-        (userOrDoc.lateResponseDetected === true && existingAffectedDirs.includes("INWARD"))
-    );
-    const isLateOutward = Boolean(
-        isSubmittedAfterOutward ||
-        (hasActiveLateEvent && existingAffectedDirs.includes("OUTWARD")) ||
-        (userOrDoc.lateResponseDetected === true && existingAffectedDirs.includes("OUTWARD"))
-    );
-
-    // Helper to find student in an active plan's bus list (ONLY by userId or mongoId — NEVER by name)
-    const findStudentInPlanBuses = (planDoc, direction) => {
-        const isApproved = Boolean(
-            planDoc?.isApproved ||
-            planDoc?.adminApprovalStatus === "Approved" ||
-            planDoc?.approved === true ||
-            planDoc?.plan?.adminApprovalStatus === "Approved" ||
-            (planDoc?.approvalEventId && planDoc?.isApproved !== false && planDoc?.adminApprovalStatus !== "Draft")
-        );
-        if (!planDoc || !isApproved) return null;
-
-        const planData = planDoc.plan || planDoc;
-        const planApprovedAt = planDoc.approvedAt || planDoc.selectedAt || planData?.approvedAt;
-        if (planApprovedAt && responseTime && new Date(responseTime).getTime() > new Date(planApprovedAt).getTime()) {
-            return null;
-        }
-
-        const planAllocatedIds = planData?.allocatedUserIds || planDoc?.allocatedUserIds;
-        if (planAllocatedIds) {
-            const hasUser = planAllocatedIds instanceof Set
-                ? (planAllocatedIds.has(uId) || (userOrDoc.userId && planAllocatedIds.has(userOrDoc.userId)))
-                : (Array.isArray(planAllocatedIds) && planAllocatedIds.some(id => normalizeId(id) === uId || (userOrDoc.userId && id === userOrDoc.userId)));
-            if (hasUser) {
-                const vehicleName = userOrDoc.allocatedBus?.vehicleName || userOrDoc.assignedVehicle || "Assigned Bus";
-                const routeCode = userOrDoc.allocatedBus?.routeCode || userOrDoc.assignedRoute || "Assigned Route";
-                return {
-                    isAllocated: true,
-                    approved: true,
-                    vehicle: vehicleName,
-                    vehicleName,
-                    vehicleNumber: vehicleName,
-                    route: routeCode,
-                    routeCode,
-                    routeName: userOrDoc.allocatedBus?.routeName || routeCode,
-                    direction,
-                    planVersion: planDoc.planVersion || planDoc.version || 1,
-                    planType: planDoc.planType || "AI",
-                    approvalEventId: planDoc.approvalEventId,
-                    boardingStop: uStop || "Assigned Stop",
-                    seatNumber: userOrDoc.allocatedBus?.seatNumber || null,
-                    seatStatus: "Assigned",
-                    allocationStatus: "Assigned",
-                    adminApprovalStatus: "Approved",
-                    source: "active_plan"
-                };
-            }
-        }
-
-        const buses = Array.isArray(planData?.buses) ? planData.buses : (Array.isArray(planData?.routes) ? planData.routes : []);
-
-        for (const bus of buses) {
-            const users = bus.users || bus.allocatedStudents || bus.passengers || bus.assignedUsers || [];
-            let isUserInBus = false;
-            let seatNumber = bus.seatNumber || null;
-
-            for (const u of users) {
-                const candId = typeof u === "string" ? normalizeId(u) : normalizeId(u.userId || u._id || u.id);
-                // ONLY match by userId or mongoId — NEVER by student name!
-                if ((uId && candId === uId) || (mongoId && candId === mongoId)) {
-                    isUserInBus = true;
-                    if (typeof u === "object" && u.seatNumber) seatNumber = u.seatNumber;
-                    break;
-                }
-            }
-
-            // Check individual stops within bus (ONLY userIds, never student names)
-            let matchedStop = null;
-            const stops = Array.isArray(bus.stops) ? bus.stops : [];
-            for (const st of stops) {
-                const stopUserIds = (st.userIds || []).map(normalizeId);
-                if ((uId && stopUserIds.includes(uId)) || (mongoId && stopUserIds.includes(mongoId))) {
-                    isUserInBus = true;
-                    matchedStop = st;
-                    break;
-                }
-            }
-
-            if (isUserInBus) {
-                const vehicleName = bus.vehicleName || bus.vehicleNumber || "Assigned Bus";
-                const routeCode = bus.routeCode || bus.routeName || `R-${String(bus.routeNumber || 1).padStart(2, "0")}`;
-                const routeName = bus.routeName || `${routeCode}: ${vehicleName}`;
-                const stopName = matchedStop?.name || matchedStop?.stopName || uStop || "Assigned Stop";
-                const seatStatus = seatNumber ? `#${seatNumber}` : "Assigned";
-
-                return {
-                    isAllocated: true,
-                    approved: true,
-                    vehicle: vehicleName,
-                    vehicleName,
-                    vehicleNumber: vehicleName,
-                    route: routeCode,
-                    routeCode,
-                    routeName,
-                    direction,
-                    planVersion: planDoc.planVersion || planDoc.version || 1,
-                    planType: planDoc.planType || "AI",
-                    approvalEventId: planDoc.approvalEventId,
-                    boardingStop: stopName,
-                    seatNumber,
-                    seatStatus,
-                    allocationStatus: "Assigned",
-                    adminApprovalStatus: "Approved",
-                    source: "active_plan"
-                };
-            }
-        }
-
-        return null;
-    };
-
-    let inwardAllocation = null;
-    let outwardAllocation = null;
-
-    if (activePlans?.INWARD?.isApproved) {
-        inwardAllocation = findStudentInPlanBuses(activePlans.INWARD, "INWARD");
-    }
-
-    if (activePlans?.OUTWARD?.isApproved) {
-        outwardAllocation = findStudentInPlanBuses(activePlans.OUTWARD, "OUTWARD");
-    }
-
-    const hasLateNotice = Boolean(
-        isLateInward ||
-        isLateOutward ||
-        hasActiveLateEvent ||
-        userOrDoc.lateResponseDetected === true ||
-        userOrDoc.isLateResponse === true ||
-        userOrDoc.lateResponse === true ||
-        userOrDoc.requiresReallocation === true
-    );
-
-    // Direct check from user document (saved by persistPlanToUsers or admin allocation)
-    // ONLY if student does NOT have a late notice and is not explicitly unallocated!
-    if (!hasLateNotice && userOrDoc.allocationStatus !== "Unallocated" && !userOrDoc.isUnallocated) {
-        const userAlloc = userOrDoc.allocatedBus;
-        if (!inwardAllocation && userAlloc?.inward?.isAllocated && (userAlloc.inward.approved === true || userAlloc.inward.adminApprovalStatus === "Approved")) {
-            inwardAllocation = { ...userAlloc.inward, isAllocated: true, approved: true };
-        }
-        if (!outwardAllocation && userAlloc?.outward?.isAllocated && (userAlloc.outward.approved === true || userAlloc.outward.adminApprovalStatus === "Approved")) {
-            outwardAllocation = { ...userAlloc.outward, isAllocated: true, approved: true };
-        }
-        if (!inwardAllocation && !outwardAllocation && (userAlloc?.isAllocated || userOrDoc.isAllocated || userOrDoc.assignedVehicle)) {
-            const allocDir = userAlloc?.direction || userOrDoc.direction || targetDir || "OUTWARD";
-            const vName = userAlloc?.vehicleName || userOrDoc.assignedVehicle || "Assigned Bus";
-            const rCode = userAlloc?.routeCode || userOrDoc.assignedRoute || "Assigned Route";
-            const sNum = userAlloc?.seatNumber || (userOrDoc.seatNumber ? Number(userOrDoc.seatNumber) : 1);
-            const directAlloc = {
-                isAllocated: true,
-                approved: true,
-                vehicle: vName,
-                vehicleName: vName,
-                vehicleNumber: vName,
-                route: rCode,
-                routeCode: rCode,
-                routeName: userAlloc?.routeName || rCode,
-                direction: allocDir,
-                seatNumber: sNum,
-                seatStatus: sNum ? `#${sNum}` : "Assigned",
-                boardingStop: userAlloc?.boardingStop || uStop || "Assigned Stop",
-                allocationStatus: "Assigned",
-                adminApprovalStatus: "Approved"
-            };
-            if (allocDir === "INWARD") inwardAllocation = directAlloc;
-            else outwardAllocation = directAlloc;
-        }
-    }
-
-    let primaryAlloc;
+    let primaryDir;
     if (targetDir === "INWARD") {
-        primaryAlloc = inwardAllocation || outwardAllocation;
+        primaryDir = inward;
     } else if (targetDir === "OUTWARD") {
-        primaryAlloc = outwardAllocation || inwardAllocation;
+        primaryDir = outward;
     } else {
-        primaryAlloc = inwardAllocation || outwardAllocation;
+        primaryDir = outward.isAllocated ? outward : (inward.isAllocated ? inward : (outward.isPendingReallocation ? outward : inward));
     }
 
-    if (primaryAlloc && primaryAlloc.isAllocated) {
-        console.log("[LateResponse] userId:", userOrDoc.userId || uId);
-        console.log("[LateResponse] lateResponseDetected:", false);
-        console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-        console.log("[LateResponse] allocation decision:", "ALLOCATED");
-
+    if (primaryDir.isAllocated) {
         return {
             isAllocated: true,
             allocationStatus: "Assigned",
             isUnallocated: false,
-            vehicle: primaryAlloc.vehicle,
-            vehicleName: primaryAlloc.vehicle,
-            vehicleNumber: primaryAlloc.vehicle,
-            route: primaryAlloc.route,
-            routeCode: primaryAlloc.route,
-            routeName: primaryAlloc.routeName,
-            planVersion: primaryAlloc.planVersion,
-            planType: primaryAlloc.planType,
-            direction: primaryAlloc.direction,
-            boardingStop: primaryAlloc.boardingStop,
-            seatStatus: primaryAlloc.seatStatus,
+            vehicle: primaryDir.vehicleName,
+            vehicleName: primaryDir.vehicleName,
+            vehicleNumber: primaryDir.vehicleName,
+            route: primaryDir.routeCode,
+            routeCode: primaryDir.routeCode,
+            routeName: primaryDir.routeName,
+            planVersion: primaryDir.planVersion,
+            planType: primaryDir.planType,
+            direction: primaryDir.direction,
+            boardingStop: primaryDir.boardingStop,
+            seatStatus: primaryDir.seatStatus,
             approvalStatus: "Approved",
-            inward: inwardAllocation,
-            outward: outwardAllocation,
+            inward: inward.isAllocated ? inward : null,
+            outward: outward.isAllocated ? outward : null,
             allocatedBus: {
-                ...primaryAlloc,
+                ...primaryDir,
                 isAllocated: true,
-                inward: inwardAllocation,
-                outward: outwardAllocation
+                inward: inward.isAllocated ? inward : null,
+                outward: outward.isAllocated ? outward : null
             }
         };
     }
 
-    console.log("[LateResponse] userId:", userOrDoc.userId || uId);
-    console.log("[LateResponse] lateResponseDetected:", hasLateNotice);
-    console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-    console.log("[LateResponse] allocation decision:", hasLateNotice ? "REJECT_LATE_RESPONSE" : "UNALLOCATED");
-
     return {
         isAllocated: false,
-        travelStatus: "Coming",
+        travelStatus: userOrDoc.travelStatus || "Coming",
         allocationStatus: "Unallocated",
         isUnallocated: true,
-        lateResponseDetected: hasLateNotice,
-        isLateResponse: hasLateNotice,
+        lateResponseDetected: primaryDir.isLate,
+        isLateResponse: primaryDir.isLate,
         vehicle: null,
         route: null,
-        planVersion: activePlans?.primaryPlan?.planVersion || 1,
-        planType: activePlans?.primaryPlan?.planType || null,
-        direction: targetDir || null,
-        boardingStop: uStop || null,
+        planVersion: primaryDir.planVersion,
+        planType: primaryDir.planType,
+        direction: targetDir || primaryDir.direction,
+        boardingStop: primaryDir.boardingStop,
         seatStatus: null,
         approvalStatus: null,
-        allocatedBus: null
+        allocatedBus: null,
+        inward: inward.isAllocated ? inward : null,
+        outward: outward.isAllocated ? outward : null
     };
 };
 
 /**
  * 3. GET CURRENT STUDENT TRANSPORT STATUS (ONE SOURCE OF TRUTH)
  *
- * Implements the mandatory Decision Order:
+ * Implements the mandatory Decision Order per direction:
  * 1. user.travelStatus === "Pending" -> Unallocated Pending State
  * 2. user.travelStatus === "Not Coming" -> Unallocated Not Coming State
- * 3. hasActiveLateResponseForCurrentApprovedPlan -> Late Response Unallocated State
- * 4. studentIsIncludedInTheNewlyApprovedPlan -> Allocated State
+ * 3. studentIsIncludedInTheNewlyApprovedPlan -> Allocated State (per direction)
+ * 4. hasActiveLateResponseForCurrentApprovedPlan -> Late Response Unallocated State (per direction)
  * 5. Default -> Unallocated State
  */
 export const getCurrentStudentTransportStatus = async (userOrUserId, options = {}) => {
@@ -514,17 +698,13 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
         return null;
     }
 
-    // Resolve active plans (or use provided pre-fetched plans)
-    const activePlans = options.activePlans || await getActiveApprovedPlans();
-    const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
-    const activePlanType = activePlans?.primaryPlan?.planType || "AI";
-    const currentPlanEventId = activePlans?.primaryPlan?.approvalEventId || (activePlanVersion ? `v${activePlanVersion}` : null);
-    const planApprovalTime = activePlans?.primaryPlan?.approvedAt ? new Date(activePlans.primaryPlan.approvedAt) : null;
+    const activePlans = options.activePlans || await getActiveApprovedPlans({ direction: options.direction });
     const currentTravelStatus = userDoc.travelStatus || "Pending";
-    const uId = normalizeId(userDoc.userId);
 
-    // ── 1. Pending State ──
+    // 1. Pending State
     if (currentTravelStatus === "Pending") {
+        const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
+        const activePlanType = activePlans?.primaryPlan?.planType || "AI";
         return {
             ...userDoc,
             userId: userDoc.userId,
@@ -552,12 +732,16 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
+            activePlan: activePlans?.primaryPlan || null,
+            outward: { direction: "OUTWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
+            inward: { direction: "INWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
     }
 
-    // ── 2. Not Coming State ──
+    // 2. Not Coming State
     if (currentTravelStatus === "Not Coming") {
+        const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
+        const activePlanType = activePlans?.primaryPlan?.planType || "AI";
         return {
             ...userDoc,
             userId: userDoc.userId,
@@ -585,16 +769,30 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
+            activePlan: activePlans?.primaryPlan || null,
+            outward: { direction: "OUTWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
+            inward: { direction: "INWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
     }
 
-    // ── 3. Check Active Late Response for Current Approved Plan ──
+    // Fetch active late events by direction if not provided
     let activeLateUserIds = options.activeLateUserIds;
+    let activeLateUserIdsByDir = options.activeLateUserIdsByDir || { INWARD: new Set(), OUTWARD: new Set() };
     if (!activeLateUserIds && isDbConnected()) {
         try {
-            const activeEvents = await LateResponseEvent.find({ status: "ACTIVE" }).select("userId").lean();
-            activeLateUserIds = new Set((activeEvents || []).map((e) => normalizeId(e.userId)));
+            const activeEvents = await LateResponseEvent.find({ status: { $in: ["OPEN", "ACTIVE"] } }).select("userId direction").lean();
+            activeLateUserIds = new Set();
+            (activeEvents || []).forEach((e) => {
+                const uid = normalizeId(e.userId);
+                activeLateUserIds.add(uid);
+                const d = e.direction ? String(e.direction).toUpperCase().trim() : null;
+                if (d === "INWARD") activeLateUserIdsByDir.INWARD.add(uid);
+                else if (d === "OUTWARD") activeLateUserIdsByDir.OUTWARD.add(uid);
+                else {
+                    activeLateUserIdsByDir.INWARD.add(uid);
+                    activeLateUserIdsByDir.OUTWARD.add(uid);
+                }
+            });
         } catch {
             activeLateUserIds = new Set();
         }
@@ -602,166 +800,76 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
         activeLateUserIds = new Set();
     }
 
-    const inwardPlanTime = activePlans.INWARD?.approvedAt ? new Date(activePlans.INWARD.approvedAt) : null;
-    const outwardPlanTime = activePlans.OUTWARD?.approvedAt ? new Date(activePlans.OUTWARD.approvedAt) : null;
-    const responseTime = userDoc.travelResponseSubmittedAt || userDoc.lastTravelResponseAt || (userDoc.lateResponseDetected ? userDoc.lateResponseAt : null);
+    const calcOptions = {
+        ...options,
+        activeLateUserIds,
+        activeLateUserIdsByDir
+    };
 
-    const isSubmittedAfterInward = Boolean(
-        activePlans.INWARD?.isApproved &&
-        inwardPlanTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > inwardPlanTime.getTime()
-    );
-    const isSubmittedAfterOutward = Boolean(
-        activePlans.OUTWARD?.isApproved &&
-        outwardPlanTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > outwardPlanTime.getTime()
-    );
+    const outward = calculateDirectionTransportState(userDoc, activePlans, "OUTWARD", calcOptions);
+    const inward = calculateDirectionTransportState(userDoc, activePlans, "INWARD", calcOptions);
 
-    const detectedAffectedDirs = [];
-    if (isSubmittedAfterInward) detectedAffectedDirs.push("INWARD");
-    if (isSubmittedAfterOutward) detectedAffectedDirs.push("OUTWARD");
+    const isAllocated = Boolean(outward.isAllocated || inward.isAllocated);
+    const isPendingReallocation = Boolean(outward.isPendingReallocation || inward.isPendingReallocation);
+    const affectedDirections = [
+        ...(outward.isPendingReallocation ? ["OUTWARD"] : []),
+        ...(inward.isPendingReallocation ? ["INWARD"] : [])
+    ];
 
-    const dynamicAffectedDirs = (Array.isArray(userDoc.affectedDirections) && userDoc.affectedDirections.length > 0)
-        ? userDoc.affectedDirections
-        : (detectedAffectedDirs.length > 0
-            ? detectedAffectedDirs
-            : (activePlans.INWARD?.isApproved && !activePlans.OUTWARD?.isApproved ? ["INWARD"] : (activePlans.OUTWARD?.isApproved && !activePlans.INWARD?.isApproved ? ["OUTWARD"] : ["INWARD", "OUTWARD"])));
-
-    // ── 3. Check Active Late Response for Current Approved Plan ──
-    const hasActiveLateEvent = activeLateUserIds ? activeLateUserIds.has(uId) : false;
-    const isSubmittedAfterCurrentApproval = Boolean(
-        activePlans.hasApprovedPlan &&
-        planApprovalTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > planApprovalTime.getTime()
-    );
-
-    const isLateForCurrentPlan = Boolean(
-        userDoc.lateResponse === true ||
-        userDoc.isLateResponse === true ||
-        isSubmittedAfterCurrentApproval ||
-        hasActiveLateEvent ||
-        (userDoc.lateResponseDetected === true && (
-            (userDoc.submittedApprovalEventId && currentPlanEventId && String(userDoc.submittedApprovalEventId).toLowerCase().trim() === String(currentPlanEventId).toLowerCase().trim()) ||
-            (userDoc.submittedPlanVersion && userDoc.submittedPlanVersion === activePlanVersion) ||
-            isSubmittedAfterCurrentApproval
-        ))
-    );
-
-    // ── 4. Check If Student Is Included In The Newly Approved Plan ──
-    // IMPORTANT: Must check allocation BEFORE the isLateForCurrentPlan early return.
-    // A student who was late but has since been allocated via regenerated plan must
-    // be returned as ALLOCATED, not LATE. The late flags on the user document may not
-    // yet be cleared if persistPlanToUsers ran but the user document was not fully updated.
-    const allocation = getActiveAllocationForStudent(userDoc, activePlans, { activeLateUserIds, direction: options.direction });
-
-    if (allocation.isAllocated) {
-        const remainingAffectedDirs = dynamicAffectedDirs.filter((d) => (d === "INWARD" ? !allocation.inward : !allocation.outward));
-        const hasPendingOtherDir = remainingAffectedDirs.length > 0;
-
-        return {
-            ...userDoc,
-            userId: userDoc.userId,
-            name: userDoc.name,
-            travelStatus: "Coming",
-            allocationStatus: userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned",
-            isAllocated: true,
-            isUnallocated: false,
-            allocatedVehicle: allocation.vehicle,
-            allocatedRoute: allocation.route,
-            assignedVehicle: allocation.vehicle,
-            assignedRoute: allocation.route,
-            vehicle: allocation.vehicle,
-            activePlanVersion: allocation.planVersion || activePlanVersion,
-            activePlanType: allocation.planType || activePlanType,
-            submissionLocked: true,
-            isSubmissionLocked: true,
-            lateResponseStatus: hasPendingOtherDir ? "ACTIVE" : "NONE",
-            lateResponse: hasPendingOtherDir,
-            isLateResponse: hasPendingOtherDir,
-            lateResponseDetected: hasPendingOtherDir,
-            requiresReallocation: hasPendingOtherDir,
-            affectedDirections: remainingAffectedDirs,
-            allocatedBus: allocation.allocatedBus || allocation,
-            route: allocation.route,
-            planVersion: allocation.planVersion || activePlanVersion,
-            planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
-        };
+    const targetDir = options.direction ? String(options.direction).toUpperCase().trim() : null;
+    let primaryDir;
+    if (targetDir === "INWARD") {
+        primaryDir = inward;
+    } else if (targetDir === "OUTWARD") {
+        primaryDir = outward;
+    } else {
+        primaryDir = outward.isAllocated ? outward : (inward.isAllocated ? inward : (outward.isPendingReallocation ? outward : (inward.isPendingReallocation ? inward : outward)));
     }
 
-    if (isLateForCurrentPlan) {
-        const targetPlanId = (dynamicAffectedDirs.includes("OUTWARD") && !dynamicAffectedDirs.includes("INWARD"))
-            ? (activePlans?.OUTWARD?.planId || activePlans?.primaryPlan?.planId || null)
-            : (activePlans?.INWARD?.planId || activePlans?.primaryPlan?.planId || null);
+    const activePlanVersion = primaryDir.planVersion || activePlans?.primaryPlan?.planVersion || 1;
+    const activePlanType = primaryDir.planType || activePlans?.primaryPlan?.planType || "AI";
 
-        return {
-            ...userDoc,
-            userId: userDoc.userId,
-            name: userDoc.name,
-            travelStatus: "Coming",
-            allocationStatus: "Unallocated",
-            isAllocated: false,
-            isUnallocated: true,
-            allocatedVehicle: null,
-            allocatedRoute: null,
-            assignedVehicle: null,
-            assignedRoute: null,
-            vehicle: null,
-            activePlanVersion,
-            activePlanType,
-            submissionLocked: false,
-            isSubmissionLocked: false,
-            lateResponseStatus: "ACTIVE",
-            lateResponse: true,
-            isLateResponse: true,
-            lateResponseDetected: true,
-            requiresReallocation: true,
-            affectedDirections: dynamicAffectedDirs,
-            allocatedBus: null,
-            route: null,
-            planVersion: activePlanVersion,
-            planId: targetPlanId,
-            activePlan: activePlans?.primaryPlan || null,
-            reason: "Late response requires admin reallocation",
-            message: "Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan."
-        };
-    }
-
-
-
-
-    // ── 5. Default: Unallocated State (Normal Coming student awaiting or without seat) ──
     return {
         ...userDoc,
         userId: userDoc.userId,
         name: userDoc.name,
-        travelStatus: "Coming",
-        allocationStatus: "Unallocated",
-        isAllocated: false,
-        isUnallocated: true,
-        allocatedVehicle: null,
-        allocatedRoute: null,
-        assignedVehicle: null,
-        assignedRoute: null,
-        vehicle: null,
+        travelStatus: userDoc.travelStatus || "Coming",
+        allocationStatus: isAllocated
+            ? (userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned")
+            : "Unallocated",
+        isAllocated,
+        isUnallocated: !isAllocated,
+        allocatedVehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        allocatedRoute: primaryDir.isAllocated ? primaryDir.routeCode : null,
+        assignedVehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        assignedRoute: primaryDir.isAllocated ? primaryDir.routeCode : null,
+        vehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        route: primaryDir.isAllocated ? primaryDir.routeCode : null,
         activePlanVersion,
         activePlanType,
-        submissionLocked: false,
-        isSubmissionLocked: false,
-        lateResponseStatus: "NONE",
-        lateResponse: false,
-        isLateResponse: false,
-        lateResponseDetected: false,
-        requiresReallocation: false,
-        affectedDirections: [],
-        allocatedBus: null,
-        route: null,
+        submissionLocked: Boolean(isAllocated),
+        isSubmissionLocked: Boolean(isAllocated),
+        lateResponseStatus: isPendingReallocation ? "ACTIVE" : (isAllocated ? "RESOLVED" : "NONE"),
+        lateResponse: isPendingReallocation,
+        isLateResponse: isPendingReallocation,
+        lateResponseDetected: isPendingReallocation,
+        requiresReallocation: isPendingReallocation,
+        affectedDirections,
+        allocatedBus: {
+            ...(primaryDir.isAllocated ? primaryDir : {}),
+            isAllocated,
+            inward: inward.isAllocated ? inward : null,
+            outward: outward.isAllocated ? outward : null
+        },
         planVersion: activePlanVersion,
-        planId: activePlans?.primaryPlan?.planId || null,
-        activePlan: activePlans?.primaryPlan || null
+        planId: primaryDir.approvalEventId || activePlans?.primaryPlan?.planId || null,
+        activePlan: activePlans?.primaryPlan || null,
+        outward,
+        inward,
+        ...(isPendingReallocation ? {
+            reason: "Late response requires admin reallocation",
+            message: `Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan.`
+        } : {})
     };
 };
 
@@ -779,42 +887,51 @@ export const batchCalculateStudentTransportStatuses = async (students) => {
     const activePlans = await getActiveApprovedPlans();
 
     let activeLateUserIds = new Set();
+    let activeLateUserIdsByDir = { INWARD: new Set(), OUTWARD: new Set() };
     if (isDbConnected()) {
         try {
-            const activeEvents = await LateResponseEvent.find({ status: "ACTIVE" }).select("userId").lean();
-            activeLateUserIds = new Set((activeEvents || []).map((e) => normalizeId(e.userId)));
+            const activeEvents = await LateResponseEvent.find({ status: { $in: ["OPEN", "ACTIVE"] } }).select("userId direction").lean();
+            (activeEvents || []).forEach((e) => {
+                const uid = normalizeId(e.userId);
+                activeLateUserIds.add(uid);
+                const d = e.direction ? String(e.direction).toUpperCase().trim() : null;
+                if (d === "INWARD") activeLateUserIdsByDir.INWARD.add(uid);
+                else if (d === "OUTWARD") activeLateUserIdsByDir.OUTWARD.add(uid);
+                else {
+                    activeLateUserIdsByDir.INWARD.add(uid);
+                    activeLateUserIdsByDir.OUTWARD.add(uid);
+                }
+            });
         } catch (e) {
             console.warn("[TRANSPORT_STATUS] Error loading late events:", e.message);
         }
     }
 
     return students.map((student) => {
-        return calculateStudentTransportStatusSync(student, activePlans, activeLateUserIds);
+        return calculateStudentTransportStatusSync(student, activePlans, { activeLateUserIds, activeLateUserIdsByDir });
     });
 };
 
 /**
  * Synchronous in-memory status calculator when activePlans and activeLateUserIds are already available.
- * Follows the EXACT same Decision Order:
- * 1. user.travelStatus === "Pending" -> Unallocated Pending State
- * 2. user.travelStatus === "Not Coming" -> Unallocated Not Coming State
- * 3. hasActiveLateResponseForCurrentApprovedPlan -> Late Response Unallocated State
- * 4. studentIsIncludedInTheNewlyApprovedPlan -> Allocated State
- * 5. Default -> Unallocated State
  */
-export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, activeLateUserIds) => {
+export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, rawOptions = {}) => {
     if (!userDoc) return null;
 
     const activePlans = normalizeActivePlans(rawActivePlans);
-    const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
-    const activePlanType = activePlans?.primaryPlan?.planType || "AI";
-    const currentPlanEventId = activePlans?.primaryPlan?.approvalEventId || (activePlanVersion ? `v${activePlanVersion}` : null);
-    const planApprovalTime = activePlans?.primaryPlan?.approvedAt ? new Date(activePlans.primaryPlan.approvedAt) : null;
-    const currentTravelStatus = userDoc.travelStatus || "Pending";
-    const uId = normalizeId(userDoc.userId);
+    let options = {};
+    if (rawOptions instanceof Set) {
+        options = { activeLateUserIds: rawOptions };
+    } else if (rawOptions && typeof rawOptions === "object") {
+        options = rawOptions;
+    }
 
-    // ── 1. Pending State ──
+    const currentTravelStatus = userDoc.travelStatus || "Pending";
+
+    // 1. Pending State
     if (currentTravelStatus === "Pending") {
+        const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
+        const activePlanType = activePlans?.primaryPlan?.planType || "AI";
         return {
             ...userDoc,
             userId: userDoc.userId,
@@ -823,6 +940,8 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             allocationStatus: "Unallocated",
             isAllocated: false,
             isUnallocated: true,
+            submissionLocked: false,
+            isSubmissionLocked: false,
             allocatedVehicle: null,
             allocatedRoute: null,
             assignedVehicle: null,
@@ -830,8 +949,6 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             vehicle: null,
             activePlanVersion,
             activePlanType,
-            submissionLocked: false,
-            isSubmissionLocked: false,
             lateResponseStatus: "NONE",
             lateResponse: false,
             isLateResponse: false,
@@ -842,12 +959,16 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
+            activePlan: activePlans?.primaryPlan || null,
+            outward: { direction: "OUTWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
+            inward: { direction: "INWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
     }
 
-    // ── 2. Not Coming State ──
+    // 2. Not Coming State
     if (currentTravelStatus === "Not Coming") {
+        const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
+        const activePlanType = activePlans?.primaryPlan?.planType || "AI";
         return {
             ...userDoc,
             userId: userDoc.userId,
@@ -856,6 +977,8 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             allocationStatus: "Unallocated",
             isAllocated: false,
             isUnallocated: true,
+            submissionLocked: false,
+            isSubmissionLocked: false,
             allocatedVehicle: null,
             allocatedRoute: null,
             assignedVehicle: null,
@@ -863,158 +986,86 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, act
             vehicle: null,
             activePlanVersion,
             activePlanType,
-            submissionLocked: false,
-            isSubmissionLocked: false,
             lateResponseStatus: "NONE",
             lateResponse: false,
             isLateResponse: false,
             lateResponseDetected: false,
             requiresReallocation: false,
             affectedDirections: [],
-            allocatedBus: null,
-            route: null,
-            planVersion: activePlanVersion,
-            planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
-        };
-    }
-
-    // ── 3. Check Active Late Response for Current Approved Plan ──
-    const hasActiveLateEvent = activeLateUserIds ? activeLateUserIds.has(uId) : false;
-    const responseTime = userDoc.travelResponseSubmittedAt || userDoc.lastTravelResponseAt || (userDoc.lateResponseDetected ? userDoc.lateResponseAt : null);
-    const isSubmittedAfterCurrentApproval = Boolean(
-        activePlans.hasApprovedPlan &&
-        planApprovalTime &&
-        responseTime &&
-        new Date(responseTime).getTime() > planApprovalTime.getTime()
-    );
-
-    const isLateForCurrentPlan = Boolean(
-        userDoc.lateResponse === true ||
-        userDoc.isLateResponse === true ||
-        isSubmittedAfterCurrentApproval ||
-        hasActiveLateEvent ||
-        (userDoc.lateResponseDetected === true && (
-            (userDoc.submittedApprovalEventId && currentPlanEventId && String(userDoc.submittedApprovalEventId).toLowerCase().trim() === String(currentPlanEventId).toLowerCase().trim()) ||
-            (userDoc.submittedPlanVersion && userDoc.submittedPlanVersion === activePlanVersion) ||
-            isSubmittedAfterCurrentApproval
-        ))
-    );
-
-    // ── 4. Student Is Included In The Newly Approved Plan ──
-    // IMPORTANT: Check allocation BEFORE late response return (same fix as getCurrentStudentTransportStatus).
-    const allocation = getActiveAllocationForStudent(userDoc, activePlans, { activeLateUserIds });
-
-    if (allocation.isAllocated) {
-        console.log("[LateResponse] userId:", userDoc.userId || uId);
-        console.log("[LateResponse] lateResponseDetected:", false);
-        console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-        console.log("[LateResponse] allocation decision:", "ALLOCATED");
-
-        return {
-            ...userDoc,
-            userId: userDoc.userId,
-            name: userDoc.name,
-            travelStatus: "Coming",
-            allocationStatus: userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned",
-            isAllocated: true,
-            isUnallocated: false,
-            allocatedVehicle: allocation.vehicle,
-            allocatedRoute: allocation.route,
-            assignedVehicle: allocation.vehicle,
-            assignedRoute: allocation.route,
-            vehicle: allocation.vehicle,
-            activePlanVersion: allocation.planVersion || activePlanVersion,
-            activePlanType: allocation.planType || activePlanType,
-            submissionLocked: true,
-            isSubmissionLocked: true,
-            lateResponseStatus: "NONE",
-            lateResponse: false,
-            isLateResponse: false,
-            lateResponseDetected: false,
-            requiresReallocation: false,
-            affectedDirections: [],
-            allocatedBus: allocation.allocatedBus || allocation,
-            route: allocation.route,
-            planVersion: allocation.planVersion || activePlanVersion,
-            planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null
-        };
-    }
-
-    if (isLateForCurrentPlan) {
-        console.log("[LateResponse] userId:", userDoc.userId || uId);
-        console.log("[LateResponse] lateResponseDetected:", true);
-        console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-        console.log("[LateResponse] allocation decision:", "REJECT_LATE_RESPONSE");
-
-        return {
-            ...userDoc,
-            userId: userDoc.userId,
-            name: userDoc.name,
-            travelStatus: "Coming",
-            allocationStatus: "Unallocated",
-            isAllocated: false,
-            isUnallocated: true,
-            allocatedVehicle: null,
-            allocatedRoute: null,
-            assignedVehicle: null,
-            assignedRoute: null,
-            vehicle: null,
-            activePlanVersion,
-            activePlanType,
-            submissionLocked: false,
-            isSubmissionLocked: false,
-            lateResponseStatus: "ACTIVE",
-            lateResponse: true,
-            isLateResponse: true,
-            lateResponseDetected: true,
-            requiresReallocation: true,
-            affectedDirections: userDoc.affectedDirections?.length > 0 ? userDoc.affectedDirections : ["INWARD"],
             allocatedBus: null,
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
             activePlan: activePlans?.primaryPlan || null,
-            reason: "Late response requires admin reallocation",
-            message: "Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan."
+            outward: { direction: "OUTWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
+            inward: { direction: "INWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
     }
 
-    // ── 5. Default: Unallocated State (Normal Coming student awaiting or without seat) ──
-    console.log("[LateResponse] userId:", userDoc.userId || uId);
-    console.log("[LateResponse] lateResponseDetected:", false);
-    console.log("[LateResponse] currentPlanEventId:", currentPlanEventId);
-    console.log("[LateResponse] allocation decision:", "UNALLOCATED");
+    const outward = calculateDirectionTransportState(userDoc, activePlans, "OUTWARD", options);
+    const inward = calculateDirectionTransportState(userDoc, activePlans, "INWARD", options);
+
+    const isAllocated = Boolean(outward.isAllocated || inward.isAllocated);
+    const isPendingReallocation = Boolean(outward.isPendingReallocation || inward.isPendingReallocation);
+    const affectedDirections = [
+        ...(outward.isPendingReallocation ? ["OUTWARD"] : []),
+        ...(inward.isPendingReallocation ? ["INWARD"] : [])
+    ];
+
+    const targetDir = options.direction ? String(options.direction).toUpperCase().trim() : null;
+    let primaryDir;
+    if (targetDir === "INWARD") {
+        primaryDir = inward;
+    } else if (targetDir === "OUTWARD") {
+        primaryDir = outward;
+    } else {
+        primaryDir = outward.isAllocated ? outward : (inward.isAllocated ? inward : (outward.isPendingReallocation ? outward : (inward.isPendingReallocation ? inward : outward)));
+    }
+
+    const activePlanVersion = primaryDir.planVersion || activePlans?.primaryPlan?.planVersion || 1;
+    const activePlanType = primaryDir.planType || activePlans?.primaryPlan?.planType || "AI";
 
     return {
         ...userDoc,
         userId: userDoc.userId,
         name: userDoc.name,
-        travelStatus: "Coming",
-        allocationStatus: "Unallocated",
-        isAllocated: false,
-        isUnallocated: true,
-        allocatedVehicle: null,
-        allocatedRoute: null,
-        assignedVehicle: null,
-        assignedRoute: null,
-        vehicle: null,
+        travelStatus: userDoc.travelStatus || "Coming",
+        allocationStatus: isAllocated
+            ? (userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned")
+            : "Unallocated",
+        isAllocated,
+        isUnallocated: !isAllocated,
+        allocatedVehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        allocatedRoute: primaryDir.isAllocated ? primaryDir.routeCode : null,
+        assignedVehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        assignedRoute: primaryDir.isAllocated ? primaryDir.routeCode : null,
+        vehicle: primaryDir.isAllocated ? primaryDir.vehicleName : null,
+        route: primaryDir.isAllocated ? primaryDir.routeCode : null,
         activePlanVersion,
         activePlanType,
-        submissionLocked: false,
-        isSubmissionLocked: false,
-        lateResponseStatus: "NONE",
-        lateResponse: false,
-        isLateResponse: false,
-        lateResponseDetected: false,
-        requiresReallocation: false,
-        affectedDirections: [],
-        allocatedBus: null,
-        route: null,
+        submissionLocked: Boolean(isAllocated),
+        isSubmissionLocked: Boolean(isAllocated),
+        lateResponseStatus: isPendingReallocation ? "ACTIVE" : (isAllocated ? "RESOLVED" : "NONE"),
+        lateResponse: isPendingReallocation,
+        isLateResponse: isPendingReallocation,
+        lateResponseDetected: isPendingReallocation,
+        requiresReallocation: isPendingReallocation,
+        affectedDirections,
+        allocatedBus: {
+            ...(primaryDir.isAllocated ? primaryDir : {}),
+            isAllocated,
+            inward: inward.isAllocated ? inward : null,
+            outward: outward.isAllocated ? outward : null
+        },
         planVersion: activePlanVersion,
-        planId: activePlans?.primaryPlan?.planId || null,
-        activePlan: activePlans?.primaryPlan || null
+        planId: primaryDir.approvalEventId || activePlans?.primaryPlan?.planId || null,
+        activePlan: activePlans?.primaryPlan || null,
+        outward,
+        inward,
+        ...(isPendingReallocation ? {
+            reason: "Late response requires admin reallocation",
+            message: `Your Coming response was submitted after the plan was approved. Please wait until the administrator regenerates and approves the plan.`
+        } : {})
     };
 };
 

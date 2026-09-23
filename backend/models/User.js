@@ -230,6 +230,24 @@ const userSchema = new mongoose.Schema(
             type: String,
             default: null,
             trim: true
+        },
+
+        responseEventId: {
+            type: String,
+            default: null,
+            trim: true,
+            index: true
+        },
+
+        lastResponseEventId: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
+        responseVersion: {
+            type: Number,
+            default: 1
         }
     },
     {

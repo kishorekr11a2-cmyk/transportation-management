@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { HiArrowLeft } from "react-icons/hi";
 import api from "../services/api";
 import {
     FiTruck,
@@ -14,6 +16,7 @@ import {
 import "../css/ScheduleManagement.css";
 
 const ScheduleManagement = () => {
+    const navigate = useNavigate();
     const [vehicles, setVehicles] = useState([]);
     const [schedules, setSchedules] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -218,6 +221,16 @@ const ScheduleManagement = () => {
             {/* Header */}
             <div className="schedule-header">
                 <div className="schedule-header-left">
+                    <button
+                        type="button"
+                        className="schedule-back-btn"
+                        onClick={() => navigate(-1)}
+                        aria-label="Go back"
+                        style={{ marginBottom: "12px" }}
+                    >
+                        <HiArrowLeft size={16} />
+                        Back
+                    </button>
                     <span className="schedule-badge-tag">
                         FLEET SCHEDULING &amp; DISPATCH
                     </span>

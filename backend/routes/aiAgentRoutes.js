@@ -9,6 +9,7 @@ import {
     resolveLocation,
     generateAgentRecommendations,
     saveSelectedPlan,
+    confirmAndAllocatePlan,
     getSelectedPlan,
     getActiveAIPlan,
     resetGeneratedAIRoute,
@@ -353,6 +354,10 @@ router.post(
                     tripMode: tripMode || plan?.tripMode
                 });
 
+            if (result && result.success === false) {
+                return res.status(400).json(result);
+            }
+
             res.json(
                 result
             );
@@ -375,6 +380,77 @@ router.post(
         }
     }
 );
+
+/*
+|--------------------------------------------------------------------------
+| CONFIRM AND ALLOCATE PLAN (EXPLICIT CONFIRMATION)
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/confirm-and-allocate",
+    authMiddleware,
+    adminMiddleware,
+    async (
+        req,
+        res
+    ) => {
+        try {
+            const {
+                planType,
+                plan,
+                startingPoint,
+                direction,
+                tripMode
+            } = req.body;
+
+            if (
+                !planType ||
+                !plan
+            ) {
+                return res.status(
+                    400
+                ).json({
+                    success: false,
+                    message: "Plan type and plan are required."
+                });
+            }
+
+            const result =
+                await confirmAndAllocatePlan({
+                    planType,
+                    plan,
+                    startingPoint,
+                    direction: direction || plan?.direction || tripMode || plan?.tripMode,
+                    tripMode: tripMode || plan?.tripMode
+                });
+
+            if (result && result.success === false) {
+                return res.status(400).json(result);
+            }
+
+            res.json(
+                result
+            );
+
+        } catch (error) {
+            console.error(
+                "Confirm and allocate plan error:",
+                error
+            );
+
+            res.status(
+                500
+            ).json({
+                success: false,
+                message:
+                    error?.message ||
+                    "Unable to confirm and allocate plan."
+            });
+        }
+    }
+);
+
 
 /*
 |--------------------------------------------------------------------------

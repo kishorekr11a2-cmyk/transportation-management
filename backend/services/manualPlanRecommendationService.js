@@ -174,18 +174,19 @@ export const extractOrderedRoutePoints = (route, direction = "OUTWARD", hub = nu
     const isOutward = direction === "OUTWARD";
     const result = [];
 
-    // Check if college/hub is already present in rawPoints
-    const hasHubAsFirst = rawPoints.length > 0 &&
-        (rawPoints[0].name.toLowerCase().includes("college") ||
-         rawPoints[0].name.toLowerCase().includes("campus") ||
-         rawPoints[0].name.toLowerCase().includes("k.l.n") ||
-         rawPoints[0].name.toLowerCase().includes("kln"));
+    // General hub recognition for arbitrary colleges, universities, schools, or offices
+    const isHubPoint = (p) => {
+        if (!p) return false;
+        if (p.isHub || p.routePointType === "hub") return true;
+        if (hub && p.name && hub.name && p.name.toLowerCase().trim() === hub.name.toLowerCase().trim()) return true;
+        const n = String(p.name || "").toLowerCase();
+        return n.includes("college") || n.includes("university") || n.includes("school") ||
+               n.includes("campus") || n.includes("institute") || n.includes("depot") ||
+               n.includes("office") || n.includes("hub");
+    };
 
-    const hasHubAsLast = rawPoints.length > 0 &&
-        (rawPoints[rawPoints.length - 1].name.toLowerCase().includes("college") ||
-         rawPoints[rawPoints.length - 1].name.toLowerCase().includes("campus") ||
-         rawPoints[rawPoints.length - 1].name.toLowerCase().includes("k.l.n") ||
-         rawPoints[rawPoints.length - 1].name.toLowerCase().includes("kln"));
+    const hasHubAsFirst = rawPoints.length > 0 && isHubPoint(rawPoints[0]);
+    const hasHubAsLast = rawPoints.length > 0 && isHubPoint(rawPoints[rawPoints.length - 1]);
 
     if (isOutward) {
         if (hub && !hasHubAsFirst) {
@@ -229,19 +230,17 @@ export const validateRouteContinuityAndFeasibility = (points, direction = "OUTWA
     const firstPoint = points[0];
     const lastPoint = points[points.length - 1];
 
-    const isHubFirst = Boolean(firstPoint.isHub ||
-        firstPoint.routePointType === "hub" ||
-        firstPoint.name?.toLowerCase().includes("college") ||
-        firstPoint.name?.toLowerCase().includes("campus") ||
-        firstPoint.name?.toLowerCase().includes("k.l.n") ||
-        firstPoint.name?.toLowerCase().includes("kln"));
+    const checkPointHub = (p) => {
+        if (!p) return false;
+        if (p.isHub || p.routePointType === "hub") return true;
+        const n = String(p.name || "").toLowerCase();
+        return n.includes("college") || n.includes("university") || n.includes("school") ||
+               n.includes("campus") || n.includes("institute") || n.includes("depot") ||
+               n.includes("office") || n.includes("hub");
+    };
 
-    const isHubLast = Boolean(lastPoint.isHub ||
-        lastPoint.routePointType === "hub" ||
-        lastPoint.name?.toLowerCase().includes("college") ||
-        lastPoint.name?.toLowerCase().includes("campus") ||
-        lastPoint.name?.toLowerCase().includes("k.l.n") ||
-        lastPoint.name?.toLowerCase().includes("kln"));
+    const isHubFirst = checkPointHub(firstPoint);
+    const isHubLast = checkPointHub(lastPoint);
 
     if (isOutward && !isHubFirst) {
         return {

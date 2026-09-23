@@ -12,6 +12,7 @@ import {
 export default function OptimizationResultSummary({
     plan = {},
     summary = {},
+    direction,
     onViewRoute
 }) {
     const aiPlan = plan?.aiPlan || plan;
@@ -78,10 +79,30 @@ export default function OptimizationResultSummary({
         allocatedSeats
     );
 
-    const utilizationRate = Number(
+    const totalFleetCapacity = Number(
+        aiPlan?.physicalFleetCapacity ??
+        aiPlan?.totalPhysicalCapacity ??
+        aiPlan?.totalFleetCapacity ??
+        summary?.totalPhysicalCapacity ??
+        availableSeats
+    );
+
+    const seatUtilizationRate = Number(
         aiPlan?.routeAllocationUtilization ??
-        aiPlan?.utilization ??
+        aiPlan?.utilizationMetrics?.allocatedVehicleSeatUtilization?.rate ??
         (allocatedSeats > 0 ? (usersCovered / allocatedSeats) * 100 : 100)
+    ).toFixed(2);
+
+    const fleetCapacityUtilizationRate = Number(
+        aiPlan?.physicalFleetUtilization ??
+        aiPlan?.utilizationMetrics?.totalFleetCapacityUtilization?.rate ??
+        (totalFleetCapacity > 0 ? (usersCovered / totalFleetCapacity) * 100 : 0)
+    ).toFixed(2);
+
+    const vehicleFleetUsageRate = Number(
+        aiPlan?.fleetVehicleUtilization ??
+        aiPlan?.utilizationMetrics?.vehicleFleetUsage?.rate ??
+        (availableVehiclesCount > 0 ? (busesAllocated / availableVehiclesCount) * 100 : 0)
     ).toFixed(2);
 
     const isCertified = aiPlan?.certification?.isCertified !== false && usersCovered >= totalComing && totalComing > 0;
@@ -89,9 +110,11 @@ export default function OptimizationResultSummary({
     const unallocatedUsers = Number(aiPlan?.unassignedUsers ?? summary?.unallocatedUsers ?? 0);
 
     const rawTripMode = aiPlan?.tripMode || plan?.tripMode || "INWARD";
-    const canonicalDirection = (rawTripMode === "FROM_SOURCE" || rawTripMode === "OUTWARD" || aiPlan?.direction === "OUTWARD" || plan?.direction === "OUTWARD")
-        ? "OUTWARD"
-        : "INWARD";
+    const canonicalDirection = direction
+        ? direction.toUpperCase()
+        : ((rawTripMode === "FROM_SOURCE" || rawTripMode === "OUTWARD" || aiPlan?.direction === "OUTWARD" || plan?.direction === "OUTWARD")
+            ? "OUTWARD"
+            : "INWARD");
 
     // isRoadVerified: true only if ALL buses are OSRM-verified AND continuous (both set by the backend after full validation)
     const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
@@ -107,6 +130,32 @@ export default function OptimizationResultSummary({
             return "Continuous OSRM road progression verified";
         }
         return "⚠ Continuous OSRM geometry unavailable";
+    })();
+
+    const rawCreatedAt =
+        aiPlan?.createdAt ||
+        plan?.createdAt ||
+        aiPlan?.generatedAt ||
+        plan?.generatedAt ||
+        aiPlan?.approvedAt ||
+        plan?.approvedAt ||
+        aiPlan?.selectedAt ||
+        plan?.selectedAt ||
+        summary?.generatedAt ||
+        summary?.createdAt;
+
+    const generatedTimeText = (() => {
+        if (!rawCreatedAt) return "Just now";
+        try {
+            const d = new Date(rawCreatedAt);
+            if (isNaN(d.getTime())) return "Just now";
+            return d.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        } catch {
+            return "Just now";
+        }
     })();
 
     return (
@@ -127,9 +176,12 @@ export default function OptimizationResultSummary({
                             </span>
                         </div>
                         <h2>
-                            {isCertified
-                                ? (canonicalDirection === "OUTWARD" ? "AI Outward Plan" : "AI Inward Plan")
-                                : (capacityShortage ? "Insufficient Available Vehicle Capacity" : "AI Route Plan Generated with Warnings")}
+                            {canonicalDirection === "OUTWARD" ? "AI Outward Plan" : "AI Inward Plan"}
+                            {!isCertified && (
+                                <span style={{ fontSize: "14px", fontWeight: "600", color: "#b45309", marginLeft: "10px" }}>
+                                    (Review Required)
+                                </span>
+                            )}
                         </h2>
                         <p className="opt-result-subtext">
                             {isCertified
@@ -139,9 +191,14 @@ export default function OptimizationResultSummary({
                     </div>
                 </div>
 
-                <div className="opt-result-badge-status">
-                    <span className={`live-status-dot ${isCertified ? "dot-online" : "dot-warning"}`}></span>
-                    <span>{isCertified ? "Rule-Based Plan Validated" : "Review Required"}</span>
+                <div className="opt-result-status-col">
+                    <div className="opt-result-badge-status">
+                        <span className={`live-status-dot ${isCertified ? "dot-online" : "dot-warning"}`}></span>
+                        <span>{isCertified ? "Rule-Based Plan Validated" : "Review Required"}</span>
+                    </div>
+                    <span className="timestamp-badge">
+                        Generated: {generatedTimeText}
+                    </span>
                 </div>
             </div>
 
@@ -197,10 +254,10 @@ export default function OptimizationResultSummary({
                     </div>
                     <div className="metric-details">
                         <strong className="metric-big-val text-success">
-                            {utilizationRate}%
+                            {seatUtilizationRate}%
                         </strong>
                         <span className="metric-sub-label">
-                            Seat Utilization
+                            Seat Utilization ({usersCovered}/{allocatedSeats})
                         </span>
                     </div>
                 </div>
@@ -274,8 +331,19 @@ export default function OptimizationResultSummary({
                         <strong style={{ color: "#64748b" }}>{unusedSeats} seats</strong>
                     </div>
                     <div>
-                        <span style={{ color: "#64748b" }}>Seat Utilization: </span>
-                        <strong style={{ color: "#16a34a" }}>{utilizationRate}%</strong>
+                        <span style={{ color: "#64748b" }}>Seat Utilization (Allocated Buses): </span>
+                        <strong style={{ color: "#16a34a" }}>{seatUtilizationRate}% ({usersCovered}/{allocatedSeats})</strong>
+                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: occupiedSeats / allocatedSeats</div>
+                    </div>
+                    <div>
+                        <span style={{ color: "#64748b" }}>Total Fleet Capacity Utilization: </span>
+                        <strong style={{ color: "#0284c7" }}>{fleetCapacityUtilizationRate}% ({usersCovered}/{totalFleetCapacity})</strong>
+                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: occupiedSeats / totalFleetCapacity</div>
+                    </div>
+                    <div>
+                        <span style={{ color: "#64748b" }}>Vehicle Fleet Usage: </span>
+                        <strong style={{ color: "#7c3aed" }}>{vehicleFleetUsageRate}% ({busesAllocated}/{availableVehiclesCount})</strong>
+                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: allocatedVehicles / availableVehicles</div>
                     </div>
                     <div>
                         <span style={{ color: "#64748b" }}>Unique Stopping Areas: </span>

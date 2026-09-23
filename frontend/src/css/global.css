@@ -166,3 +166,50 @@ h1, h2, h3, h4, h5, h6 {
    
     border-color: var(--accent-main);
 }
+
+/* Universal Header/Page Back Button (inline inside headers) */
+.page-back-btn,
+.plan-header-back-btn,
+.route-back-btn,
+.ai-back-btn,
+.schedule-back-btn,
+.manual-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.45rem 1rem;
+    background: #ffffff;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    border-radius: 9999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.page-back-btn:hover,
+.plan-header-back-btn:hover,
+.route-back-btn:hover,
+.ai-back-btn:hover,
+.schedule-back-btn:hover,
+.manual-back-btn:hover {
+    border-color: #3b82f6;
+    color: #2563eb;
+    background: #f8fafc;
+    transform: translateX(-3px);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.12);
+}
+
+.page-back-btn:focus-visible,
+.plan-header-back-btn:focus-visible,
+.route-back-btn:focus-visible,
+.ai-back-btn:focus-visible,
+.schedule-back-btn:focus-visible,
+.manual-back-btn:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}

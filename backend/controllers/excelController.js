@@ -1,8 +1,14 @@
 import xlsx from "xlsx";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 import User from "../models/User.js";
+import AiPlan from "../models/AiPlan.js";
 import { isDbConnected } from "../config/db.js";
 import { clearActiveApprovedPlansCache } from "../services/studentTransportStatusService.js";
+import {
+    clearActiveAIPlanCache,
+    clearAIDataCache
+} from "../services/aiAgentService.js";
 
 // Helper to look up key case-insensitively with alias support
 const getFieldValue = (row, ...keys) => {
@@ -93,23 +99,28 @@ export const uploadExcel = async (req, res) => {
             }
         }
 
-        const validRows = data.filter((row) => {
+        // Validate complete Excel before modifying existing dataset
+        // If any row is missing required data, reject the entire import to preserve existing records unchanged
+        const invalidRowNumbers = [];
+        data.forEach((row, idx) => {
             const userId = getFieldValue(row, "userId", "user_id", "id");
             const name = getFieldValue(row, "name", "studentName", "userName");
             const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
-            return Boolean(userId && name && stoppings);
+            if (!userId || !name || !stoppings) {
+                invalidRowNumbers.push(idx + 2); // Excel 1-indexed row number (header is row 1)
+            }
         });
 
-        if (validRows.length === 0) {
+        if (invalidRowNumbers.length > 0) {
             return res.status(400).json({
                 success: false,
-                message: "No valid user records found in Excel. Each row must have userId, name, and stoppings."
+                message: `Excel validation failed: Row(s) ${invalidRowNumbers.slice(0, 10).join(", ")}${invalidRowNumbers.length > 10 ? ` and ${invalidRowNumbers.length - 10} more` : ""} contain missing required fields (userId, name, stoppings). Existing users remain unchanged.`
             });
         }
 
         // Deduplicate Excel rows by userId (keeping latest row)
         const rowMap = new Map();
-        for (const row of validRows) {
+        for (const row of data) {
             const userId = getFieldValue(row, "userId", "user_id", "id");
             const name = getFieldValue(row, "name", "studentName", "userName");
             const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
@@ -140,7 +151,7 @@ export const uploadExcel = async (req, res) => {
             existingMap.set(s.userId, s);
         }
 
-        // Collect distinct names needing password hashing to hash in parallel (avoids 400 sequential bcrypt calls)
+        // Collect distinct names needing password hashing to hash in parallel
         const namesToHash = new Set();
         for (const row of deduplicatedRows) {
             const existing = existingMap.get(row.userId);
@@ -158,7 +169,7 @@ export const uploadExcel = async (req, res) => {
             uniqueNames.forEach((n, i) => hashMap.set(n, hashedValues[i]));
         }
 
-        // Prepare bulk operations for efficient in-place updates and upserts
+        // Prepare bulk operations: Clear existing allocations so fresh dataset has clean state
         const bulkOps = deduplicatedRows.map((row) => {
             const existing = existingMap.get(row.userId);
             const password = existing?.password || hashMap.get(row.name);
@@ -176,13 +187,22 @@ export const uploadExcel = async (req, res) => {
                             country: row.country || "",
                             password,
                             role: "student",
-                            travelStatus: "Coming"
-                        },
-                        $setOnInsert: {
+                            travelStatus: "Coming",
                             allocatedBus: null,
                             assignedVehicle: null,
                             assignedRoute: null,
-                            allocationStatus: "Not Assigned",
+                            allocationStatus: "Unallocated",
+                            manualAllocation: null,
+                            manualBusId: null,
+                            manualRouteId: null,
+                            busId: null,
+                            routeId: null,
+                            seatNumber: null,
+                            allocatedSeat: null,
+                            approvedPlanType: null,
+                            approvalStatus: null,
+                            isAllocated: false,
+                            isUnallocated: true,
                             requiresReallocation: false,
                             lateResponseDetected: false,
                             affectedDirections: []
@@ -203,11 +223,43 @@ export const uploadExcel = async (req, res) => {
             userId: { $nin: validUserIds }
         });
 
+        // Invalidate existing AI/manual plans dependent on previous user dataset: mark them stale
+        await AiPlan.updateMany(
+            { active: true },
+            {
+                $set: {
+                    active: false,
+                    status: "stale",
+                    isApproved: false,
+                    staleReason: "STUDENT_DATASET_REPLACED",
+                    invalidatedAt: new Date()
+                }
+            }
+        );
+
+        if (mongoose.connection?.db) {
+            await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                { active: true },
+                {
+                    $set: {
+                        active: false,
+                        status: "stale",
+                        approved: false,
+                        staleReason: "STUDENT_DATASET_REPLACED",
+                        invalidatedAt: new Date()
+                    }
+                }
+            );
+        }
+
+        // Invalidate in-memory caches across all components
         clearActiveApprovedPlansCache();
+        clearActiveAIPlanCache();
+        clearAIDataCache();
 
         res.status(200).json({
             success: true,
-            message: `Excel data synchronized successfully. ${deduplicatedRows.length} users imported.`,
+            message: `Excel data synchronized successfully. ${deduplicatedRows.length} users imported. Previous plans invalidated.`,
             totalUsers: deduplicatedRows.length
         });
 

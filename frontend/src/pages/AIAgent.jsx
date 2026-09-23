@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { HiArrowLeft } from "react-icons/hi";
 import {
     getAIData,
     getAIMetrics,
@@ -15,7 +16,12 @@ import {
     saveSelectedPlan,
     getSelectedPlan,
     fetchLateResponses,
-    getLateResponseDraft
+    getLateResponseDraft,
+    getInwardStartingPlaces,
+    addInwardStartingPlace,
+    updateInwardStartingPlace,
+    deleteInwardStartingPlace,
+    toggleInwardStartingPlaceStatus
 } from "../services/aiAgentService";
 import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
@@ -209,6 +215,7 @@ export default function AIAgent() {
             return null;
         }
     });
+    const [stalePlanInfo, setStalePlanInfo] = useState(null);
 
     const [planDirectionTab, setPlanDirectionTab] = useState(() => {
         try {
@@ -233,6 +240,7 @@ export default function AIAgent() {
 
     const [savingSelection, setSavingSelection] =
         useState(false);
+    const isSavingSelectionRef = useRef(false);
 
     const [selectionMessage, setSelectionMessage] =
         useState("");
@@ -313,6 +321,135 @@ export default function AIAgent() {
 
     const [loading, setLoading] = useState(true);
 
+    // Inward Bus Starting Places State
+    const [inwardStartingPlaces, setInwardStartingPlaces] = useState([]);
+    const [inwardStartingPlacesLoading, setInwardStartingPlacesLoading] = useState(false);
+    const [showStartPlaceModal, setShowStartPlaceModal] = useState(false);
+    const [editingStartPlace, setEditingStartPlace] = useState(null);
+    const [modalBusId, setModalBusId] = useState("");
+    const [modalLocation, setModalLocation] = useState(null);
+    const [modalSaving, setModalSaving] = useState(false);
+    const [modalError, setModalError] = useState("");
+
+    const loadInwardStartingPlaces = async () => {
+        try {
+            setInwardStartingPlacesLoading(true);
+            const res = await getInwardStartingPlaces();
+            if (res?.success && Array.isArray(res.startingPlaces)) {
+                setInwardStartingPlaces(res.startingPlaces);
+            }
+        } catch (err) {
+            console.warn("Unable to load inward starting places:", err);
+        } finally {
+            setInwardStartingPlacesLoading(false);
+        }
+    };
+
+    const handleOpenStartingPlaceModal = (existing = null) => {
+        setModalError("");
+        if (existing) {
+            setEditingStartPlace(existing);
+            setModalBusId(existing.vehicleId || existing.busId || existing._id || "");
+            setModalLocation({
+                name: existing.locationName || existing.name,
+                displayName: existing.address || existing.name,
+                address: existing.address || "",
+                latitude: existing.latitude,
+                longitude: existing.longitude
+            });
+        } else {
+            setEditingStartPlace(null);
+            setModalBusId("");
+            setModalLocation(null);
+        }
+        setShowStartPlaceModal(true);
+    };
+
+    const handleSaveStartingPlace = async (e) => {
+        if (e) e.preventDefault();
+        setModalError("");
+        if (!modalBusId) {
+            setModalError("Please select an available bus.");
+            return;
+        }
+        if (!modalLocation || !modalLocation.latitude || !modalLocation.longitude) {
+            setModalError("Please select a valid starting location.");
+            return;
+        }
+
+        const candidateBuses = data?.availableVehicles || data?.vehicles || [];
+        const chosenBus = candidateBuses.find((b) => String(b._id || b.id) === String(modalBusId));
+        const busName = chosenBus ? getBusName(chosenBus) : (editingStartPlace?.busName || modalBusId);
+        const capacity = chosenBus ? getBusCapacity(chosenBus) : (editingStartPlace?.capacity || 0);
+
+        try {
+            setModalSaving(true);
+            const payload = {
+                vehicleId: String(modalBusId),
+                busId: String(modalBusId),
+                busName,
+                capacity,
+                locationName: modalLocation.name || modalLocation.displayName,
+                name: modalLocation.name || modalLocation.displayName,
+                address: modalLocation.address || modalLocation.displayName || "",
+                latitude: Number(modalLocation.latitude),
+                longitude: Number(modalLocation.longitude),
+                active: true
+            };
+
+            let res;
+            if (editingStartPlace?._id) {
+                res = await updateInwardStartingPlace(editingStartPlace._id, payload);
+            } else {
+                res = await addInwardStartingPlace(payload);
+            }
+
+            if (res?.success) {
+                toast.success(res.message || "Starting place saved successfully");
+                setShowStartPlaceModal(false);
+                loadInwardStartingPlaces();
+            } else {
+                setModalError(res?.message || "Failed to save starting place");
+            }
+        } catch (err) {
+            const msg = err?.response?.data?.message || err.message || "Failed to save starting place";
+            setModalError(msg);
+        } finally {
+            setModalSaving(false);
+        }
+    };
+
+    const handleToggleStartingPlace = async (id) => {
+        try {
+            const res = await toggleInwardStartingPlaceStatus(id);
+            if (res?.success) {
+                toast.success(res.message);
+                loadInwardStartingPlaces();
+            } else {
+                toast.error(res?.message || "Failed to toggle status");
+            }
+        } catch (err) {
+            toast.error(err?.response?.data?.message || err.message || "Failed to toggle status");
+        }
+    };
+
+    const handleDeleteStartingPlace = async (id) => {
+        if (!window.confirm("Are you sure you want to remove this inward starting place configuration?")) {
+            return;
+        }
+        try {
+            const res = await deleteInwardStartingPlace(id);
+            if (res?.success) {
+                toast.success("Starting place removed");
+                loadInwardStartingPlaces();
+            } else {
+                toast.error(res?.message || "Failed to delete");
+            }
+        } catch (err) {
+            toast.error(err?.response?.data?.message || err.message || "Failed to delete");
+        }
+    };
+
     const handleSelectAiRouteToView = (route) => {
         setShowSelectRouteModal(false);
         if (!route) {
@@ -375,7 +512,8 @@ export default function AIAgent() {
             loadAIData(true, isMounted),
             loadActivePlan(true),
             loadLastSelection(),
-            loadManualRoutes()
+            loadManualRoutes(),
+            loadInwardStartingPlaces()
         ]);
 
         if (isMounted) {
@@ -389,7 +527,7 @@ export default function AIAgent() {
             if (isInitial && isMounted) {
                 setMetricsLoading(true);
             }
-            const response = await getAIMetrics();
+            const response = await getAIData();
             if (isMounted) {
                 setData(response);
                 setMetricsLoading(false);
@@ -413,66 +551,105 @@ export default function AIAgent() {
     const loadActivePlan = async (isInitial = false) => {
         try {
             const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const response = await getActivePlan({ direction: currentDir });
-
-            // Only the backend's explicit reset signal (wasReset:true) may clear frontend plan state.
-            // A null plan, success:false, or any transient error must NEVER wipe persisted state,
-            // because those can result from DB lag, race conditions, or suppression logic —
-            // none of which mean the admin actually clicked "Reset AI Generated Route".
+            const response = await getActivePlan({ direction: currentDir, forceRefresh: true });
 
             if (response?.wasReset === true) {
-                // Server confirmed an explicit reset — clear everything
-                localStorage.removeItem("active_ai_plan");
-                localStorage.removeItem("active_ai_selection");
-                localStorage.removeItem("active_outward_plan");
-                localStorage.removeItem("active_inward_plan");
-                sessionStorage.removeItem("active_ai_plan");
-                sessionStorage.removeItem("active_ai_selection");
-                sessionStorage.removeItem("active_outward_plan");
-                sessionStorage.removeItem("active_inward_plan");
-                setPlanData(null);
-                setOutwardPlan(null);
-                setInwardPlan(null);
+                const isOutwardReset = response.wasOutwardReset === true || response.resetDirection === "OUTWARD" || response.resetDirection === "BOTH";
+                const isInwardReset = response.wasInwardReset === true || response.resetDirection === "INWARD" || response.resetDirection === "BOTH";
+
+                if (isInwardReset && !response.inwardPlan) {
+                    try {
+                        localStorage.removeItem("active_inward_plan");
+                        sessionStorage.removeItem("active_inward_plan");
+                        if (planDirectionTab === "INWARD") {
+                            localStorage.removeItem("active_ai_plan");
+                            localStorage.removeItem("active_ai_selection");
+                            sessionStorage.removeItem("active_ai_plan");
+                            sessionStorage.removeItem("active_ai_selection");
+                            setPlanData(null);
+                        }
+                    } catch {}
+                    setInwardPlan(null);
+                }
+
+                if (isOutwardReset && !response.outwardPlan) {
+                    try {
+                        localStorage.removeItem("active_outward_plan");
+                        sessionStorage.removeItem("active_outward_plan");
+                        if (planDirectionTab === "OUTWARD") {
+                            localStorage.removeItem("active_ai_plan");
+                            localStorage.removeItem("active_ai_selection");
+                            sessionStorage.removeItem("active_ai_plan");
+                            sessionStorage.removeItem("active_ai_selection");
+                            setPlanData(null);
+                        }
+                    } catch {}
+                    setOutwardPlan(null);
+                }
+
+                setStalePlanInfo(null);
                 setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
-                return;
             }
 
             if (!response?.success) {
-                // Transient failure (network, DB timeout, 5xx) — do NOT touch plan state.
-                // The persisted plan in localStorage/React state remains unchanged.
-                console.warn("loadActivePlan: non-success response, preserving existing state.", response);
+                console.warn("loadActivePlan: non-success response from server", response);
                 return;
             }
 
-            // success === true path
+            // Sync Outward Plan: only clear if explicit reset occurred for outward
             const outP = response.outwardPlan || null;
-            const inP = response.inwardPlan || null;
-            setOutwardPlan(outP);
-            setInwardPlan(inP);
-
-            try {
-                if (outP) localStorage.setItem("active_outward_plan", JSON.stringify(outP));
-                // Do NOT removeItem when outP/inP is null — absence in this fetch does not
-                // mean the plan was deleted; it may simply be the wrong direction or hidden
-                // by a backend filter. Only clear when wasReset===true (handled above).
-                if (inP) localStorage.setItem("active_inward_plan", JSON.stringify(inP));
-            } catch {
-                // Ignore quota error
+            if (outP) {
+                setOutwardPlan(outP);
+                try {
+                    localStorage.setItem("active_outward_plan", JSON.stringify(outP));
+                } catch {}
+            } else if (response.wasOutwardReset || (response.wasReset && (response.resetDirection === "OUTWARD" || response.resetDirection === "BOTH"))) {
+                setOutwardPlan(null);
+                try {
+                    localStorage.removeItem("active_outward_plan");
+                    sessionStorage.removeItem("active_outward_plan");
+                } catch {}
             }
 
-            // Strictly match the current direction tab; do NOT fall back across directions
-            const activePlan = (currentDir === "OUTWARD" ? outP : inP) || (isInitial ? response.plan : null);
+            // Sync Inward Plan: only clear if explicit reset occurred for inward
+            const inP = response.inwardPlan || null;
+            if (inP) {
+                setInwardPlan(inP);
+                try {
+                    localStorage.setItem("active_inward_plan", JSON.stringify(inP));
+                } catch {}
+            } else if (response.wasInwardReset || (response.wasReset && (response.resetDirection === "INWARD" || response.resetDirection === "BOTH"))) {
+                setInwardPlan(null);
+                try {
+                    localStorage.removeItem("active_inward_plan");
+                    sessionStorage.removeItem("active_inward_plan");
+                } catch {}
+            }
+
+            // Capture stale plan metadata for user warning display
+            if (response.staleInwardPlan || response.staleOutwardPlan) {
+                setStalePlanInfo({
+                    inward: response.staleInwardPlan || null,
+                    outward: response.staleOutwardPlan || null,
+                    reason: response.staleReason || null
+                });
+            } else {
+                setStalePlanInfo(null);
+            }
+
+            // Strictly match the current direction tab
+            const activePlan = currentDir === "OUTWARD" ? (outP || outwardPlan) : (inP || inwardPlan);
 
             if (activePlan) {
                 setPlanData(activePlan);
                 const activeDir = activePlan.direction || (activePlan.tripMode === "FROM_SOURCE" || activePlan.tripMode === "OUTWARD" ? "OUTWARD" : "INWARD");
-                setPlanDirectionTab(activeDir);
+                if (activeDir && !planDirectionTab) {
+                    setPlanDirectionTab(activeDir);
+                }
 
                 try {
                     localStorage.setItem("active_ai_plan", JSON.stringify(activePlan));
-                } catch {
-                    // Ignore quota error
-                }
+                } catch {}
 
                 // Restore endpoint ONLY on initial hydration if user has not yet interacted
                 if (isInitial && !userInteractedRef.current) {
@@ -483,7 +660,6 @@ export default function AIAgent() {
                     if (activePlan.tripMode === "FROM_SOURCE" || (hasPlanSource && !hasPlanDest)) {
                         if (hasPlanSource) {
                             setSourceLocation(activePlan.source);
-                            setDestinationLocation(null);
                             setActiveEndpointField("source");
                             setTripMode("FROM_SOURCE");
                         }
@@ -491,52 +667,28 @@ export default function AIAgent() {
                         const dest = hasPlanDest ? activePlan.destination : (hasPlanStart ? activePlan.startingPoint : null);
                         if (dest) {
                             setDestinationLocation(dest);
-                            setSourceLocation(null);
                             setActiveEndpointField("destination");
                             setTripMode("TO_DESTINATION");
                         }
                     } else if (hasPlanSource) {
                         setSourceLocation(activePlan.source);
-                        setDestinationLocation(null);
                         setActiveEndpointField("source");
                         setTripMode("FROM_SOURCE");
                     }
                 }
-            } else if (isInitial) {
-                // Priority 2: Safe localStorage recovery if backend has no active plan and wasReset is false
+            } else {
+                // Backend reports no current valid plan for this direction!
+                setPlanData(null);
+                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
                 try {
-                    const cached = localStorage.getItem("active_ai_plan");
-                    if (cached) {
-                        const parsed = JSON.parse(cached);
-                        if (parsed && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
-                            setPlanData((prev) => prev || parsed);
-                        }
-                    }
-                } catch {
-                    // Ignore parsing error
-                }
+                    localStorage.removeItem("active_ai_plan");
+                    localStorage.removeItem("active_ai_selection");
+                    sessionStorage.removeItem("active_ai_plan");
+                    sessionStorage.removeItem("active_ai_selection");
+                } catch {}
             }
-            // If activePlan is null but wasReset is NOT true: a valid plan may exist for the
-            // other direction or the backend suppressed it temporarily. Preserve current state.
         } catch (error) {
-            // Network or unexpected error — do NOT clear plan state.
-            console.error(
-                "Unable to load active AI plan:",
-                error
-            );
-            if (isInitial) {
-                try {
-                    const cached = localStorage.getItem("active_ai_plan");
-                    if (cached) {
-                        const parsed = JSON.parse(cached);
-                        if (parsed && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
-                            setPlanData((prev) => prev || parsed);
-                        }
-                    }
-                } catch {
-                    // Ignore error
-                }
-            }
+            console.error("Unable to load active AI plan:", error);
         }
     };
 
@@ -557,8 +709,8 @@ export default function AIAgent() {
             if (routesRes.status === "fulfilled") {
                 const allRoutes = normalizeManualRoutes(routesRes.value);
                 const filtered = allRoutes.filter((r) => {
-                    const d = (String(r.direction || "").toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
-                    return d === currentDir && Boolean(r.assignedVehicle || r.vehicleName);
+                    const d = String(r.direction || "").toUpperCase().trim();
+                    return (d === currentDir || d === "BOTH") && Boolean(r.assignedVehicle || r.vehicleName);
                 });
                 setManualRoutes(filtered);
             }
@@ -786,7 +938,6 @@ export default function AIAgent() {
     const handleSourceSelect = (location) => {
         userInteractedRef.current = true;
         setSourceLocation(location);
-        setDestinationLocation(null);
         setActiveEndpointField("source");
         setTripMode("FROM_SOURCE");
         setPlanDirectionTab("OUTWARD");
@@ -796,7 +947,6 @@ export default function AIAgent() {
     const handleDestinationSelect = (location) => {
         userInteractedRef.current = true;
         setDestinationLocation(location);
-        setSourceLocation(null);
         setActiveEndpointField("destination");
         setTripMode("TO_DESTINATION");
         setPlanDirectionTab("INWARD");
@@ -1021,40 +1171,81 @@ export default function AIAgent() {
             setResetting(true);
 
             const targetDirection = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const response = await resetAIPlan({ direction: targetDirection, resetAll: true });
+            const response = await resetAIPlan({ direction: targetDirection, resetAll: false });
 
             if (response?.success) {
                 userInteractedRef.current = true;
                 setShowResetModal(false);
 
-                // Fully clear all AI plan state from frontend memory
-                setPlanData(null);
-                setInwardPlan(null);
-                setOutwardPlan(null);
-                setSelectedPlanType("");
-                setLastSelection(null);
+                // Direction-specific cleanup of AI plan state from frontend memory
+                if (targetDirection === "INWARD") {
+                    setInwardPlan(null);
+                    if (planDirectionTab === "INWARD") {
+                        setPlanData(null);
+                        setSelectedPlanType("");
+                        setLastSelection(null);
+                    }
+                    try {
+                        localStorage.removeItem("active_inward_plan");
+                        sessionStorage.removeItem("active_inward_plan");
+                        if (planDirectionTab === "INWARD") {
+                            localStorage.removeItem("active_ai_plan");
+                            localStorage.removeItem("active_ai_selection");
+                            sessionStorage.removeItem("active_ai_plan");
+                            sessionStorage.removeItem("active_ai_selection");
+                        }
+                    } catch {
+                        // Ignore storage errors
+                    }
+                } else if (targetDirection === "OUTWARD") {
+                    setOutwardPlan(null);
+                    if (planDirectionTab === "OUTWARD") {
+                        setPlanData(null);
+                        setSelectedPlanType("");
+                        setLastSelection(null);
+                    }
+                    try {
+                        localStorage.removeItem("active_outward_plan");
+                        sessionStorage.removeItem("active_outward_plan");
+                        if (planDirectionTab === "OUTWARD") {
+                            localStorage.removeItem("active_ai_plan");
+                            localStorage.removeItem("active_ai_selection");
+                            sessionStorage.removeItem("active_ai_plan");
+                            sessionStorage.removeItem("active_ai_selection");
+                        }
+                    } catch {
+                        // Ignore storage errors
+                    }
+                } else {
+                    setPlanData(null);
+                    setInwardPlan(null);
+                    setOutwardPlan(null);
+                    setSelectedPlanType("");
+                    setLastSelection(null);
+                    try {
+                        localStorage.removeItem("active_ai_plan");
+                        localStorage.removeItem("active_ai_selection");
+                        localStorage.removeItem("active_outward_plan");
+                        localStorage.removeItem("active_inward_plan");
+                        sessionStorage.removeItem("active_ai_plan");
+                        sessionStorage.removeItem("active_ai_selection");
+                        sessionStorage.removeItem("active_outward_plan");
+                        sessionStorage.removeItem("active_inward_plan");
+                    } catch {
+                        // Ignore storage errors
+                    }
+                }
+
+                setStalePlanInfo(null);
                 setGenerationError("");
                 setSelectionMessage("");
 
-                // Remove all generated AI plan storage keys across localStorage and sessionStorage
-                try {
-                    localStorage.removeItem("active_ai_plan");
-                    localStorage.removeItem("active_ai_selection");
-                    localStorage.removeItem("active_outward_plan");
-                    localStorage.removeItem("active_inward_plan");
-                    sessionStorage.removeItem("active_ai_plan");
-                    sessionStorage.removeItem("active_ai_selection");
-                    sessionStorage.removeItem("active_outward_plan");
-                    sessionStorage.removeItem("active_inward_plan");
-                } catch {
-                    // Ignore storage errors
-                }
-
                 const dirName = targetDirection === "INWARD" ? "Inward" : targetDirection === "OUTWARD" ? "Outward" : "AI";
-                const msg = `${dirName} route recommendation reset successfully. Student travel responses remain preserved.`;
+                const msg = `${dirName} transportation plan has been reset successfully. Student travel responses remain preserved.`;
 
                 setResetSuccessMessage(msg);
-                toast.success("AI plan allocations reset successfully");
+                toast.success(`${dirName} transportation plan has been reset successfully.`);
+                await loadActivePlan(false);
                 loadAIData(); // Refresh counts in background
                 fetchLateResponses(); // Update late response events immediately
             } else {
@@ -1102,11 +1293,11 @@ export default function AIAgent() {
     };
 
     const handleSaveFinalPlan = async () => {
-        if (savingSelection) {
+        if (isSavingSelectionRef.current || savingSelection) {
             return;
         }
 
-        const effectivePlanType = selectedPlanType || (isPlanSaved ? (lastSelection?.planType || "AI") : null);
+        const effectivePlanType = selectedPlanType || (isPlanSaved ? (lastSelection?.planType || "AI") : "AI");
         if (!effectivePlanType) {
             toast.error("Please select a transportation plan (Option 1 or Option 2) first.");
             return;
@@ -1117,22 +1308,24 @@ export default function AIAgent() {
                 ? planData?.aiPlan || (Array.isArray(planData?.buses) ? planData : null)
                 : (manualPlanData || { routes: manualRoutes });
 
-
         if (!selectedPlan) {
             toast.error("Please generate or select a valid plan first.");
             return;
         }
 
+        if (isPlanInvalidated) {
+            toast.error("This plan is invalidated due to demand changes. Please regenerate the plan before confirming.");
+            return;
+        }
+
+        const planDirection =
+            planDirectionTab ||
+            planData?.direction ||
+            (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+
         try {
-            setSavingSelection(true);
-            setSelectionMessage("Publishing transportation plan & assigning confirmed passengers...");
-
-            const planDirection =
-                planDirectionTab ||
-                planData?.direction ||
-                (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-
-            const response = await saveSelectedPlan({
+            // Stage the pending plan in sessionStorage — instantaneous, ZERO database/allocation overhead!
+            const pendingPayload = {
                 planType: effectivePlanType,
                 direction: planDirection,
                 tripMode: tripMode,
@@ -1141,59 +1334,24 @@ export default function AIAgent() {
                     planData?.startingPoint ||
                     sourceLocation ||
                     destinationLocation ||
-                    null
-            });
+                    null,
+                stagedAt: new Date().toISOString()
+            };
 
-            if (response?.success) {
-                const selObj = response.selection || {
-                    planType: effectivePlanType,
-                    direction: planDirection,
-                    selectedAt: new Date()
-                };
-                setLastSelection(selObj);
-                setSelectedPlanType(effectivePlanType);
+            sessionStorage.setItem("pending_confirmation_plan", JSON.stringify(pendingPayload));
 
-                try {
-                    localStorage.setItem("active_ai_selection", JSON.stringify(selObj));
-                    const currentPlan = (effectivePlanType === "ADMIN" || effectivePlanType === "MANUAL")
-                        ? (response?.plan || selectedPlan)
-                        : (planData || (effectivePlanType === "AI" ? selectedPlan : null));
-                    if (currentPlan) {
-                        const approvedPlan = { ...currentPlan, isApproved: true, direction: planDirection };
-                        localStorage.setItem("active_ai_plan", JSON.stringify(approvedPlan));
-                        if (planDirection === "OUTWARD") {
-                            localStorage.setItem("active_outward_plan", JSON.stringify(approvedPlan));
-                            setOutwardPlan(approvedPlan);
-                        } else {
-                            localStorage.setItem("active_inward_plan", JSON.stringify(approvedPlan));
-                            setInwardPlan(approvedPlan);
-                        }
-                    }
-                } catch {
-                    // Ignore quota errors
-                }
-
-                const msg = `${effectivePlanType === "AI" ? "AI Recommended" : "Admin Manual"} transportation plan confirmed and saved until reset!`;
-                setSelectionMessage(msg);
-                toast.success(msg);
-                await Promise.all([loadAIData(), loadActivePlan(false), loadLastSelection(planDirection), fetchLateResponses(), loadManualRoutes(planDirection)]);
-            } else {
-                throw new Error(
-                    response?.message ||
-                    "Unable to save final plan."
-                );
+            try {
+                localStorage.setItem("active_confirmation_direction", planDirection);
+                localStorage.setItem("active_confirmation_plan_type", effectivePlanType);
+            } catch (e) {
+                // Ignore storage quota
             }
-        } catch (error) {
-            console.error(
-                "Final plan selection error:",
-                error
-            );
 
-            const err = error?.response?.data?.message || error?.message || "Unable to save final plan.";
-            setSelectionMessage(err);
-            toast.error(err);
-        } finally {
-            setSavingSelection(false);
+            // Navigate immediately to Final Confirmation page
+            navigate(`/admin/plan-confirmation?direction=${planDirection}&type=${effectivePlanType}&pending=1`);
+        } catch (error) {
+            console.error("Failed to stage pending plan:", error);
+            toast.error("Unable to prepare plan confirmation. Please try again.");
         }
     };
 
@@ -1302,13 +1460,15 @@ export default function AIAgent() {
     const currentDemandCount = Number(
         data?.confirmedUserCount ?? data?.comingUsers ?? 0
     );
-    const planDemandCount = planData?.summary?.confirmedUsers ?? planData?.comingUsers ?? null;
+    const stalePlanForCurrentDir = planDirectionTab === "OUTWARD" ? stalePlanInfo?.outward : stalePlanInfo?.inward;
+    const planDemandCount = planData?.summary?.confirmedUsers ?? planData?.comingUsers ?? stalePlanForCurrentDir?.planDemandCount ?? null;
     const hasActivePlan = Boolean(aiPlan || planData?.buses?.length > 0 || (planData?.summary && planData.summary.allocatedSeats > 0));
     const isPlanInvalidated = Boolean(
-        hasActivePlan &&
+        stalePlanForCurrentDir ||
+        (hasActivePlan &&
         planDemandCount !== null &&
         currentDemandCount > 0 &&
-        planDemandCount !== currentDemandCount
+        planDemandCount !== currentDemandCount)
     );
 
     return (
@@ -1317,13 +1477,25 @@ export default function AIAgent() {
             {/* Header */}
             <div className="ai-header">
                 <div>
-                    <span className="ai-header-label">
-                        AI TRANSPORTATION ENGINE
-                    </span>
+                    <button
+                        type="button"
+                        className="ai-back-btn"
+                        onClick={() => navigate(-1)}
+                        aria-label="Go back"
+                        style={{ marginBottom: "14px" }}
+                    >
+                        <HiArrowLeft size={16} />
+                        Back
+                    </button>
+                    <div>
+                        <span className="ai-header-label">
+                            AI TRANSPORTATION ENGINE
+                        </span>
 
-                    <h1>
-                        AI Route Optimization
-                    </h1>
+                        <h1>
+                            AI Route Optimization
+                        </h1>
+                    </div>
 
                     <p>
                         The AI Agent independently
@@ -1370,9 +1542,9 @@ export default function AIAgent() {
                         onClick={() =>
                             setShowResetModal(true)
                         }
-                        title="Reset AI Generated Route recommendation"
+                        title={`Reset ${planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Transportation Plan`}
                     >
-                        🔄 Reset AI Generated Route
+                        🔄 Reset {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan
                     </button>
                 </div>
             </div>
@@ -1386,7 +1558,7 @@ export default function AIAgent() {
 
                     <div className="banner-text">
                         <strong>
-                            AI Route Reset Complete
+                            {planDirectionTab === "INWARD" ? "Inward" : planDirectionTab === "OUTWARD" ? "Outward" : "Transportation"} Plan Reset Complete
                         </strong>
 
                         <p>
@@ -1411,19 +1583,34 @@ export default function AIAgent() {
                 <div style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: "12px",
-                    background: "#fffbeb",
-                    border: "1.5px solid #fde68a",
+                    gap: "14px",
+                    background: "#fef2f2",
+                    border: "1.5px solid #fecaca",
                     borderRadius: "12px",
-                    padding: "14px 18px",
+                    padding: "16px 20px",
                     marginBottom: "24px",
-                    color: "#92400e"
+                    color: "#991b1b"
                 }}>
-                    <span style={{ fontSize: "22px" }}>⚠️</span>
+                    <span style={{ fontSize: "28px" }}>⚠️</span>
                     <div style={{ flex: 1 }}>
-                        <strong style={{ fontSize: "14px", display: "block", marginBottom: "2px" }}>Route Data Has Changed — Regeneration Recommended</strong>
-                        <p style={{ margin: 0, fontSize: "13px", color: "#78350f" }}>
-                            Student travel responses or demand changed from <b>{planDemandCount}</b> to <b>{currentDemandCount}</b> confirmed passengers since this plan was generated. Click <b>⚡ Generate AI Plan</b> below to update vehicle allocation and routes.
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                            <span style={{
+                                background: "#dc2626",
+                                color: "#fff",
+                                fontSize: "11px",
+                                fontWeight: "800",
+                                padding: "2px 8px",
+                                borderRadius: "4px",
+                                letterSpacing: "0.5px"
+                            }}>
+                                STALE PLAN — REGENERATION REQUIRED
+                            </span>
+                            <strong style={{ fontSize: "14px", color: "#7f1d1d" }}>
+                                {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan Invalidated
+                            </strong>
+                        </div>
+                        <p style={{ margin: 0, fontSize: "13.5px", color: "#991b1b", lineHeight: "1.5" }}>
+                            Current Coming Users: <b>{currentDemandCount}</b>. The previous plan was generated for <b>{planDemandCount || "different"}</b> passengers and cannot be used as current operational data or activated. Click <b>⚡ Generate AI Plan</b> below to calculate a new valid transportation plan for all {currentDemandCount} passengers.
                         </p>
                     </div>
                 </div>
@@ -1637,6 +1824,31 @@ export default function AIAgent() {
 
                     </div>
 
+                    {/* LIVE INWARD FLEET REQUIREMENTS */}
+                    <div className="inward-live-requirements-banner">
+                        <div className="live-req-item">
+                            <span className="live-req-icon">🟢</span>
+                            <div>
+                                <small>Confirmed Coming Students</small>
+                                <strong>{formatNumber(data?.confirmedUserCount ?? data?.comingUsers ?? summary?.confirmedUsers ?? 0)}</strong>
+                            </div>
+                        </div>
+                        <div className="live-req-item">
+                            <span className="live-req-icon">🚌</span>
+                            <div>
+                                <small>Required Fleet Capacity</small>
+                                <strong>{formatNumber(data?.requiredCapacity ?? summary?.requiredCapacity ?? (data?.confirmedUserCount ?? data?.comingUsers ?? 0))}+</strong>
+                            </div>
+                        </div>
+                        <div className="live-req-item">
+                            <span className="live-req-icon">🚍</span>
+                            <div>
+                                <small>Required Buses</small>
+                                <strong>{data?.requiredBusesCount ?? summary?.requiredBusesCount ?? Math.max(1, Math.ceil((data?.confirmedUserCount ?? 0) / 70))}</strong>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* DESTINATION */}
                     <div className={`trip-endpoint-card destination-card ${destinationLocation ? "active-endpoint" : ""}`}>
 
@@ -1712,6 +1924,66 @@ export default function AIAgent() {
                             </div>
                         )}
 
+                    </div>
+
+                    {/* INWARD BUS STARTING PLACES */}
+                    <div className="inward-starting-places-section">
+                        <div className="inward-starting-header">
+                            <div>
+                                <h3>Inward Bus Starting Places</h3>
+                                <p>Configure the starting hub / location for each inward bus. Each inward bus starts from its configured place.</p>
+                            </div>
+                            <button
+                                type="button"
+                                className="configure-start-place-btn"
+                                onClick={() => handleOpenStartingPlaceModal()}
+                            >
+                                + Configure Bus Starting Place
+                            </button>
+                        </div>
+
+                        {inwardStartingPlacesLoading ? (
+                            <div style={{ padding: "16px", textAlign: "center", color: "#64748b" }}>Loading inward starting places...</div>
+                        ) : inwardStartingPlaces.length === 0 ? (
+                            <div className="no-places-notice">
+                                <p>No inward bus starting places configured yet. Click <strong>+ Configure Bus Starting Place</strong> to assign starting locations for available buses.</p>
+                            </div>
+                        ) : (
+                            <div className="bus-start-cards-grid">
+                                {inwardStartingPlaces.map((sp) => (
+                                    <div key={sp._id} className={`bus-start-card ${sp.active ? "active-place" : "inactive-place"}`}>
+                                        <div className="bus-start-info">
+                                            <div className="bus-badge-row">
+                                                <span className="bus-name-badge">{sp.busName}</span>
+                                                {sp.capacity > 0 && <span className="bus-cap-badge">{sp.capacity} seats</span>}
+                                                <span className={`status-pill ${sp.active ? "active" : "inactive"}`}>
+                                                    {sp.active ? "Active" : "Inactive"}
+                                                </span>
+                                            </div>
+                                            <div className="location-detail">
+                                                <span className="loc-icon">📍</span>
+                                                <div>
+                                                    <strong>{sp.locationName || sp.name}</strong>
+                                                    {sp.address && <p>{sp.address}</p>}
+                                                    <small>{Number(sp.latitude).toFixed(5)}, {Number(sp.longitude).toFixed(5)}</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="bus-start-actions">
+                                            <button type="button" onClick={() => handleOpenStartingPlaceModal(sp)}>
+                                                Edit
+                                            </button>
+                                            <button type="button" onClick={() => handleToggleStartingPlace(sp._id)}>
+                                                {sp.active ? "Deactivate" : "Activate"}
+                                            </button>
+                                            <button type="button" className="btn-remove" onClick={() => handleDeleteStartingPlace(sp._id)}>
+                                                Remove
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                 </div>
@@ -1843,11 +2115,34 @@ export default function AIAgent() {
                     </div>
 
                     {generationError && (
-                        <div className="error-box">
-                            <strong>⚠</strong>
-                            <span>
-                                {generationError}
-                            </span>
+                        <div className="error-box" style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                                <strong>⚠</strong>
+                                <span style={{ whiteSpace: "pre-line" }}>
+                                    {generationError}
+                                </span>
+                            </div>
+                            {generationError.toLowerCase().includes("inward starting place") && (
+                                <button
+                                    onClick={() => navigate("/admin/inward-starting-places")}
+                                    style={{
+                                        alignSelf: "flex-start",
+                                        padding: "8px 16px",
+                                        background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                                        color: "#ffffff",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        fontWeight: "600",
+                                        fontSize: "13px",
+                                        cursor: "pointer",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "6px"
+                                    }}
+                                >
+                                    ➔ Configure Inward Starting Places
+                                </button>
+                            )}
                         </div>
                     )}
 
@@ -1993,67 +2288,75 @@ export default function AIAgent() {
                     {(outwardPlan || inwardPlan) && !generating && (
                         <div style={{
                             display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
                             gap: "12px",
                             margin: "20px 0 16px 0",
-                            padding: "6px",
+                            padding: "6px 10px",
                             background: "#f1f5f9",
                             borderRadius: "10px",
-                            width: "fit-content"
+                            width: "100%",
+                            maxWidth: "760px"
                         }} id="plan-direction-tab-bar">
-                            <button
-                                type="button"
-                                id="btn-tab-inward-plan"
-                                onClick={() => {
-                                    if (inwardPlan) {
-                                        setPlanData(inwardPlan);
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                <button
+                                    type="button"
+                                    id="btn-tab-inward-plan"
+                                    onClick={() => {
+                                        setPlanData(inwardPlan || null);
                                         setPlanDirectionTab("INWARD");
                                         setActiveEndpointField("destination");
                                         setTripMode("TO_DESTINATION");
+                                        try {
+                                            localStorage.setItem("active_plan_direction", "INWARD");
+                                        } catch {}
                                         loadLastSelection("INWARD");
-                                    }
-                                }}
-                                style={{
-                                    padding: "8px 18px",
-                                    borderRadius: "8px",
-                                    border: "none",
-                                    fontWeight: "700",
-                                    fontSize: "13px",
-                                    cursor: inwardPlan ? "pointer" : "not-allowed",
-                                    background: planDirectionTab === "INWARD" ? "#0284c7" : "transparent",
-                                    color: planDirectionTab === "INWARD" ? "#ffffff" : (inwardPlan ? "#334155" : "#94a3b8"),
-                                    boxShadow: planDirectionTab === "INWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
-                                    transition: "all 0.2s"
-                                }}
-                            >
-                                Inward Plan {inwardPlan ? "✓" : "(Not Generated)"}
-                            </button>
-                            <button
-                                type="button"
-                                id="btn-tab-outward-plan"
-                                onClick={() => {
-                                    if (outwardPlan) {
-                                        setPlanData(outwardPlan);
+                                    }}
+                                    style={{
+                                        padding: "8px 18px",
+                                        borderRadius: "8px",
+                                        border: "none",
+                                        fontWeight: "700",
+                                        fontSize: "13px",
+                                        cursor: "pointer",
+                                        background: planDirectionTab === "INWARD" ? "#0284c7" : "transparent",
+                                        color: planDirectionTab === "INWARD" ? "#ffffff" : (inwardPlan ? "#334155" : "#64748b"),
+                                        boxShadow: planDirectionTab === "INWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
+                                        transition: "all 0.2s"
+                                    }}
+                                >
+                                    Inward Plan {inwardPlan ? "✓" : (stalePlanInfo?.inward ? "⚠️ (Stale)" : "(Not Generated)")}
+                                </button>
+                                <button
+                                    type="button"
+                                    id="btn-tab-outward-plan"
+                                    onClick={() => {
+                                        setPlanData(outwardPlan || null);
                                         setPlanDirectionTab("OUTWARD");
                                         setActiveEndpointField("source");
                                         setTripMode("FROM_SOURCE");
+                                        try {
+                                            localStorage.setItem("active_plan_direction", "OUTWARD");
+                                        } catch {}
                                         loadLastSelection("OUTWARD");
-                                    }
-                                }}
-                                style={{
-                                    padding: "8px 18px",
-                                    borderRadius: "8px",
-                                    border: "none",
-                                    fontWeight: "700",
-                                    fontSize: "13px",
-                                    cursor: outwardPlan ? "pointer" : "not-allowed",
-                                    background: planDirectionTab === "OUTWARD" ? "#7c3aed" : "transparent",
-                                    color: planDirectionTab === "OUTWARD" ? "#ffffff" : (outwardPlan ? "#334155" : "#94a3b8"),
-                                    boxShadow: planDirectionTab === "OUTWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
-                                    transition: "all 0.2s"
-                                }}
-                            >
-                                Outward Plan {outwardPlan ? "✓" : "(Not Generated)"}
-                            </button>
+                                    }}
+                                    style={{
+                                        padding: "8px 18px",
+                                        borderRadius: "8px",
+                                        border: "none",
+                                        fontWeight: "700",
+                                        fontSize: "13px",
+                                        cursor: "pointer",
+                                        background: planDirectionTab === "OUTWARD" ? "#7c3aed" : "transparent",
+                                        color: planDirectionTab === "OUTWARD" ? "#ffffff" : (outwardPlan ? "#334155" : (stalePlanInfo?.outward ? "#b45309" : "#64748b")),
+                                        boxShadow: planDirectionTab === "OUTWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
+                                        transition: "all 0.2s"
+                                    }}
+                                >
+                                    Outward Plan {outwardPlan ? "✓" : (stalePlanInfo?.outward ? "⚠️ (Stale)" : "(Not Generated)")}
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -2063,421 +2366,69 @@ export default function AIAgent() {
                             <OptimizationResultSummary
                                 plan={planData}
                                 summary={summary}
+                                direction={planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD")}
                                 onViewRoute={() => setShowSelectRouteModal(true)}
                             />
 
                             <div className="ai-plan-result" id="ai-plan-result-section">
 
-                                {/* Plan Meta */}
-                            <div className="plan-meta-bar">
-
-                                <div className="plan-title-col">
-                                    <h3>
-                                        {aiPlan.title ||
-                                            "AI Recommended Continuous Route Plan"}
-                                    </h3>
-
-
-                                </div>
-
-                                <span className="timestamp-badge">
-                                    Generated:{" "}
-                                    {aiPlan.createdAt
-                                        ? new Date(
-                                            aiPlan.createdAt
-                                        ).toLocaleTimeString(
-                                            [],
-                                            {
-                                                hour: "2-digit",
-                                                minute: "2-digit"
-                                            }
-                                        )
-                                        : "Just now"}
-                                </span>
-
-                            </div>
-
-                            {/* Optimization Checklist */}
-                            <div className="optimization-checklist">
-
-                                <div className="check-item">
-                                    ✓{" "}
-                                    <b>
-                                        {aiPlan.allocatedUsers ?? aiPlan.assignedUsers ?? aiAssigned}
-                                    </b>{" "}
-                                    coming users allocated
-                                    {(aiPlan.unassignedUsers ?? aiUnassigned) > 0
-                                        ? ` (${aiPlan.unassignedUsers ?? aiUnassigned} unallocated, ${aiPlan.duplicateUsers || 0} duplicates)`
-                                        : ` (0 unallocated, 0 duplicates)`}
-                                </div>
-
-                                <div className="check-item">
-                                    ✓{" "}
-                                    <b>
-                                        {
-                                            aiPlan.availableVehicleCount ||
-                                            summary.availableVehicles
-                                        }
-                                    </b>{" "}
-                                    available vehicles
-                                    evaluated (
-                                    <b>
-                                        {aiBuses.length}
-                                    </b>{" "}
-                                    allocated)
-                                </div>
-
-                                <div className="check-item">
-                                    {aiBuses.every((b) => b.isRoadVerified)
-                                        ? "✓ Road continuity & directional progress verified (OSRM)"
-                                        : "⚠ Road validation unavailable — fallback estimate used"}
-                                </div>
-
-                                <div className="check-item">
-                                    ✓ Low-utilization routes
-                                    evaluated &amp;
-                                    consolidated
-                                </div>
-
-                                <div className="check-item">
-                                    ✓ Vehicle seat
-                                    capacities &amp;
-                                    schedule availability
-                                    enforced
-                                </div>
-
-                            </div>
-
-                            {/* AI Metrics */}
-                            <div className="ai-metrics">
-
-                                <div>
-                                    <span>👥</span>
-                                    <strong>
-                                        {formatNumber(
-                                            aiPlan.comingUsers
-                                        )}
-                                    </strong>
-                                    <small>
-                                        Coming Users
-                                    </small>
-                                    <span
-                                        style={{
-                                            display: "block",
-                                            fontSize: "10px",
-                                            color: (aiPlan.unassignedUsers ?? aiUnassigned) > 0 ? "#ef4444" : "#22c55e",
-                                            marginTop: "2px"
-                                        }}
-                                    >
-                                        {(aiPlan.allocatedUsers ?? aiPlan.assignedUsers ?? aiAssigned)} Allocated • {(aiPlan.unassignedUsers ?? aiUnassigned)} Unallocated
-                                    </span>
-                                </div>
-
-                                <div>
-                                    <span>💺</span>
-
-                                    <strong>
-                                        {formatNumber(
-                                            aiAssigned
-                                        )}{" "}
-                                        /{" "}
-                                        {formatNumber(
-                                            aiCapacity
-                                        )}
-                                    </strong>
-
-                                    <small>
-                                        Seats Occupied
-                                    </small>
-
-                                    <span
-                                        style={{
-                                            display: "block",
-                                            fontSize: "10px",
-                                            color: "#94a3b8",
-                                            marginTop: "2px"
-                                        }}
-                                    >
-                                        {Math.max(0, aiCapacity - aiAssigned)} unused seats
-                                    </span>
-                                </div>
-
-                                <div>
-                                    <span>📊</span>
-
-                                    <strong>
-                                        {aiPlan.routeAllocationUtilization ?? aiUtilization}%
-                                    </strong>
-
-                                    <small>
-                                        Route Seat Utilization
-                                    </small>
-
-                                    {(aiPlan.physicalFleetUtilization !== undefined || aiPlan.fleetUtilization !== undefined) && (
-                                        <span
-                                            style={{
-                                                display:
-                                                    "block",
-                                                fontSize:
-                                                    "10px",
-                                                color:
-                                                    "#94a3b8",
-                                                marginTop:
-                                                    "2px"
-                                            }}
-                                        >
-                                            Fleet Seat: {aiPlan.physicalFleetUtilization ?? aiPlan.fleetUtilization}%
-                                        </span>
-                                    )}
-                                </div>
-
-                                <div>
-                                    <span>🚌</span>
-
-                                    <strong>
-                                        {
-                                            aiBuses.length
-                                        }
-                                    </strong>
-
-                                    <small>
-                                        Buses Allocated
-                                    </small>
-                                    <span
-                                        style={{
-                                            display: "block",
-                                            fontSize: "10px",
-                                            color: "#94a3b8",
-                                            marginTop: "2px"
-                                        }}
-                                    >
-                                        {aiPlan.fleetVehicleUtilization !== undefined
-                                            ? `${aiPlan.fleetVehicleUtilization}% fleet used (${aiBuses.length}/${aiPlan.availableVehicleCount || summary.availableVehicles})`
-                                            : `of ${aiPlan.availableVehicleCount || summary.availableVehicles} available`}
-                                    </span>
-                                </div>
-
-                                <div>
-                                    <span>📍</span>
-
-                                    <strong>
-                                        {aiPlan.uniqueStoppingAreas ||
-                                            summary.stoppingAreas}
-                                    </strong>
-
-                                    <small>
-                                        Unique Stopping
-                                        Areas
-                                    </small>
-                                </div>
-
-                                <div>
-                                    <span>🚏</span>
-                                    <strong>
-                                        {totalAIStops}
-                                    </strong>
-                                    <small>
-                                        Route Stop Visits
-                                    </small>
-                                </div>
-
-                                <div>
-                                    <span>🧠</span>
-                                    <strong>
-                                        {aiPlan.mlAverageScore ? `${(aiPlan.mlAverageScore * 100).toFixed(0)}%` : "88%"}
-                                    </strong>
-                                    <small>
-                                        ML Route Quality
-                                    </small>
-                                    <span style={{ display: "block", fontSize: "10px", color: "#10b981", marginTop: "2px" }}>
-                                        {aiPlan.overallRouteQuality || "Optimized VRP/CVRP"}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Stop Count Explanation */}
-                            {summary?.stopCountExplanation && (
-                                <div
-                                    style={{
-                                        background: "#f1f5f9",
-                                        padding: "10px 14px",
-                                        borderRadius: "8px",
-                                        fontSize: "12px",
-                                        color: "#334155",
-                                        margin: "12px 0"
-                                    }}
-                                >
-                                    ℹ️ <b>Stop Breakdown:</b> {summary.stopCountExplanation}
-                                </div>
-                            )}
-
-                            {/* Capacity Shortage / Allocation Alerts */}
-                            {aiUnassigned > 0 && (
-                                <div className="capacity-shortage-alert">
-                                    <div className="alert-header">
-                                        <span>⚠</span>
-                                        <strong>
-                                            {aiPlan.unallocatedReason === "VEHICLE_CAPACITY"
-                                                ? "TOTAL PHYSICAL FLEET CAPACITY EXCEEDED"
-                                                : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY"
-                                                    ? "SCHEDULED FLEET CAPACITY RESTRICTION"
-                                                    : aiPlan.unallocatedReason === "CORRIDOR_CAPACITY"
-                                                        ? "CORRIDOR SEAT ALLOCATION RESTRICTION"
-                                                        : "PASSENGER ALLOCATION RESTRICTION"}
-                                        </strong>
-                                    </div>
-
-                                    <p>
-                                        {aiPlan.unallocatedReason === "VEHICLE_CAPACITY" ? (
-                                            <>
-                                                Passenger demand exceeds total fleet capacity: <b>{aiPlan.comingUsers}</b> coming users vs <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> total physical fleet seats. <b>{aiUnassigned}</b> users could not be allocated.
-                                            </>
-                                        ) : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY" ? (
-                                            <>
-                                                Active schedule limits available fleet capacity to <b>{aiAvailableCapacity || aiCapacity}</b> seats for <b>{aiPlan.comingUsers}</b> coming users. <b>{aiUnassigned}</b> users could not be scheduled.
-                                            </>
-                                        ) : (
-                                            <>
-                                                <b>{aiUnassigned}</b> passengers could not be assigned to available routes due to corridor/bus capacity constraints. Total fleet capacity is <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> seats (<b>{aiAvailableCapacity || aiCapacity}</b> scheduled) for <b>{aiPlan.comingUsers}</b> coming users.
-                                            </>
-                                        )}
-                                    </p>
-
-                                    <div className="shortage-recommendations">
-                                        <strong>AI Recommendations:</strong>
-                                        <ul>
-                                            <li>Mark another bus as "Available" in Schedule Management.</li>
-                                            <li>Add an additional vehicle to the fleet in Vehicle Management.</li>
-                                            <li>Schedule a second trip for high-capacity corridors.</li>
-                                        </ul>
-                                    </div>
-                                </div>
-                            )}
-
-                            {aiUnassigned === 0 && (
-                                <div className="success-box">
-                                    ✓ All {aiPlan.comingUsers} confirmed passengers successfully accommodated within vehicle seat limits
-                                    {aiBuses.every((b) => b.isRoadVerified) ? " with Continuous OSRM road progression verified." : " (Road validation unavailable — fallback estimate used)."}
-                                </div>
-                            )}
-
-                            {/* AI Recommendations */}
-                            {Array.isArray(aiPlan.recommendationsList) &&
-                                aiPlan.recommendationsList.length > 0 && (
-                                    <div className="ai-insights-box">
-                                        <strong>🧠 AI Route Consolidation &amp; Insights:</strong>
-                                        <ul>
-                                            {aiPlan.recommendationsList.map((rec, idx) => (
-                                                <li key={idx}>{rec}</li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
-
-                            {/* Route Consolidation Audit Trail */}
-                            {Array.isArray(aiPlan.consolidationAudit) &&
-                                aiPlan.consolidationAudit.length > 0 && (
-                                    <div className="ai-insights-box" style={{ borderLeft: "3px solid #6366f1", background: "#f8fafc", marginTop: "12px" }}>
-                                        <strong>📋 Route Consolidation Audit Trail:</strong>
-                                        <div style={{ overflowX: "auto", marginTop: "8px" }}>
-                                            <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
-                                                <thead>
-                                                    <tr style={{ borderBottom: "1px solid #cbd5e1", textAlign: "left", color: "#475569" }}>
-                                                        <th style={{ padding: "6px 8px" }}>Source</th>
-                                                        <th style={{ padding: "6px 8px" }}>Destination</th>
-                                                        <th style={{ padding: "6px 8px" }}>Pax Moved</th>
-                                                        <th style={{ padding: "6px 8px" }}>Before / After Seats</th>
-                                                        <th style={{ padding: "6px 8px" }}>Reason</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {aiPlan.consolidationAudit.map((audit, idx) => (
-                                                        <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                                                            <td style={{ padding: "6px 8px" }}>{audit.sourceRoute} ({audit.sourceVehicle})</td>
-                                                            <td style={{ padding: "6px 8px" }}>{audit.destinationRoute} ({audit.destinationVehicle})</td>
-                                                            <td style={{ padding: "6px 8px", fontWeight: "bold", color: "#0284c7" }}>+{audit.passengersMoved}</td>
-                                                            <td style={{ padding: "6px 8px" }}>{audit.beforeCapacity} → {audit.afterCapacity}</td>
-                                                            <td style={{ padding: "6px 8px", color: "#64748b" }}>{audit.reason}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                {/* Capacity Shortage / Allocation Alerts */}
+                                {aiUnassigned > 0 && (
+                                    <div className="capacity-shortage-alert">
+                                        <div className="alert-header">
+                                            <span>⚠</span>
+                                            <strong>
+                                                {aiPlan.unallocatedReason === "VEHICLE_CAPACITY"
+                                                    ? "TOTAL PHYSICAL FLEET CAPACITY EXCEEDED"
+                                                    : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY"
+                                                        ? "SCHEDULED FLEET CAPACITY RESTRICTION"
+                                                        : aiPlan.unallocatedReason === "CORRIDOR_CAPACITY"
+                                                            ? "CORRIDOR SEAT ALLOCATION RESTRICTION"
+                                                            : "PASSENGER ALLOCATION RESTRICTION"}
+                                            </strong>
                                         </div>
-                                    </div>
-                                )}
 
-                            {/* Demand-Based Shared Stopping Areas */}
-                            {Array.isArray(aiPlan.sharedStoppingAreas) &&
-                                aiPlan.sharedStoppingAreas.length > 0 && (
-                                    <div className="ai-insights-box" style={{ borderLeft: "3px solid #0284c7", background: "#f0f9ff", marginTop: "12px" }}>
-                                        <strong>📍 Demand-Based Shared Stopping Areas ({aiPlan.sharedStoppingAreas.length}):</strong>
-                                        <div style={{ overflowX: "auto", marginTop: "8px" }}>
-                                            <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
-                                                <thead>
-                                                    <tr style={{ borderBottom: "1px solid #bae6fd", textAlign: "left", color: "#0369a1" }}>
-                                                        <th style={{ padding: "6px 8px" }}>Stopping Area</th>
-                                                        <th style={{ padding: "6px 8px" }}>Serving Buses</th>
-                                                        <th style={{ padding: "6px 8px" }}>Total Demand</th>
-                                                        <th style={{ padding: "6px 8px" }}>Justification Reason</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {aiPlan.sharedStoppingAreas.map((shared, idx) => (
-                                                        <tr key={idx} style={{ borderBottom: "1px solid #e0f2fe" }}>
-                                                            <td style={{ padding: "6px 8px", fontWeight: "600" }}>{shared.stopName}</td>
-                                                            <td style={{ padding: "6px 8px" }}>
-                                                                {shared.busesServing?.map((b) => `${b.routeCode || b.vehicleName} (${b.boardedCount} pax)`).join(", ") || "Multiple Buses"}
-                                                            </td>
-                                                            <td style={{ padding: "6px 8px", fontWeight: "bold", color: "#0284c7" }}>{shared.totalDemand} passengers</td>
-                                                            <td style={{ padding: "6px 8px", color: "#475569" }}>{shared.reason}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                )}
-
-                            {/* Corridor Overlap */}
-                            {Array.isArray(
-                                aiPlan.overlapAlerts
-                            ) &&
-                                aiPlan.overlapAlerts
-                                    .length > 0 && (
-                                    <div
-                                        className="ai-insights-box"
-                                        style={{
-                                            borderLeft:
-                                                "3px solid #f59e0b",
-                                            background:
-                                                "#fffbeb"
-                                        }}
-                                    >
-
-                                        <strong>
-                                            🔀 Shared Corridor
-                                            Overlap Analysis:
-                                        </strong>
-
-                                        <ul>
-                                            {aiPlan.overlapAlerts.map(
-                                                (
-                                                    alert,
-                                                    idx
-                                                ) => (
-                                                    <li
-                                                        key={
-                                                            idx
-                                                        }
-                                                    >
-                                                        {
-                                                            alert
-                                                        }
-                                                    </li>
-                                                )
+                                        <p>
+                                            {aiPlan.unallocatedReason === "VEHICLE_CAPACITY" ? (
+                                                <>
+                                                    Passenger demand exceeds total fleet capacity: <b>{aiPlan.comingUsers}</b> coming users vs <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> total physical fleet seats. <b>{aiUnassigned}</b> users could not be allocated.
+                                                </>
+                                            ) : aiPlan.unallocatedReason === "SCHEDULE_CAPACITY" ? (
+                                                <>
+                                                    Active schedule limits available fleet capacity to <b>{aiAvailableCapacity || aiCapacity}</b> seats for <b>{aiPlan.comingUsers}</b> coming users. <b>{aiUnassigned}</b> users could not be scheduled.
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <b>{aiUnassigned}</b> passengers could not be assigned to available routes due to corridor/bus capacity constraints. Total fleet capacity is <b>{aiPhysicalCapacity || aiAvailableCapacity}</b> seats (<b>{aiAvailableCapacity || aiCapacity}</b> scheduled) for <b>{aiPlan.comingUsers}</b> coming users.
+                                                </>
                                             )}
-                                        </ul>
+                                        </p>
 
+                                        <div className="shortage-recommendations">
+                                            <strong>AI Recommendations:</strong>
+                                            <ul>
+                                                <li>Mark another bus as "Available" in Schedule Management.</li>
+                                                <li>Add an additional vehicle to the fleet in Vehicle Management.</li>
+                                                <li>Schedule a second trip for high-capacity corridors.</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Standing Passengers Notice: shown when any bus is over-capacity */}
+                                {aiPlan.hasOverCapacity && (
+                                    <div className="overcapacity-plan-alert">
+                                        <div className="alert-header">
+                                            <span>🧍</span>
+                                            <strong>OVER-CAPACITY: STANDING PASSENGERS ALLOCATED</strong>
+                                        </div>
+                                        <p>
+                                            <b>{aiPlan.totalStandingPassengers}</b> passenger{aiPlan.totalStandingPassengers !== 1 ? "s" : ""} will travel as <b>standing passengers</b> across <b>{aiPlan.totalOverCapacityBuses}</b> bus{aiPlan.totalOverCapacityBuses !== 1 ? "es" : ""}.
+                                            No suitable nearby alternative bus was available for these students — they are allocated to their original route and will travel standing.
+                                        </p>
+                                        <p style={{ marginTop: "6px", fontSize: "12px", opacity: 0.85 }}>
+                                            ✅ All passengers are <b>allocated</b>. Individual bus cards below show the seated / standing breakdown per bus.
+                                        </p>
                                     </div>
                                 )}
 
@@ -2543,7 +2494,9 @@ export default function AIAgent() {
                                                         </div>
                                                     </div>
 
-                                                    <span className="seat-capacity">
+                                                    <span
+                                                        className={`seat-capacity${bus.isOverCapacity ? " over-capacity" : ""}`}
+                                                    >
                                                         🚌{" "}
                                                         {
                                                             bus.vehicleName
@@ -2556,16 +2509,30 @@ export default function AIAgent() {
                                                         {
                                                             capacity
                                                         }{" "}
-                                                        seats (
-                                                        {
-                                                            remaining
-                                                        }{" "}
-                                                        standby)
+                                                        passengers
+                                                        {(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0))
+                                                            ? ` ⚠️ (+${bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)} standing)`
+                                                            : (remaining > 0
+                                                                ? ` · 💺 ${remaining} seats available`
+                                                                : " · 💺 Full capacity")
+                                                        }
                                                     </span>
 
                                                 </div>
 
                                                 <div className="bus-stats">
+
+                                                    {remaining > 0 && (
+                                                        <span style={{ color: "#16a34a", fontWeight: "600" }}>
+                                                            💺 <b>{remaining}</b> seats available
+                                                        </span>
+                                                    )}
+
+                                                    {bus.standingPassengers > 0 && (
+                                                        <span style={{ color: "#dc2626", fontWeight: "600" }}>
+                                                            🚶 <b>{bus.standingPassengers}</b> standing
+                                                        </span>
+                                                    )}
 
                                                     <span>
                                                         👥{" "}
@@ -2642,6 +2609,24 @@ export default function AIAgent() {
                                                         </span>
                                                     )}
                                                 </div>
+
+                                                {/* Over-Capacity Breakdown: shown for any over-capacity bus (Inward or Outward) */}
+                                                {(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) && (
+                                                    <div className="overcapacity-breakdown">
+                                                        <span className="overcapacity-row">
+                                                            🪑 <b>Seated:</b>{" "}
+                                                            {bus.seatedPassengers ?? capacity}
+                                                        </span>
+                                                        <span className="overcapacity-row">
+                                                            🧍 <b>Standing:</b>{" "}
+                                                            {bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)}
+                                                        </span>
+                                                        <span className="overcapacity-row overcapacity-badge">
+                                                            ⚠️ <b>Over Capacity:</b>{" "}
+                                                            {bus.overCapacityCount ?? bus.standingPassengers ?? Math.max(0, assigned - capacity)} extra passengers will travel standing
+                                                        </span>
+                                                    </div>
+                                                )}
 
                                                 {bus.explanations?.whyRouteSelected && (
                                                     <div
@@ -2794,7 +2779,7 @@ export default function AIAgent() {
                                                     {(bus.direction === "OUTWARD" ||
                                                         bus.tripMode === "OUTWARD" ||
                                                         bus.tripMode === "FROM_SOURCE" ||
-                                                        planDirectionTab === "OUTWARD") && (
+                                                        planDirectionTab === "OUTWARD") ? (
                                                             <div className="timeline-start source-terminal-hub">
 
                                                                 <span className="timeline-dot source-dot"></span>
@@ -2820,6 +2805,34 @@ export default function AIAgent() {
                                                                 </div>
 
                                                             </div>
+                                                        ) : (
+                                                            (() => {
+                                                                const startHub = bus.inwardStartLocation || bus.startLocation;
+                                                                if (!startHub) return null;
+                                                                const firstStop = Array.isArray(bus.stops) && bus.stops[0];
+                                                                const sHubName = (startHub.name || "").toLowerCase().trim();
+                                                                const fStopName = (firstStop?.name || "").toLowerCase().trim();
+                                                                const isSameFirstLocality = Boolean(
+                                                                    firstStop && (sHubName === fStopName || sHubName.includes(fStopName) || fStopName.includes(sHubName))
+                                                                );
+                                                                if (isSameFirstLocality) {
+                                                                    return null;
+                                                                }
+                                                                return (
+                                                                    <div className="timeline-start source-terminal-hub" style={{ borderLeftColor: "#10b981" }}>
+                                                                        <span className="timeline-dot" style={{ background: "#10b981", boxShadow: "0 0 8px rgba(16, 185, 129, 0.5)" }}></span>
+                                                                        <div>
+                                                                            <strong>
+                                                                                🚩{" "}
+                                                                                {startHub.name || "Inward Starting Place"}
+                                                                            </strong>
+                                                                            <small style={{ color: "#34d399" }}>
+                                                                                Inward Starting Hub · Origin
+                                                                            </small>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })()
                                                         )}
 
                                                     {Array.isArray(
@@ -2840,6 +2853,13 @@ export default function AIAgent() {
                                                                     getAIStopUsers(
                                                                         stop
                                                                     );
+
+                                                                const startHub = bus.inwardStartLocation || bus.startLocation;
+                                                                const sHubName = (startHub?.name || "").toLowerCase().trim();
+                                                                const fStopName = (stop.name || "").toLowerCase().trim();
+                                                                const isFirstStopSameAsHub = Boolean(
+                                                                    !isOutward && stopIndex === 0 && startHub && (sHubName === fStopName || sHubName.includes(fStopName) || fStopName.includes(sHubName))
+                                                                );
 
                                                                 return (
                                                                     <div
@@ -2862,7 +2882,13 @@ export default function AIAgent() {
                                                                                     }
                                                                                 </strong>
 
-                                                                                {stop.legDistanceKm !==
+                                                                                {isFirstStopSameAsHub && (
+                                                                                    <span style={{ fontSize: "11px", fontWeight: "700", color: "#059669", background: "#d1fae5", padding: "2px 8px", borderRadius: "12px", border: "1px solid #a7f3d0" }}>
+                                                                                        🚩 Starting Hub &amp; Boarding Origin
+                                                                                    </span>
+                                                                                )}
+
+                                                                                {!isFirstStopSameAsHub && stop.legDistanceKm !==
                                                                                     undefined &&
                                                                                     stop.legDistanceKm >
                                                                                     0 && (
@@ -3030,23 +3056,44 @@ export default function AIAgent() {
 
                             </div>
 
-                            <button
-                                className={`select-plan-btn ${selectedPlanType ===
-                                    "AI"
-                                    ? "selected"
-                                    : ""
-                                    }`}
-                                onClick={() => {
-                                    handleSelectAIPlan();
-                                    const el = document.querySelector(".final-decision");
-                                    if (el) el.scrollIntoView({ behavior: "smooth" });
-                                }}
-                            >
-                                {selectedPlanType ===
-                                    "AI"
-                                    ? "✓ AI Plan Selected (Click Save Below)"
-                                    : "🤖 Select AI Plan"}
-                            </button>
+                            <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
+                                <button
+                                    className="select-plan-btn selected"
+                                    onClick={async () => {
+                                        handleSelectAIPlan();
+                                        await handleSaveFinalPlan();
+                                    }}
+                                    disabled={savingSelection || isPlanInvalidated}
+                                    title={isPlanInvalidated ? "Plan is invalidated due to demand changes. Please regenerate." : ""}
+                                    style={{
+                                        flex: "1 1 auto",
+                                        opacity: isPlanInvalidated ? 0.5 : 1,
+                                        cursor: isPlanInvalidated ? "not-allowed" : "pointer"
+                                    }}
+                                >
+                                    {savingSelection
+                                        ? "⏳ Opening Final Confirmation..."
+                                        : isPlanInvalidated
+                                        ? "⚠️ Plan Stale — Regeneration Required"
+                                        : "✓ Select AI Plan (Go to Final Confirmation →)"}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate(`/admin/plan-confirmation?direction=${planDirectionTab || "INWARD"}&type=AI`)}
+                                    style={{
+                                        padding: "10px 18px",
+                                        borderRadius: "8px",
+                                        background: "#eff6ff",
+                                        color: "#2563eb",
+                                        border: "1px solid #bfdbfe",
+                                        fontWeight: "700",
+                                        fontSize: "13px",
+                                        cursor: "pointer"
+                                    }}
+                                >
+                                    🏁 Final Confirmation Page →
+                                </button>
+                            </div>
 
                         </div>
                         </>
@@ -3067,1134 +3114,6 @@ export default function AIAgent() {
                 </div>
             </section>
 
-            {/* Section 3: Admin Manual Plan */}
-            <section className="ai-section">
-
-                <div className="section-number">
-                    03
-                </div>
-
-                <div className="section-content">
-
-                    <div className="section-heading">
-                        <h2>
-                            Admin Manual Plan
-                        </h2>
-
-                        <p>
-                            Routes manually created and
-                            saved by the administrator
-                            in Route Management. This
-                            plan is completely separate
-                            from AI generation.
-                        </p>
-                    </div>
-
-                    <div className="manual-plan-card">
-
-                        <div className="manual-plan-header">
-
-                            <div>
-                                <span className="option-label">
-                                    OPTION 2
-                                </span>
-
-                                <h2>
-                                    Admin Manual Plan
-                                </h2>
-
-                                <p>
-                                    Unified manual routes &amp; passenger seat allocation engine from Route Management.
-                                </p>
-
-                                {/* Direction Selector for Admin Manual Plan */}
-                                <div className="manual-plan-direction-pills" style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleManualDirectionChange("INWARD")}
-                                        style={{
-                                            padding: "5px 12px",
-                                            borderRadius: "16px",
-                                            fontSize: "12px",
-                                            fontWeight: "700",
-                                            cursor: "pointer",
-                                            border: "1px solid",
-                                            borderColor: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#0284c7" : "#cbd5e1",
-                                            background: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#0284c7" : "#f8fafc",
-                                            color: (manualPlanData?.direction || manualPlanDirection) === "INWARD" ? "#ffffff" : "#475569"
-                                        }}
-                                    >
-                                        🟢 INWARD Plan
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleManualDirectionChange("OUTWARD")}
-                                        style={{
-                                            padding: "5px 12px",
-                                            borderRadius: "16px",
-                                            fontSize: "12px",
-                                            fontWeight: "700",
-                                            cursor: "pointer",
-                                            border: "1px solid",
-                                            borderColor: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#7c3aed" : "#cbd5e1",
-                                            background: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#7c3aed" : "#f8fafc",
-                                            color: (manualPlanData?.direction || manualPlanDirection) === "OUTWARD" ? "#ffffff" : "#475569"
-                                        }}
-                                    >
-                                        🔵 OUTWARD Plan
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                    <span className="admin-badge">
-                                        👨‍💼 ADMIN MANUAL
-                                    </span>
-                                    <span style={{
-                                        padding: "4px 10px",
-                                        borderRadius: "20px",
-                                        fontSize: "12px",
-                                        fontWeight: "700",
-                                        background: "#f1f5f9",
-                                        color: "#334155",
-                                        border: "1px solid #cbd5e1"
-                                    }}>
-                                        Plan Type: Manual
-                                    </span>
-                                    <span style={{
-                                        padding: "4px 10px",
-                                        borderRadius: "20px",
-                                        fontSize: "12px",
-                                        fontWeight: "700",
-                                        background: manualPlanData?.isApproved ? "#dcfce7" : (manualPlanData?.isSubmitted ? "#eff6ff" : "#fef3c7"),
-                                        color: manualPlanData?.isApproved ? "#15803d" : (manualPlanData?.isSubmitted ? "#1d4ed8" : "#b45309"),
-                                        border: `1px solid ${manualPlanData?.isApproved ? "#bbf7d0" : (manualPlanData?.isSubmitted ? "#bfdbfe" : "#fde68a")}`
-                                    }}>
-                                        {manualPlanData?.isApproved
-                                            ? `✓ ${manualPlanData?.direction || manualPlanDirection} Approved & Active in MongoDB`
-                                            : (manualPlanData?.isSubmitted
-                                                ? `${manualPlanData?.direction || manualPlanDirection} Submitted`
-                                                : `${manualPlanData?.direction || manualPlanDirection} Not Submitted`)}
-                                    </span>
-                                </div>
-                                <div style={{
-                                    fontSize: "12px",
-                                    fontWeight: "600",
-                                    color: manualPlanData?.isApproved ? "#15803d" : (manualPlanData?.isSubmitted ? "#1d4ed8" : "#b45309")
-                                }}>
-                                    {manualPlanData?.isApproved
-                                        ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Approved & Active`
-                                        : (manualPlanData?.isSubmitted
-                                            ? `Confirmed ${manualPlanData?.direction || manualPlanDirection} Manual Plan Submitted`
-                                            : `Not Approved • Click OK in Route Management`)}
-                                </div>
-                            </div>
-
-                        </div>
-
-                        {manualPlanData && displayedManualRoutes.length > 0 && (
-                            <div style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                                gap: "12px",
-                                margin: "16px 0",
-                                padding: "14px",
-                                background: "#f8fafc",
-                                borderRadius: "10px",
-                                border: "1px solid #e2e8f0"
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Coming Students</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a" }}>{manualPlanData.totalComingUsers ?? (data?.confirmedUserCount || 0)}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Fleet Capacity</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a" }}>{manualPlanData.totalCapacity ?? 0} seats</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Allocated Seats</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#16a34a" }}>{manualPlanData.assignedUsers ?? 0}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Allocated Users</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#16a34a" }}>{manualPlanData.allocatedUsers ?? manualPlanData.assignedUsers ?? 0}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Standby Users</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: (manualPlanData.unassignedUsers > 0 ? "#dc2626" : "#0f172a") }}>{manualPlanData.unassignedUsers ?? 0}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase" }}>Active Assigned Routes</div>
-                                    <div style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a" }}>{displayedManualRoutes.length}</div>
-                                </div>
-                            </div>
-                        )}
-
-                        {manualPlanData?.warnings && manualPlanData.warnings.length > 0 && displayedManualRoutes.length > 0 && (
-                            <div style={{
-                                padding: "12px 16px",
-                                background: "#fffbeb",
-                                border: "1px solid #fef3c7",
-                                borderRadius: "8px",
-                                marginBottom: "16px",
-                                color: "#92400e",
-                                fontSize: "13px"
-                            }}>
-                                <strong style={{ display: "block", marginBottom: "6px" }}>⚠️ Manual Plan Capacity &amp; Route Warnings:</strong>
-                                <ul style={{ margin: "0 0 0 16px", padding: 0 }}>
-                                    {manualPlanData.warnings.map((w, i) => (
-                                        <li key={i}>{w}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-
-                        {manualRoutesLoading ? (
-                            <div className="manual-info-box">
-                                Loading saved admin routes &amp; calculating seat allocations...
-                            </div>
-                        ) : (!manualPlanData?.isSubmitted && !manualPlanData?.isApproved) ? (
-                            <div className="empty-manual" style={{ padding: "36px 20px", textAlign: "center", background: "#f8fafc", borderRadius: "12px", border: "1px dashed #cbd5e1", margin: "16px 0" }}>
-                                <span style={{ fontSize: "42px", display: "block", marginBottom: "10px" }}>📋</span>
-
-                                <h3 style={{ color: "#0f172a", fontSize: "18px", fontWeight: "700", margin: "8px 0" }}>
-                                    No Confirmed {manualPlanData?.direction || manualPlanDirection} Manual Plan Submitted Yet
-                                </h3>
-
-                                <p style={{ color: "#64748b", fontSize: "14px", maxWidth: "520px", margin: "0 auto 18px", lineHeight: "1.5" }}>
-                                    In <strong>Route Management</strong>, select <strong>{manualPlanData?.direction || manualPlanDirection}</strong>, create routes, allocate buses to them, and click <strong>"✓ OK"</strong>. Once confirmed, only the assigned routes will appear here for admin review and final approval.
-                                </p>
-
-                                <button
-                                    type="button"
-                                    onClick={() => navigate("/routes")}
-                                    style={{
-                                        padding: "10px 22px",
-                                        background: "#2563eb",
-                                        color: "#ffffff",
-                                        border: "none",
-                                        borderRadius: "8px",
-                                        fontSize: "13px",
-                                        fontWeight: "700",
-                                        cursor: "pointer",
-                                        boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)"
-                                    }}
-                                >
-                                    Go to Route Management →
-                                </button>
-                            </div>
-                        ) : displayedManualRoutes.length === 0 ? (
-                            <div className="empty-manual">
-                                <span>🛣️</span>
-
-                                <h3>
-                                    No routes with assigned buses found for {manualPlanData?.direction || manualPlanDirection}
-                                </h3>
-
-                                <p>
-                                    Create and assign buses to your {manualPlanData?.direction || manualPlanDirection} routes in Route Management, then click "✓ OK" to submit.
-                                </p>
-
-                                <button
-                                    type="button"
-                                    onClick={() => navigate("/routes")}
-                                    style={{
-                                        marginTop: "12px",
-                                        padding: "8px 16px",
-                                        background: "#2563eb",
-                                        color: "#ffffff",
-                                        border: "none",
-                                        borderRadius: "8px",
-                                        fontSize: "13px",
-                                        fontWeight: "600",
-                                        cursor: "pointer"
-                                    }}
-                                >
-                                    Go to Route Management →
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="manual-route-list">
-
-                                {displayedManualRoutes.map(
-                                    (
-                                        route,
-                                        routeIndex
-                                    ) => {
-                                        const points =
-                                            getManualRoutePoints(
-                                                route
-                                            );
-
-                                        const vehicleName =
-                                            route.vehicleName ||
-                                            route
-                                                .assignedVehicle
-                                                ?.vehicleName ||
-                                            "Bus";
-
-                                        const capacity =
-                                            route.capacity ||
-                                            route
-                                                .assignedVehicle
-                                                ?.capacity ||
-                                            0;
-
-                                        const assignedUsers = route.assignedUsers ?? 0;
-                                        const remainingSeats = route.remainingSeats ?? Math.max(0, capacity - assignedUsers);
-
-                                        return (
-                                            <div
-                                                className="manual-route-card"
-                                                key={
-                                                    route._id ||
-                                                    route.routeId ||
-                                                    routeIndex
-                                                }
-                                            >
-
-                                                <div className="manual-route-top">
-
-                                                    <span className="manual-route-number">
-                                                        {routeIndex +
-                                                            1}
-                                                    </span>
-
-                                                    <div>
-                                                        <small>
-                                                            ADMIN MANUAL ROUTE • {route.routeCode || `R-${String(routeIndex + 1).padStart(2, "0")}`}
-                                                        </small>
-
-                                                        <h3>
-                                                            {route.routeName ||
-                                                                `Route ${routeIndex + 1}`}
-                                                        </h3>
-                                                    </div>
-
-                                                    <div className="manual-bus">
-                                                        🚌
-
-                                                        <div>
-                                                            <strong>
-                                                                {
-                                                                    vehicleName
-                                                                }
-                                                            </strong>
-
-                                                            <span>
-                                                                {assignedUsers} / {capacity} seats allocated
-                                                            </span>
-                                                        </div>
-                                                    </div>
-
-                                                </div>
-
-                                                <div style={{
-                                                    display: "flex",
-                                                    gap: "12px",
-                                                    alignItems: "center",
-                                                    margin: "8px 0 12px",
-                                                    fontSize: "12px",
-                                                    color: "#475569"
-                                                }}>
-                                                    <span style={{
-                                                        padding: "2px 8px",
-                                                        borderRadius: "6px",
-                                                        background: remainingSeats > 0 ? "#f0fdf4" : "#fef2f2",
-                                                        color: remainingSeats > 0 ? "#15803d" : "#b91c1c",
-                                                        fontWeight: "700"
-                                                    }}>
-                                                        {remainingSeats} standby seats left
-                                                    </span>
-                                                    <span>Direction: <strong>{route.direction || manualPlanDirection || "INWARD"}</strong></span>
-                                                </div>
-
-                                                <div className="manual-route-path">
-
-                                                    {points.length ===
-                                                        0 ? (
-                                                        <span>
-                                                            Route stops not configured
-                                                        </span>
-                                                    ) : (
-                                                        points.map(
-                                                            (
-                                                                point,
-                                                                pointIndex
-                                                            ) => (
-                                                                <span
-                                                                    key={`${point.name}-${pointIndex}`}
-                                                                >
-                                                                    {point.name || "Stop"}
-                                                                    {point.userCount > 0 && (
-                                                                        <b style={{ color: "#2563eb", marginLeft: "4px" }}>
-                                                                            ({point.userCount} boarding)
-                                                                        </b>
-                                                                    )}
-
-                                                                    {pointIndex <
-                                                                        points.length -
-                                                                        1 && (
-                                                                            <b>
-                                                                                →
-                                                                            </b>
-                                                                        )}
-                                                                </span>
-                                                            )
-                                                        )
-                                                    )}
-
-                                                </div>
-
-                                            </div>
-                                        );
-                                    }
-                                )}
-
-                            </div>
-                        )}
-
-                        <div style={{ marginTop: "18px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
-                            <button
-                                type="button"
-                                className={`approve-manual-plan-btn ${manualPlanData?.isApproved ? "is-approved" : ""}`}
-                                onClick={handleApproveAdminManualPlan}
-                                disabled={
-                                    manualRoutesLoading ||
-                                    manualPlanApproving ||
-                                    manualPlanData?.isApproved ||
-                                    !manualPlanData?.isSubmitted ||
-                                    displayedManualRoutes.length === 0
-                                }
-                                style={{
-                                    flex: "1",
-                                    minWidth: "240px",
-                                    padding: "12px 20px",
-                                    background: manualPlanData?.isApproved ? "#ecfdf5" : (!manualPlanData?.isSubmitted ? "#94a3b8" : "#059669"),
-                                    color: manualPlanData?.isApproved ? "#047857" : "#ffffff",
-                                    border: manualPlanData?.isApproved ? "1px solid #a7f3d0" : "none",
-                                    borderRadius: "10px",
-                                    fontWeight: "700",
-                                    fontSize: "14px",
-                                    cursor: (manualPlanData?.isApproved || !manualPlanData?.isSubmitted || displayedManualRoutes.length === 0) ? "default" : "pointer",
-                                    boxShadow: (manualPlanData?.isApproved || !manualPlanData?.isSubmitted) ? "none" : "0 4px 14px rgba(5, 150, 105, 0.3)",
-                                    transition: "all 0.2s ease"
-                                }}
-                            >
-                                {manualPlanApproving
-                                    ? `⏳ Publishing & Allocating ${manualPlanData?.direction || manualPlanDirection} Plan...`
-                                    : manualPlanData?.isApproved
-                                    ? `✓ ${manualPlanData?.direction || manualPlanDirection} Manual Plan Approved & Active in MongoDB`
-                                    : `✓ Approve ${manualPlanData?.direction || manualPlanDirection} Manual Transportation Plan`}
-                            </button>
-
-                            <button
-                                type="button"
-                                className="reset-manual-plan-btn"
-                                onClick={handleResetManualPlanAllocationsClick}
-                                disabled={manualAllocResetting || manualPlanApproving}
-                                title="Remove all manual plan allocations while preserving manual routes and AI plan"
-                            >
-                                {manualAllocResetting ? "Resetting Allocations..." : "Reset Manual Plan Allocation"}
-                            </button>
-
-                            {/* PROMINENT REVIEW-ONLY AI RECOMMENDATION BUTTON */}
-                            <button
-                                type="button"
-                                className="ai-rec-trigger-btn"
-                                onClick={handleFetchManualRecommendations}
-                                disabled={recommendationsLoading || manualRoutesLoading || displayedManualRoutes.length === 0}
-                                title="AI Agent analyzes your saved manual routes for coverage, fleet utilization, and seat optimization without modifying anything"
-                            >
-                                {recommendationsLoading ? "⏳ Analyzing Routes..." : "✨ AI Recommendation"}
-                            </button>
-
-                            <button
-                                type="button"
-                                className={`select-plan-btn admin ${selectedPlanType === "ADMIN" ? "selected" : ""}`}
-                                onClick={() => {
-                                    handleSelectAdminPlan();
-                                    const el = document.querySelector(".final-decision");
-                                    if (el) el.scrollIntoView({ behavior: "smooth" });
-                                }}
-                                disabled={
-                                    manualRoutesLoading ||
-                                    displayedManualRoutes.length === 0
-                                }
-                                style={{
-                                    padding: "12px 18px",
-                                    borderRadius: "10px",
-                                    fontSize: "13px",
-                                    fontWeight: "700"
-                                }}
-                            >
-                                {selectedPlanType === "ADMIN"
-                                    ? "✓ Admin Plan Selected"
-                                    : "👨‍💼 Select in Decision Options"}
-                            </button>
-                        </div>
-
-                        {/* AI RECOMMENDATION REVIEW-ONLY PANEL */}
-                        {showRecommendationsPanel && manualRecommendations && (
-                            <div className="manual-rec-panel">
-                                <div className="manual-rec-header">
-                                    <div className="manual-rec-title-wrap">
-                                        <span className="manual-rec-sparkle">✨</span>
-                                        <div>
-                                            <h3>AI Recommendations for {manualPlanDirection} Manual Plan</h3>
-                                            <p className="manual-rec-subtitle">
-                                                Intelligent review of stopping coverage, fleet sizing, passenger allocation &amp; route flow.
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="manual-rec-header-actions">
-                                        <span className="rec-review-only-badge">
-                                            🛡️ Review-Only • Advisory
-                                        </span>
-                                        <button
-                                            type="button"
-                                            className="rec-close-btn"
-                                            onClick={() => setShowRecommendationsPanel(false)}
-                                            title="Hide recommendations panel"
-                                        >
-                                            ✕ Hide
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="rec-advisory-notice">
-                                    <span className="rec-advisory-icon">ℹ️</span>
-                                    <div>
-                                        <strong>Non-Destructive Review Notice:</strong> These recommendations are for administrator review only.
-                                        No routes, stops, bus assignments, or student allocations have been altered.
-                                        Manual routes remain securely saved in MongoDB. Approval and allocation remain explicit actions in AI Route Management.
-                                    </div>
-                                </div>
-
-                                {manualRecommendations.summary && (
-                                    <div className="rec-summary-bar">
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val">{manualRecommendations.summary.totalRecommendations ?? 0}</span>
-                                            <span className="rec-summary-lbl">Recommendations</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val high-count">{manualRecommendations.summary.highPriority ?? 0}</span>
-                                            <span className="rec-summary-lbl">High Priority</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val med-count">{manualRecommendations.summary.mediumPriority ?? 0}</span>
-                                            <span className="rec-summary-lbl">Medium Priority</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val">{manualRecommendations.summary.affectedStudents ?? 0}</span>
-                                            <span className="rec-summary-lbl">Affected Students</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val" style={{ color: "#d97706" }}>
-                                                {manualRecommendations.summary.currentStandbyStudents ?? manualRecommendations.summary.currentUnallocatedStudents ?? 0}
-                                            </span>
-                                            <span className="rec-summary-lbl">Current Standby</span>
-                                        </div>
-                                        <div className="rec-summary-item" style={{ background: (manualRecommendations.summary.projectedStandbyStudents ?? 0) === 0 ? "#ecfdf5" : "#fef2f2" }}>
-                                            <span className="rec-summary-val" style={{ color: (manualRecommendations.summary.projectedStandbyStudents ?? 0) === 0 ? "#16a34a" : "#dc2626" }}>
-                                                {manualRecommendations.summary.projectedStandbyStudents ?? manualRecommendations.summary.projectedUnallocatedStudents ?? 0}
-                                            </span>
-                                            <span className="rec-summary-lbl">Projected Standby</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val">
-                                                {manualRecommendations.summary.currentFleetUtilization ?? manualRecommendations.summary.fleetUtilization ?? 0}%
-                                                {manualRecommendations.summary.projectedFleetUtilization ? ` → ${manualRecommendations.summary.projectedFleetUtilization}%` : ""}
-                                            </span>
-                                            <span className="rec-summary-lbl">Fleet Utilization</span>
-                                        </div>
-                                        <div className="rec-summary-item">
-                                            <span className="rec-summary-val" style={{ color: "#059669" }}>
-                                                {manualRecommendations.summary.roadVerifiedRoutesCount ?? 0}
-                                            </span>
-                                            <span className="rec-summary-lbl">Road Verified</span>
-                                        </div>
-                                        {manualRecommendations.summary.potentialCapacityImprovement && (
-                                            <div className="rec-summary-item highlight" style={{ gridColumn: "span 2" }}>
-                                                <span className="rec-summary-val cap-imp">{manualRecommendations.summary.potentialCapacityImprovement}</span>
-                                                <span className="rec-summary-lbl">Plan-Level Impact</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {manualRecommendations.recommendations?.length === 0 ? (
-                                    <div className="rec-empty-box">
-                                        <span style={{ fontSize: "28px" }}>✅</span>
-                                        <div>
-                                            <h4>No Route or Capacity Bottlenecks Detected</h4>
-                                            <p>All confirmed students have viable stopping coverage, fleet capacity is well balanced, and no vehicle conflicts were detected for the {manualPlanDirection} manual plan.</p>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="rec-cards-list">
-                                        {manualRecommendations.recommendations.map((rec, rIdx) => {
-                                            const priorityClass = rec.priority === "HIGH" ? "priority-high" : (rec.priority === "MEDIUM" ? "priority-med" : "priority-low");
-                                            const categoryIcon = {
-                                                COVERAGE: "📍",
-                                                CAPACITY: "🚌",
-                                                SHARED_STOP: "🔄",
-                                                ALLOCATION: "👥",
-                                                FLEET_CONFLICT: "⚠️",
-                                                ROUTE_FLOW: "🛣️",
-                                                ROUTE_MODIFICATION: "🛣️",
-                                                NEW_ROUTE: "🌟",
-                                                BUS_SWAP: "🚌",
-                                                ROUTE_SPLIT: "✂️"
-                                            }[rec.type || rec.category] || "💡";
-
-                                            const roadVal = rec.roadValidation || {};
-                                            const capAnalysis = rec.capacityAnalysis || {};
-                                            const bus = rec.bus || {};
-
-                                            return (
-                                                <div key={rec.id || rIdx} className={`rec-card ${priorityClass}`}>
-                                                    <div className="rec-card-header">
-                                                        <div className="rec-card-title-group">
-                                                            <span className="rec-category-tag">
-                                                                {categoryIcon} {rec.category?.replace(/_/g, " ") || rec.type}
-                                                            </span>
-                                                            <span className="rec-complete-route-badge">
-                                                                🛡️ Complete Route Recommendation
-                                                            </span>
-                                                            <h4 className="rec-title">{rec.title}</h4>
-                                                        </div>
-                                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                                                            {roadVal.roadRouteStatus && (
-                                                                <span className={`rec-road-badge ${roadVal.isRoadVerified ? "verified" : "fallback"}`}>
-                                                                    {roadVal.isRoadVerified ? "✓ OSRM Road Verified" : (roadVal.roadRouteStatus || "Road validation unavailable — fallback estimate used")}
-                                                                    {roadVal.distanceKm ? ` (${roadVal.distanceKm} km • ~${roadVal.durationMin || 0} min)` : ""}
-                                                                </span>
-                                                            )}
-                                                            <span className="rec-continuity-badge">
-                                                                ✓ Continuous Sequence
-                                                            </span>
-                                                            <span className={`rec-priority-badge ${priorityClass}`}>
-                                                                {rec.priority} PRIORITY
-                                                            </span>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="rec-meta-tags">
-                                                        {rec.affectedRoute && (
-                                                            <span className="rec-meta-chip route-chip">
-                                                                🛣️ Route: {rec.affectedRoute}
-                                                            </span>
-                                                        )}
-                                                        {(bus.suggestedVehicleName || rec.affectedBus) && (
-                                                            <span className="rec-meta-chip" style={{ background: "#f1f5f9", color: "#1e293b", fontWeight: "700" }}>
-                                                                🚌 Bus: {bus.suggestedVehicleName && bus.currentVehicleName && bus.suggestedVehicleName !== bus.currentVehicleName
-                                                                    ? `${bus.currentVehicleName} → ${bus.suggestedVehicleName} (${bus.capacity} seats)`
-                                                                    : `${bus.suggestedVehicleName || rec.affectedBus} (${bus.capacity || 0} seats)`}
-                                                            </span>
-                                                        )}
-                                                        {rec.affectedArea && (
-                                                            <span className="rec-meta-chip area-chip">
-                                                                📍 Area: {rec.affectedArea}
-                                                            </span>
-                                                        )}
-                                                        {rec.affectedStudents > 0 && (
-                                                            <span className="rec-meta-chip warning-chip">
-                                                                👥 {rec.affectedStudents} Affected Students
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Exact Student-to-Stop Matching Breakdown (for PASSENGER_REALLOCATION) */}
-                                                    {Array.isArray(rec.studentBreakdown) && rec.studentBreakdown.length > 0 && (
-                                                        <div className="rec-student-breakdown-card">
-                                                            <div className="rec-breakdown-header">
-                                                                👥 Exact Verified Student-to-Stop Matches ({rec.affectedStudents} Students):
-                                                            </div>
-                                                            <div className="rec-breakdown-list">
-                                                                {rec.studentBreakdown.map((item, bIdx) => (
-                                                                    <span key={bIdx} className="rec-breakdown-chip">
-                                                                        📍 <strong>{item.stopName}</strong>: {item.studentCount} student{item.studentCount !== 1 ? "s" : ""}
-                                                                        {item.matchedRouteStop && item.matchedRouteStop.toLowerCase() !== item.stopName.toLowerCase() && (
-                                                                            <span className="rec-matched-stop-tag"> (board at {item.matchedRouteStop})</span>
-                                                                        )}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Dual Route Display for Route Splits */}
-                                                    {rec.splitRoute1 && rec.splitRoute2 && (
-                                                        <div className="rec-split-routes-container">
-                                                            <div className="rec-split-box">
-                                                                <div className="rec-split-title">
-                                                                    🚌 {rec.splitRoute1.routeName} • {rec.splitRoute1.vehicleName} ({rec.splitRoute1.capacity} seats)
-                                                                </div>
-                                                                <div className="rec-split-metrics">
-                                                                    Demand: {rec.splitRoute1.demand} • Remaining: +{rec.splitRoute1.remainingSeats} free
-                                                                    {rec.splitRoute1.roadValidation?.distanceKm ? ` • ${rec.splitRoute1.roadValidation.distanceKm} km (~${rec.splitRoute1.roadValidation.durationMin || 0} min)` : ""}
-                                                                </div>
-                                                                <div className="rec-route-flow">
-                                                                    {rec.splitRoute1.stops.map((pt, pIdx) => (
-                                                                        <span key={`s1-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                                                                            <span className={`rec-stop-badge mini ${pt.isHub ? "hub" : ""}`}>
-                                                                                {pt.isHub ? "🏛️" : `#${pIdx + 1}`} {pt.name}
-                                                                            </span>
-                                                                            {pIdx < rec.splitRoute1.stops.length - 1 && <span className="rec-stop-arrow">→</span>}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                            <div className="rec-split-box">
-                                                                <div className="rec-split-title">
-                                                                    🚌 {rec.splitRoute2.routeName} • {rec.splitRoute2.vehicleName} ({rec.splitRoute2.capacity} seats)
-                                                                </div>
-                                                                <div className="rec-split-metrics">
-                                                                    Demand: {rec.splitRoute2.demand} • Remaining: +{rec.splitRoute2.remainingSeats} free
-                                                                    {rec.splitRoute2.roadValidation?.distanceKm ? ` • ${rec.splitRoute2.roadValidation.distanceKm} km (~${rec.splitRoute2.roadValidation.durationMin || 0} min)` : ""}
-                                                                </div>
-                                                                <div className="rec-route-flow">
-                                                                    {rec.splitRoute2.stops.map((pt, pIdx) => (
-                                                                        <span key={`s2-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                                                                            <span className={`rec-stop-badge mini ${pt.isHub ? "hub" : ""}`}>
-                                                                                {pt.isHub ? "🏛️" : `#${pIdx + 1}`} {pt.name}
-                                                                            </span>
-                                                                            {pIdx < rec.splitRoute2.stops.length - 1 && <span className="rec-stop-arrow">→</span>}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Dual Route Display for Shared Stops */}
-                                                    {rec.routeA && rec.routeB && (
-                                                        <div className="rec-shared-routes-container">
-                                                            <div className="rec-split-box">
-                                                                <div className="rec-split-title">
-                                                                    Route A: {rec.routeA.routeName} • {rec.routeA.vehicleName} ({rec.routeA.capacity} seats)
-                                                                </div>
-                                                                <div className="rec-split-metrics">
-                                                                    Demand: {rec.routeA.demand} • Remaining: +{rec.routeA.remainingSeats} free
-                                                                </div>
-                                                                <div className="rec-route-flow">
-                                                                    {rec.routeA.currentRoute.map((pt, pIdx) => {
-                                                                        const isShared = normalizeStopName(pt.name) === normalizeStopName(rec.affectedArea);
-                                                                        return (
-                                                                            <span key={`ra-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                                                                                <span className={`rec-stop-badge mini ${pt.isHub ? "hub" : ""} ${isShared ? "shared-highlight" : ""}`}>
-                                                                                    {pt.isHub ? "🏛️" : `#${pIdx + 1}`} {pt.name}
-                                                                                    {isShared && " 🔄"}
-                                                                                </span>
-                                                                                {pIdx < rec.routeA.currentRoute.length - 1 && <span className="rec-stop-arrow">→</span>}
-                                                                            </span>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </div>
-                                                            <div className="rec-split-box">
-                                                                <div className="rec-split-title">
-                                                                    Route B: {rec.routeB.routeName} • {rec.routeB.vehicleName} ({rec.routeB.capacity} seats)
-                                                                </div>
-                                                                <div className="rec-split-metrics">
-                                                                    Demand: {rec.routeB.demand} • Remaining: +{rec.routeB.remainingSeats} free
-                                                                </div>
-                                                                <div className="rec-route-flow">
-                                                                    {rec.routeB.currentRoute.map((pt, pIdx) => {
-                                                                        const isShared = normalizeStopName(pt.name) === normalizeStopName(rec.affectedArea);
-                                                                        return (
-                                                                            <span key={`rb-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                                                                                <span className={`rec-stop-badge mini ${pt.isHub ? "hub" : ""} ${isShared ? "shared-highlight" : ""}`}>
-                                                                                    {pt.isHub ? "🏛️" : `#${pIdx + 1}`} {pt.name}
-                                                                                    {isShared && " 🔄"}
-                                                                                </span>
-                                                                                {pIdx < rec.routeB.currentRoute.length - 1 && <span className="rec-stop-arrow">→</span>}
-                                                                            </span>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Continuous Route Sequences: Current vs Proposed */}
-                                                    {rec.currentRoute && rec.currentRoute.length > 0 && rec.type !== "NEW_ROUTE" && !rec.splitRoute1 && !rec.routeA && (
-                                                        <div className="rec-route-section">
-                                                            <div className="rec-route-header">
-                                                                <span className="rec-route-label">
-                                                                    🛣️ Current Ordered Route:
-                                                                </span>
-                                                                <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                                                    {rec.currentRoute.length} Stops
-                                                                </span>
-                                                            </div>
-                                                            <div className="rec-route-flow">
-                                                                {rec.currentRoute.map((pt, pIdx) => (
-                                                                    <span key={`curr-${pt.name}-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                                                                        <span className={`rec-stop-badge ${pt.isHub ? "hub" : "current-stop"}`}>
-                                                                            {pt.isHub ? "🏛️" : `#${pIdx + 1}`} {pt.name}
-                                                                            {pt.userCount > 0 && (
-                                                                                <span style={{ color: "#2563eb", fontWeight: "800", marginLeft: "2px" }}>
-                                                                                    ({pt.userCount})
-                                                                                </span>
-                                                                            )}
-                                                                        </span>
-                                                                        {pIdx < rec.currentRoute.length - 1 && (
-                                                                            <span className="rec-stop-arrow">→</span>
-                                                                        )}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {rec.recommendedRoute && rec.recommendedRoute.length > 0 && !rec.splitRoute1 && !rec.routeA && (
-                                                        <div className="rec-route-section" style={{ borderLeft: "3px solid #6366f1" }}>
-                                                            <div className="rec-route-header">
-                                                                <span className="rec-route-label" style={{ color: "#4338ca" }}>
-                                                                    ✨ Proposed Continuous Route Sequence:
-                                                                </span>
-                                                                <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                                                    {rec.recommendedRoute.length} Stops
-                                                                    {roadVal.distanceKm ? ` • ${roadVal.distanceKm} km` : ""}
-                                                                    {roadVal.detourDistanceKm > 0 ? ` (+${roadVal.detourDistanceKm} km detour)` : ""}
-                                                                </span>
-                                                            </div>
-                                                            <div className="rec-route-flow">
-                                                                {rec.recommendedRoute.map((pt, pIdx) => {
-                                                                    const isNew = Boolean(pt.isNewStop);
-                                                                    const isHub = Boolean(pt.isHub || pt.routePointType === "hub");
-                                                                    return (
-                                                                        <span key={`rec-${pt.name}-${pIdx}`} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                                                                            <span className={`rec-stop-badge ${isHub ? "hub" : (isNew ? "new-stop" : "")}`}>
-                                                                                {isHub ? "🏛️" : (isNew ? "✨" : `#${pIdx + 1}`)} {pt.name}
-                                                                                {isNew && (
-                                                                                    <strong style={{ color: "#7e22ce", marginLeft: "2px" }}>[NEW]</strong>
-                                                                                )}
-                                                                                {pt.userCount > 0 && (
-                                                                                    <span style={{ color: "#2563eb", fontWeight: "800", marginLeft: "2px" }}>
-                                                                                        ({pt.userCount})
-                                                                                    </span>
-                                                                                )}
-                                                                            </span>
-                                                                            {pIdx < rec.recommendedRoute.length - 1 && (
-                                                                                <span className="rec-stop-arrow">→</span>
-                                                                            )}
-                                                                        </span>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Strict Capacity & Demand Analysis Grid */}
-                                                    {capAnalysis.capacity > 0 && (
-                                                        <div className="rec-capacity-card">
-                                                            <div className="rec-capacity-header">
-                                                                <span className="rec-capacity-title">
-                                                                    🚌 Strict Capacity &amp; Demand Validation
-                                                                </span>
-                                                                <span className={`rec-capacity-status ${capAnalysis.isFullyAccommodated ? "accommodated" : "shortage"}`}>
-                                                                    {capAnalysis.isFullyAccommodated
-                                                                        ? "✓ 100% Demand Accommodated"
-                                                                        : `⚠️ ${capAnalysis.standbyAfterRecommendation} Students Standby Shortage`}
-                                                                </span>
-                                                            </div>
-                                                            <div className="rec-capacity-grid">
-                                                                <div className="rec-capacity-cell">
-                                                                    <span className="rec-cap-label">Current Demand</span>
-                                                                    <span className="rec-cap-val">{capAnalysis.currentDemand ?? 0}</span>
-                                                                </div>
-                                                                <div className="rec-capacity-cell">
-                                                                    <span className="rec-cap-label">Additional Demand</span>
-                                                                    <span className="rec-cap-val positive">+{capAnalysis.additionalDemand ?? 0}</span>
-                                                                </div>
-                                                                <div className="rec-capacity-cell">
-                                                                    <span className="rec-cap-label">Total Demand</span>
-                                                                    <span className="rec-cap-val">{capAnalysis.totalExpectedDemand ?? 0}</span>
-                                                                </div>
-                                                                <div className="rec-capacity-cell">
-                                                                    <span className="rec-cap-label">Bus Capacity</span>
-                                                                    <span className="rec-cap-val bus-name">
-                                                                        {bus.suggestedVehicleName || bus.currentVehicleName || "Bus"} ({capAnalysis.capacity}s)
-                                                                    </span>
-                                                                </div>
-                                                                <div className="rec-capacity-cell">
-                                                                    <span className="rec-cap-label">
-                                                                        {capAnalysis.remainingSeats > 0 ? "Remaining Seats" : "Standby Shortage"}
-                                                                    </span>
-                                                                    <span className={`rec-cap-val ${capAnalysis.remainingSeats > 0 ? "positive" : "negative"}`}>
-                                                                        {capAnalysis.remainingSeats > 0
-                                                                            ? `+${capAnalysis.remainingSeats} free`
-                                                                            : `-${capAnalysis.standbyAfterRecommendation} short`}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    <div className="rec-card-body">
-                                                        <div className="rec-detail-row">
-                                                            <span className="rec-detail-label">Current Situation:</span>
-                                                            <span className="rec-detail-text">{rec.currentSituation}</span>
-                                                        </div>
-
-                                                        <div className="rec-detail-row highlight-row">
-                                                            <span className="rec-detail-label">Suggested Improvement:</span>
-                                                            <span className="rec-detail-text suggestion">{rec.suggestedImprovement}</span>
-                                                        </div>
-
-                                                        <div className="rec-detail-row">
-                                                            <span className="rec-detail-label">Reason &amp; Rationale:</span>
-                                                            <span className="rec-detail-text">{rec.reason}</span>
-                                                        </div>
-
-                                                        <div className="rec-detail-row">
-                                                            <span className="rec-detail-label">Expected Benefit:</span>
-                                                            <span className="rec-detail-text benefit">✓ {rec.expectedBenefit}</span>
-                                                        </div>
-
-                                                        {rec.constraints && (
-                                                            <div className="rec-detail-row constraint-row">
-                                                                <span className="rec-detail-label">Constraints &amp; Practical Notes:</span>
-                                                                <span className="rec-detail-text constraint">⚠️ {rec.constraints}</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Interactive Map Visualizer Trigger & Non-destructive Notice */}
-                                                    <div className="rec-card-actions">
-                                                        <button
-                                                            type="button"
-                                                            className="rec-view-map-btn"
-                                                            onClick={() => {
-                                                                setSelectedMapRec(rec);
-                                                                setIsMapModalOpen(true);
-                                                            }}
-                                                            title="Inspect complete route and stops on interactive Leaflet map"
-                                                        >
-                                                            🗺️ View Route on Map
-                                                        </button>
-                                                        <span className="rec-advisory-pill">
-                                                            🛡️ Review-Only: Modify route in Route Management to apply.
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                    </div>
-                </div>
-            </section>
-
-            {/* Section 4: Final Decision */}
-            <section className="final-decision">
-
-                <div className="final-heading">
-
-                    <span>
-                        FINAL DECISION
-                    </span>
-
-                    <h2>
-                        Administrator Confirmation
-                    </h2>
-
-                    <p>
-                        The AI only recommends. The
-                        administrator makes the final
-                        transportation plan choice.
-                    </p>
-
-                </div>
-
-                <div className="decision-options">
-
-                    <div
-                        className={`decision-option ${selectedPlanType ===
-                            "AI"
-                            ? "active"
-                            : ""
-                            }`}
-                        onClick={
-                            aiPlan
-                                ? handleSelectAIPlan
-                                : undefined
-                        }
-                    >
-
-                        <span className="decision-icon">
-                            🤖
-                        </span>
-
-                        <div>
-                            <small>
-                                OPTION 1
-                            </small>
-
-                            <h3>
-                                {aiPlan && (aiUnassigned > 0 || (Array.isArray(aiPlan?.warnings) && aiPlan.warnings.length > 0) || (Array.isArray(aiBuses) && aiBuses.some((b) => b.isFallback || !b.isRoadVerified)))
-                                    ? "AI Recommended Plan — Review Required"
-                                    : "AI Recommended Plan"}
-                            </h3>
-
-                            <p>
-                                {aiPlan
-                                    ? (aiBuses.length > 0 && aiBuses.every((b) => b.isRoadVerified)
-                                        ? `${aiBuses.length} continuous bus corridors (Continuous OSRM road progression verified)`
-                                        : `${aiBuses.length} bus corridors (Road validation unavailable — fallback estimate used)`)
-                                    : "Generate AI plan above first"}
-                            </p>
-                        </div>
-
-                        {selectedPlanType ===
-                            "AI" && (
-                                <strong className="selected-check">
-                                    ✓
-                                </strong>
-                            )}
-
-                    </div>
-
-                    <div className="decision-or">
-                        OR
-                    </div>
-
-                    <div
-                        className={`decision-option ${selectedPlanType ===
-                            "ADMIN"
-                            ? "active admin-active"
-                            : ""
-                            }`}
-                        onClick={
-                            displayedManualRoutes.length
-                                ? handleSelectAdminPlan
-                                : undefined
-                        }
-                    >
-
-                        <span className="decision-icon">
-                            👨‍💼
-                        </span>
-
-                        <div>
-                            <small>
-                                OPTION 2
-                            </small>
-
-                            <h3>
-                                Admin Manual Plan
-                            </h3>
-
-                            <p>
-                                {
-                                    displayedManualRoutes.length
-                                }{" "}
-                                assigned manual routes
-                            </p>
-                        </div>
-
-                        {selectedPlanType ===
-                            "ADMIN" && (
-                                <strong className="selected-check">
-                                    ✓
-                                </strong>
-                            )}
-
-                    </div>
-
-                </div>
-
-                <div className="final-save">
-
-                    <div className="selected-final-plan">
-
-                        <span>
-                            Selected Plan for
-                            Execution:
-                        </span>
-
-                        <strong>
-                            {selectedPlanType ===
-                                "AI"
-                                ? "🤖 AI Recommended Plan"
-                                : selectedPlanType ===
-                                    "ADMIN"
-                                    ? "👨‍💼 Admin Manual Plan"
-                                    : isPlanSaved
-                                    ? `✓ ${lastSelection?.planType === "ADMIN" ? "Admin Manual" : "AI Recommended"} Plan (Saved & Active)`
-                                    : "No plan selected"}
-                        </strong>
-
-                    </div>
-
-                    <button
-                        className={`save-final-btn ${isPlanSaved && !selectedPlanType ? "saved-active" : ""}`}
-                        onClick={
-                            handleSaveFinalPlan
-                        }
-                        disabled={
-                            (!selectedPlanType && !isPlanSaved) ||
-                            savingSelection
-                        }
-                    >
-                        {savingSelection
-                            ? "⏳ Saving Plan to Database..."
-                            : selectedPlanType === "AI"
-                            ? "✓ Save & Confirm AI Transportation Plan"
-                            : selectedPlanType === "ADMIN"
-                            ? "✓ Save & Confirm Admin Manual Plan"
-                            : isPlanSaved
-                            ? "✓ Plan Confirmed & Saved (Active Until Reset)"
-                            : "✓ Save Final Transportation Plan"}
-                    </button>
-
-                </div>
-
-                {selectionMessage && (
-                    <div
-                        className={`final-message ${
-                            selectionMessage.toLowerCase().includes("fail") ||
-                            selectionMessage.toLowerCase().includes("error") ||
-                            selectionMessage.toLowerCase().includes("unable")
-                                ? "error"
-                                : "success"
-                            }`}
-                    >
-                        {selectionMessage}
-                    </div>
-                )}
-
-                {lastSelection && (
-                    <div className="last-selection">
-
-                        Current active confirmed plan:{" "}
-
-                        <strong>
-                            {lastSelection.planType ===
-                                "AI"
-                                ? "🤖 AI Recommended Plan"
-                                : "👨‍💼 Admin Manual Plan"}
-                        </strong>{" "}
-
-                        (Selected on{" "}
-                        {new Date(
-                            lastSelection.selectedAt ||
-                            lastSelection.createdAt
-                        ).toLocaleString()}
-                        )
-
-                    </div>
-                )}
-
-            </section>
-
             {/* Safe Reset Confirmation Modal */}
             <ResetRouteModal
                 isOpen={showResetModal}
@@ -4202,15 +3121,6 @@ export default function AIAgent() {
                 onConfirm={handleConfirmReset}
                 isResetting={resetting}
                 direction={planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD")}
-            />
-
-            {/* Reset Manual Plan Allocation Confirmation Modal */}
-            <ResetManualAllocationModal
-                isOpen={showManualAllocResetModal}
-                onClose={() => !manualAllocResetting && setShowManualAllocResetModal(false)}
-                onConfirm={handleResetManualPlanAllocations}
-                isResetting={manualAllocResetting}
-                direction={manualPlanData?.direction || manualPlanDirection || planDirectionTab || "INWARD"}
             />
 
             {/* Select Generated Route Modal */}
@@ -4221,13 +3131,82 @@ export default function AIAgent() {
                 onConfirmSelect={handleSelectAiRouteToView}
             />
 
-            {/* Recommended Route Leaflet Map Modal */}
-            <RecommendedRouteMapModal
-                isOpen={isMapModalOpen}
-                onClose={() => setIsMapModalOpen(false)}
-                recommendation={selectedMapRec}
-                direction={manualPlanDirection}
-            />
+            {/* Modal to configure inward bus starting place */}
+            {showStartPlaceModal && (
+                <div className="start-modal-overlay">
+                    <div className="start-modal-dialog">
+                        <div className="start-modal-header">
+                            <h3>{editingStartPlace ? `Edit Inward Starting Place — ${editingStartPlace.busName}` : "Configure Inward Bus Starting Place"}</h3>
+                            <button
+                                type="button"
+                                className="start-modal-close"
+                                onClick={() => setShowStartPlaceModal(false)}
+                            >
+                                &times;
+                            </button>
+                        </div>
+
+                        {modalError && (
+                            <div className="start-modal-error">
+                                ⚠ {modalError}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSaveStartingPlace} className="start-modal-form">
+                            <div className="start-modal-group">
+                                <label>Bus</label>
+                                <select
+                                    className="start-modal-select"
+                                    value={modalBusId}
+                                    onChange={(e) => setModalBusId(e.target.value)}
+                                    disabled={Boolean(editingStartPlace)}
+                                >
+                                    <option value="">-- Select Available Bus --</option>
+                                    {(data?.availableVehicles || data?.vehicles || []).map((b) => (
+                                        <option key={b._id || b.id} value={String(b._id || b.id)}>
+                                            {getBusName(b)} - {getBusCapacity(b)} Seats
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="start-modal-group">
+                                <label>Starting Hub / Location</label>
+                                <LocationSearchBox
+                                    placeholder="Search starting hub: bus stand, area, junction, terminal..."
+                                    selectedLocation={modalLocation}
+                                    onSelectLocation={(loc) => setModalLocation(loc)}
+                                    onClear={() => setModalLocation(null)}
+                                />
+                                {modalLocation && (
+                                    <div className="loc-selected-summary">
+                                        <span>📍</span>
+                                        <span>{modalLocation.name} ({Number(modalLocation.latitude).toFixed(4)}, {Number(modalLocation.longitude).toFixed(4)})</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="start-modal-actions">
+                                <button
+                                    type="button"
+                                    className="start-modal-btn-cancel"
+                                    onClick={() => setShowStartPlaceModal(false)}
+                                    disabled={modalSaving}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="start-modal-btn-submit"
+                                    disabled={modalSaving || !modalBusId || !modalLocation}
+                                >
+                                    {modalSaving ? "Saving..." : "Save Bus Starting Place"}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
 
         </div>
     );

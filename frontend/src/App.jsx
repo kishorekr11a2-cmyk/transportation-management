@@ -14,6 +14,9 @@ const VehicleManagement= lazy(() => import("./pages/VehicleManagement"));
 const RouteManagement  = lazy(() => import("./pages/RouteManagement"));
 const ScheduleManagement=lazy(() => import("./pages/ScheduleManagement"));
 const AIAgent          = lazy(() => import("./pages/AIAgent"));
+const AdminManualPlan  = lazy(() => import("./pages/AdminManualPlan"));
+const PlanConfirmation = lazy(() => import("./pages/PlanConfirmation"));
+const InwardStartingPlaces = lazy(() => import("./pages/InwardStartingPlaces"));
 
 /* Minimal inline fallback — keeps the screen stable while the chunk loads */
 const PageLoader = () => (
@@ -47,6 +50,12 @@ function App() {
           <Route path="/schedule"        element={<ScheduleManagement />} />
           <Route path="/excel-upload"    element={<ExcelUpload />} />
           <Route path="/ai-agent"        element={<AIAgent />} />
+          <Route path="/admin/manual-plan" element={<AdminManualPlan />} />
+          <Route path="/manual-plan"     element={<AdminManualPlan />} />
+          <Route path="/admin/plan-confirmation" element={<PlanConfirmation />} />
+          <Route path="/plan-confirmation" element={<PlanConfirmation />} />
+          <Route path="/admin/inward-starting-places" element={<InwardStartingPlaces />} />
+          <Route path="/inward-starting-places" element={<InwardStartingPlaces />} />
         </Routes>
       </Suspense>
 

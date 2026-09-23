@@ -1,58 +1,87 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
+import connectDB from "./config/db.js";
+import { generateAgentRecommendations } from "./services/aiAgentService.js";
+import User from "./models/User.js";
+
 dotenv.config();
 
-async function main() {
-    await mongoose.connect(process.env.MONGO_URI);
-    const User = mongoose.model("User", new mongoose.Schema({}, { strict: false }));
-    
-    const allUsers = await User.find({}).lean();
-    console.log("Total users:", allUsers.length);
+const klnce = {
+    name: "K. L. N. College of Engineering",
+    address: "Pottapalayam, Sivagangai / Madurai - 630612",
+    latitude: 9.8515,
+    longitude: 78.1882
+};
 
-    const travelStatusCounts = {};
-    const allocationStatusCounts = {};
-    const lateUsers = [];
+async function findMissingStudent() {
+    await connectDB();
 
-    for (const u of allUsers) {
-        travelStatusCounts[u.travelStatus] = (travelStatusCounts[u.travelStatus] || 0) + 1;
-        allocationStatusCounts[u.allocationStatus] = (allocationStatusCounts[u.allocationStatus] || 0) + 1;
-        if (u.lateResponse || u.isLateResponse || u.lateResponseDetected) {
-            lateUsers.push({
-                userId: u.userId,
-                name: u.name,
-                travelStatus: u.travelStatus,
-                allocationStatus: u.allocationStatus,
-                isAllocated: u.isAllocated,
-                lateResponse: u.lateResponse,
-                isLateResponse: u.isLateResponse,
-                lateResponseDetected: u.lateResponseDetected,
-                travelResponseSubmittedAt: u.travelResponseSubmittedAt,
-                lateResponseAt: u.lateResponseAt,
-                lateResponseNotifiedEventKeys: u.lateResponseNotifiedEventKeys,
-                hasVehicle: Boolean(u.assignedVehicle || u.allocatedBus?.vehicleName)
-            });
-        }
-    }
+    const comingStudents = await User.find({ role: "student", travelStatus: "Coming" }).lean();
+    console.log("Total Coming students in DB:", comingStudents.length);
 
-    console.log("Travel Statuses:", travelStatusCounts);
-    console.log("Allocation Statuses:", allocationStatusCounts);
-    console.log("Late users count:", lateUsers.length);
-    console.log("Late users detail:", JSON.stringify(lateUsers, null, 2));
+    const inward = await generateAgentRecommendations({
+        tripMode: "TO_DESTINATION",
+        destination: klnce
+    });
 
-    const events = await mongoose.connection.db.collection("late_response_events").find({}).toArray();
-    console.log("Late response events count:", events.length);
-    console.log("Events:", JSON.stringify(events, null, 2));
+    const inwardAssignedUserIds = new Set();
+    inward.aiPlan.buses.forEach(b => {
+        b.users.forEach(u => inwardAssignedUserIds.add(String(u).toLowerCase().trim()));
+        b.stops.forEach(s => {
+            (s.userIds || []).forEach(uid => inwardAssignedUserIds.add(String(uid).toLowerCase().trim()));
+        });
+    });
 
-    const activePlans = await mongoose.connection.db.collection("ai_selected_plans").find({}).toArray();
-    console.log("Approved plans count:", activePlans.length);
-    for (const p of activePlans) {
-        console.log("Plan:", p.planType, p.direction, p.selectedAt);
-    }
+    console.log("Inward assigned user IDs count:", inwardAssignedUserIds.size);
+
+    const unassignedInward = comingStudents.filter(s => {
+        const id1 = String(s._id).toLowerCase().trim();
+        const id2 = String(s.userId || "").toLowerCase().trim();
+        return !inwardAssignedUserIds.has(id1) && !inwardAssignedUserIds.has(id2);
+    });
+
+    console.log("Unassigned students in Inward:", unassignedInward.map(s => ({
+        id: s._id,
+        userId: s.userId,
+        name: s.name,
+        stoppings: s.stoppings,
+        city: s.city,
+        state: s.state,
+        country: s.country
+    })));
+
+    const outward = await generateAgentRecommendations({
+        tripMode: "FROM_SOURCE",
+        source: klnce
+    });
+
+    const outwardAssignedUserIds = new Set();
+    outward.aiPlan.buses.forEach(b => {
+        b.users.forEach(u => outwardAssignedUserIds.add(String(u).toLowerCase().trim()));
+        b.stops.forEach(s => {
+            (s.userIds || []).forEach(uid => outwardAssignedUserIds.add(String(uid).toLowerCase().trim()));
+        });
+    });
+
+    console.log("Outward assigned user IDs count:", outwardAssignedUserIds.size);
+
+    const unassignedOutward = comingStudents.filter(s => {
+        const id1 = String(s._id).toLowerCase().trim();
+        const id2 = String(s.userId || "").toLowerCase().trim();
+        return !outwardAssignedUserIds.has(id1) && !outwardAssignedUserIds.has(id2);
+    });
+
+    console.log("Unassigned students in Outward:", unassignedOutward.map(s => ({
+        id: s._id,
+        userId: s.userId,
+        name: s.name,
+        stoppings: s.stoppings,
+        city: s.city,
+        state: s.state,
+        country: s.country
+    })));
 
     process.exit(0);
 }
 
-main().catch(err => {
-    console.error(err);
-    process.exit(1);
-});
+findMissingStudent();

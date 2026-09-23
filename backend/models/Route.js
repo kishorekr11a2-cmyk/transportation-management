@@ -82,7 +82,7 @@ const routeSchema = new mongoose.Schema(
 
         direction: {
             type: String,
-            enum: ["INWARD", "OUTWARD"],
+            enum: ["INWARD", "OUTWARD", "BOTH"],
             default: "INWARD",
             index: true
         }

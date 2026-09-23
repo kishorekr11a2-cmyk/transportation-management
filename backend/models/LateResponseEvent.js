@@ -69,6 +69,29 @@ const lateResponseEventSchema = new mongoose.Schema(
             default: Date.now
         },
 
+        responseEventId: {
+            type: String,
+            default: null,
+            index: true,
+            trim: true
+        },
+
+        responseAt: {
+            type: Date,
+            default: Date.now
+        },
+
+        detectedAt: {
+            type: Date,
+            default: Date.now
+        },
+
+        resolvedPlanId: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
         planApprovedAt: {
             type: Date,
             default: null
@@ -88,8 +111,10 @@ const lateResponseEventSchema = new mongoose.Schema(
         status: {
             type: String,
             enum: [
-                "ACTIVE",
+                "OPEN",
                 "RESOLVED",
+                "CANCELLED",
+                "ACTIVE",
                 "Pending",
                 "DETECTED",
                 "NOTIFIED",
@@ -100,7 +125,7 @@ const lateResponseEventSchema = new mongoose.Schema(
                 "Processed",
                 "Resolved"
             ],
-            default: "ACTIVE",
+            default: "OPEN",
             index: true
         },
 
@@ -158,6 +183,7 @@ lateResponseEventSchema.index({ userId: 1, approvalEventId: 1 });
 lateResponseEventSchema.index({ direction: 1 });
 lateResponseEventSchema.index({ status: 1, direction: 1 });
 lateResponseEventSchema.index({ userId: 1, direction: 1 });
+lateResponseEventSchema.index({ userId: 1, direction: 1, responseEventId: 1 });
 lateResponseEventSchema.index({ userId: 1, approvalEventId: 1, direction: 1 });
 lateResponseEventSchema.index({ userId: 1, planVersion: 1, direction: 1 });
 lateResponseEventSchema.index({ userId: 1, planId: 1, direction: 1 });

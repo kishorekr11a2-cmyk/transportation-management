@@ -80,6 +80,20 @@ test("Route Management: Single Builder, Schedule Availability & Allocation Suite
                 if (query._id && query._id.$ne && String(r._id) === String(query._id.$ne)) {
                     return false;
                 }
+                if (query.direction) {
+                    const rDir = String(r.direction || "INWARD").toUpperCase().trim();
+                    if (query.direction.$in && Array.isArray(query.direction.$in)) {
+                        const inList = query.direction.$in.map((x) => String(x).toUpperCase().trim());
+                        if (!inList.includes(rDir) && rDir !== "BOTH") {
+                            return false;
+                        }
+                    } else {
+                        const qDir = String(query.direction || "INWARD").toUpperCase().trim();
+                        if (rDir !== qDir && rDir !== "BOTH") {
+                            return false;
+                        }
+                    }
+                }
                 return true;
             }
             if (query.routeName) {
@@ -94,17 +108,20 @@ test("Route Management: Single Builder, Schedule Availability & Allocation Suite
         }) || null;
     };
 
-    Route.findById = (id) => ({
-        populate: async () => {
-            const r = mockRoutes.find((rt) => String(rt._id) === String(id));
-            if (!r) return null;
-            const v = mockVehicles.find((vh) => String(vh._id) === String(r.assignedVehicle));
-            return { ...r, assignedVehicle: v || null };
-        }
-    });
+    Route.findById = (id) => {
+        const r = mockRoutes.find((rt) => String(rt._id) === String(id));
+        const v = r ? mockVehicles.find((vh) => String(vh._id) === String(r.assignedVehicle)) : null;
+        const resObj = r ? { ...r, assignedVehicle: v || null } : null;
+        return {
+            ...resObj,
+            then: (resolve) => resolve(resObj),
+            populate: async () => resObj
+        };
+    };
 
+    let nextRouteId = 1;
     Route.create = async (doc) => {
-        const newRoute = { _id: `route_${mockRoutes.length + 1}`, ...doc, createdAt: new Date() };
+        const newRoute = { _id: `route_${nextRouteId++}`, ...doc, createdAt: new Date() };
         mockRoutes.push(newRoute);
         return newRoute;
     };
@@ -321,5 +338,46 @@ test("Route Management: Single Builder, Schedule Availability & Allocation Suite
         await addRoute(req3, res3);
         assert.equal(s3(), 400);
         assert.match(d3().message, /invalid coordinates/i);
+    });
+
+    await t.test("10. Allow Vehicle A1 to be assigned independently to both INWARD and OUTWARD routes", async () => {
+        // Route 2 is currently INWARD with Vehicle A1
+        // Create an OUTWARD route with the same Vehicle A1: must succeed!
+        const outwardRoutePayload = {
+            routeName: "Outward Route Alpha",
+            direction: "OUTWARD",
+            source: { name: "College", latitude: 9.925, longitude: 78.119 },
+            stops: [{ name: "Goripalayam", latitude: 9.929, longitude: 78.132 }],
+            destination: { name: "Simmakkal", latitude: 9.926, longitude: 78.121 },
+            assignedVehicle: "veh_001" // Vehicle A1
+        };
+
+        const { req, res, getStatus, getData } = createMockReqRes(outwardRoutePayload);
+        await addRoute(req, res);
+
+        assert.equal(getStatus(), 201);
+        assert.equal(getData().success, true);
+        assert.equal(getData().route.direction, "OUTWARD");
+        assert.equal(getData().route.assignedVehicle?.vehicleName, "A1");
+    });
+
+    await t.test("11. Reject assigning Vehicle A1 to a second OUTWARD route (duplicate protection within same direction)", async () => {
+        // Vehicle A1 is already assigned to Outward Route Alpha
+        // Trying to create a second OUTWARD route with Vehicle A1 must be rejected!
+        const secondOutwardPayload = {
+            routeName: "Outward Route Beta",
+            direction: "OUTWARD",
+            source: { name: "College", latitude: 9.925, longitude: 78.119 },
+            stops: [{ name: "Periyar", latitude: 9.916, longitude: 78.112 }],
+            destination: { name: "Villapuram", latitude: 9.901, longitude: 78.125 },
+            assignedVehicle: "veh_001" // Vehicle A1
+        };
+
+        const { req, res, getStatus, getData } = createMockReqRes(secondOutwardPayload);
+        await addRoute(req, res);
+
+        assert.equal(getStatus(), 400);
+        assert.equal(getData().success, false);
+        assert.match(getData().message, /already allocated to route "Outward Route Alpha"/i);
     });
 });

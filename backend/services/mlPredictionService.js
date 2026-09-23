@@ -30,11 +30,13 @@ import { calculateBearing, getBearingDifference } from "./mapAwareRouteEngine.js
 // ============================================================================
 
 export const ML_SYSTEM_STATUS = {
-    mode: "HYBRID_OPTIMIZER", // "LOW_DATA" | "MEDIUM_DATA" | "LARGE_DATA" | "HYBRID_OPTIMIZER"
-    version: "2.1.0-tabular",
-    coldStartLevel: "MEDIUM_DATA",
+    mode: "DETERMINISTIC_HEURISTIC_OPTIMIZER",
+    version: "2.2.0-heuristic",
+    isModelTrained: false,
+    qualityMetricName: "Optimization Route Quality",
+    description: "Multi-objective deterministic optimization score balancing capacity, distance, time, and stop density. Awaiting future ML model training.",
     baselineRoutesCount: 13,
-    lastTrainedAt: new Date().toISOString()
+    lastEvaluatedAt: new Date().toISOString()
 };
 
 // Calibrated feature weights for Stop Compatibility

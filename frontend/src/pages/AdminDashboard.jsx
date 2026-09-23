@@ -6,6 +6,8 @@ import {
   HiArrowRight,
   HiExclamationTriangle,
   HiXMark,
+  HiClipboardDocumentCheck,
+  HiCheckBadge,
 } from "react-icons/hi2";
 import {
   MdDirectionsBus,
@@ -330,6 +332,28 @@ const AdminDashboard = () => {
           </div>
         </Link>
 
+        {/* ── Admin Manual Plan ── */}
+        <Link to="/admin/manual-plan" className="bento-card bento-card--manual-plan" aria-label="Open Admin Manual Plan">
+          <div className="bento-card__header">
+            <div className="bento-card__icon-wrap" aria-hidden="true">
+              <HiClipboardDocumentCheck size={26} />
+            </div>
+            <span className="bento-card__tag">Manual</span>
+          </div>
+          <div className="bento-card__body">
+            <h3 className="bento-card__title">Admin Manual Plan</h3>
+            <p className="bento-card__desc">
+              Review, approve, and manage submitted manual routes for outward and inward trips.
+            </p>
+          </div>
+          <div className="bento-card__action">
+            <span className="bento-card__action-text">Review Manual Plan</span>
+            <span className="bento-card__arrow" aria-hidden="true">
+              <HiArrowRight size={16} />
+            </span>
+          </div>
+        </Link>
+
         {/* ── AI Agent — featured card ── */}
         <Link to="/ai-agent" className="bento-card bento-card--ai" aria-label="Launch AI Agent">
           <div className="bento-card__ai-geo" aria-hidden="true">
@@ -353,6 +377,28 @@ const AdminDashboard = () => {
           </div>
           <div className="bento-card__action">
             <span className="bento-card__action-text">Launch AI Agent</span>
+            <span className="bento-card__arrow" aria-hidden="true">
+              <HiArrowRight size={16} />
+            </span>
+          </div>
+        </Link>
+
+        {/* ── Final Plan Confirmation ── */}
+        <Link to="/admin/plan-confirmation" className="bento-card bento-card--confirmation" aria-label="Open Plan Confirmation">
+          <div className="bento-card__header">
+            <div className="bento-card__icon-wrap" aria-hidden="true">
+              <HiCheckBadge size={26} />
+            </div>
+            <span className="bento-card__tag">Confirm</span>
+          </div>
+          <div className="bento-card__body">
+            <h3 className="bento-card__title">Final Decision</h3>
+            <p className="bento-card__desc">
+              Compare AI Recommendations with Admin Manual Plan and confirm the official operational plan.
+            </p>
+          </div>
+          <div className="bento-card__action">
+            <span className="bento-card__action-text">Confirm Plan</span>
             <span className="bento-card__arrow" aria-hidden="true">
               <HiArrowRight size={16} />
             </span>

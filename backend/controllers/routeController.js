@@ -5,7 +5,9 @@ import Schedule from "../models/Schedule.js";
 import {
     buildManualTransportationPlan,
     saveSelectedPlan,
-    resetGeneratedAIRoute
+    resetGeneratedAIRoute,
+    clearActiveAIPlanCache,
+    clearAIDataCache
 } from "../services/aiAgentService.js";
 import { generateManualPlanRecommendations } from "../services/manualPlanRecommendationService.js";
 import { clearActiveApprovedPlansCache } from "../services/studentTransportStatusService.js";
@@ -42,6 +44,150 @@ const validateVehicle = async (vehicleId) => {
 };
 
 // ======================================
+// AUTHORITATIVE ROUTE ALLOCATION CACHE & HELPER
+// ======================================
+
+const authoritativeAllocationCache = new Map();
+const ALLOCATION_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+const routesListCache = new Map();
+const ROUTES_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+export const invalidateRouteAllocationCache = (direction = null) => {
+    routesListCache.clear();
+    if (direction) {
+        const canonical = String(direction).toUpperCase().trim();
+        authoritativeAllocationCache.delete(canonical);
+    } else {
+        authoritativeAllocationCache.clear();
+    }
+};
+
+export const getAuthoritativeRouteAllocations = async (direction) => {
+    const canonicalDirection = (String(direction || "").toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
+    const effectiveTripMode = canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION";
+
+    // Fast-path: Check memory cache first (< 0.1ms)
+    const cached = authoritativeAllocationCache.get(canonicalDirection);
+    if (cached && (Date.now() - cached.timestamp < ALLOCATION_CACHE_TTL_MS)) {
+        return cached.data;
+    }
+
+    let activeOrSubmittedBuses = [];
+    let hasPlan = false;
+
+    if (mongoose.connection?.db) {
+        // 1. Check approved active plan in ai_selected_plans with fast projection (<2KB vs 15MB)
+        const approvedDoc = await mongoose.connection.db.collection("ai_selected_plans").findOne({
+            active: true,
+            status: "active",
+            approved: true,
+            $or: [
+                { direction: canonicalDirection },
+                { tripMode: canonicalDirection },
+                { tripMode: effectiveTripMode },
+                { "plan.direction": canonicalDirection },
+                { "plan.tripMode": canonicalDirection }
+            ]
+        }, {
+            projection: {
+                "plan.buses.routeId": 1,
+                "plan.buses.routeName": 1,
+                "plan.buses.vehicleId": 1,
+                "plan.buses.vehicleName": 1,
+                "plan.buses.capacity": 1,
+                "plan.buses.assignedUsers": 1,
+                "plan.buses.remainingSeats": 1,
+                "plan.buses.users": 1
+            }
+        });
+
+        if (approvedDoc?.plan?.buses && approvedDoc.plan.buses.length > 0) {
+            activeOrSubmittedBuses = approvedDoc.plan.buses;
+            hasPlan = true;
+        } else {
+            // 2. Check submitted manual plan in manual_plan_submissions (must not be reset)
+            const subDoc = await mongoose.connection.db.collection("manual_plan_submissions").findOne({
+                $or: [
+                    { direction: canonicalDirection },
+                    { direction: canonicalDirection.toLowerCase() }
+                ],
+                isSubmitted: true,
+                status: { $ne: "reset" }
+            }, {
+                projection: {
+                    "buses.routeId": 1,
+                    "buses.routeName": 1,
+                    "buses.vehicleId": 1,
+                    "buses.vehicleName": 1,
+                    "buses.capacity": 1,
+                    "buses.assignedUsers": 1,
+                    "buses.remainingSeats": 1,
+                    "plan.buses": 1
+                }
+            });
+
+            if (subDoc) {
+                // Pre-saved buses fast path: use directly without running 28,000 fuzzy comparisons
+                if (Array.isArray(subDoc.buses) && subDoc.buses.length > 0) {
+                    activeOrSubmittedBuses = subDoc.buses;
+                    hasPlan = true;
+                } else if (Array.isArray(subDoc.plan?.buses) && subDoc.plan.buses.length > 0) {
+                    activeOrSubmittedBuses = subDoc.plan.buses;
+                    hasPlan = true;
+                } else {
+                    // Fallback: calculate once and persist to document so subsequent calls are 0ms
+                    try {
+                        const submittedPlan = await buildManualTransportationPlan({
+                            direction: canonicalDirection,
+                            forceAllocate: true
+                        });
+                        if (submittedPlan?.buses && submittedPlan.buses.length > 0) {
+                            activeOrSubmittedBuses = submittedPlan.buses;
+                            hasPlan = true;
+                            await mongoose.connection.db.collection("manual_plan_submissions").updateOne(
+                                { _id: subDoc._id },
+                                { $set: { buses: submittedPlan.buses } }
+                            ).catch(() => {});
+                        }
+                    } catch (err) {
+                        console.warn("[getAuthoritativeRouteAllocations] Error building manual plan:", err.message);
+                    }
+                }
+            }
+        }
+    }
+
+    const allocationMap = new Map();
+    activeOrSubmittedBuses.forEach((b) => {
+        const allocData = {
+            assignedUsers: Number(b.assignedUsers ?? b.users?.length ?? 0),
+            capacity: Number(b.capacity || 0),
+            remainingSeats: Number(b.remainingSeats ?? Math.max(0, (b.capacity || 0) - (b.assignedUsers || 0))),
+            vehicleName: b.vehicleName || "",
+            routeName: b.routeName || ""
+        };
+
+        if (b.routeId) allocationMap.set(String(b.routeId), allocData);
+        if (b.routeName) allocationMap.set(String(b.routeName).toLowerCase().trim(), allocData);
+        if (b.vehicleId) allocationMap.set(String(b.vehicleId), allocData);
+        if (b.vehicleName) allocationMap.set(String(b.vehicleName).toLowerCase().trim(), allocData);
+    });
+
+    const result = {
+        hasPlan,
+        allocationMap,
+        canonicalDirection
+    };
+
+    authoritativeAllocationCache.set(canonicalDirection, {
+        timestamp: Date.now(),
+        data: result
+    });
+
+    return result;
+};
+
+// ======================================
 // GET ALL ROUTES
 // ======================================
 
@@ -49,11 +195,23 @@ export const getRoutes = async (req, res) => {
     const tStart = Date.now();
     try {
         const { direction, excludeGeometry, minimal } = req.query;
+        const cacheKey = `${direction || "ALL"}_${excludeGeometry || "false"}_${minimal || "false"}`;
+
+        const cached = routesListCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < ROUTES_CACHE_TTL_MS)) {
+            return res.json(cached.data);
+        }
+
         const filter = {};
         if (direction) {
             const canonical = String(direction).toUpperCase().trim();
             if (canonical === "INWARD" || canonical === "OUTWARD") {
-                filter.direction = canonical;
+                filter.$or = [
+                    { direction: canonical },
+                    { direction: canonical.toLowerCase() },
+                    { direction: "BOTH" },
+                    { direction: "both" }
+                ];
             }
         }
 
@@ -70,14 +228,76 @@ export const getRoutes = async (req, res) => {
             query.select("-roadGeometry");
         }
 
-        const routes = await query.lean();
+        const [routes, inwardAlloc, outwardAlloc] = await Promise.all([
+            query.lean(),
+            getAuthoritativeRouteAllocations("INWARD"),
+            getAuthoritativeRouteAllocations("OUTWARD")
+        ]);
+
+        // Enrich each route with authoritative allocation details.
+        // BOTH routes appear in two UI sections but are one DB record with one vehicle;
+        // we provide outwardAllocatedSeats and inwardAllocatedSeats independently so that
+        // either direction view displays accurate allocations without duplicating records.
+        const queryCanonical = direction ? String(direction).toUpperCase().trim() : null;
+
+        routes.forEach((route) => {
+            const dirUpper = String(route.direction || "").toUpperCase().trim();
+            const isOutward = dirUpper === "OUTWARD";
+            const isBoth   = dirUpper === "BOTH";
+            const allocInfo = queryCanonical === "INWARD"
+                ? inwardAlloc
+                : queryCanonical === "OUTWARD"
+                ? outwardAlloc
+                : (isOutward || isBoth) ? outwardAlloc : inwardAlloc;
+            const map = allocInfo.allocationMap;
+
+            const routeId = String(route._id || "");
+            const routeName = String(route.routeName || "").toLowerCase().trim();
+            const vehicleId = String(route.assignedVehicle?._id || route.assignedVehicle || "");
+            const vehicleName = String(route.assignedVehicle?.vehicleName || route.vehicleName || "").toLowerCase().trim();
+
+            const match = map.get(routeId) ||
+                map.get(routeName) ||
+                (vehicleId ? map.get(vehicleId) : null) ||
+                (vehicleName ? map.get(vehicleName) : null);
+
+            const outwardMatch = outwardAlloc.allocationMap.get(routeId) ||
+                outwardAlloc.allocationMap.get(routeName) ||
+                (vehicleId ? outwardAlloc.allocationMap.get(vehicleId) : null) ||
+                (vehicleName ? outwardAlloc.allocationMap.get(vehicleName) : null);
+
+            const inwardMatch = inwardAlloc.allocationMap.get(routeId) ||
+                inwardAlloc.allocationMap.get(routeName) ||
+                (vehicleId ? inwardAlloc.allocationMap.get(vehicleId) : null) ||
+                (vehicleName ? inwardAlloc.allocationMap.get(vehicleName) : null);
+
+            const totalCapacity = Number(route.assignedVehicle?.capacity || route.capacity || 0);
+            const allocatedSeats = match ? match.assignedUsers : 0;
+            const remainingSeats = totalCapacity > 0 ? Math.max(0, totalCapacity - allocatedSeats) : 0;
+            const isFull = totalCapacity > 0 && remainingSeats === 0;
+
+            route.allocatedSeats = allocatedSeats;
+            route.outwardAllocatedSeats = outwardMatch ? outwardMatch.assignedUsers : 0;
+            route.inwardAllocatedSeats = inwardMatch ? inwardMatch.assignedUsers : 0;
+            route.totalSeats = totalCapacity;
+            route.remainingSeats = remainingSeats;
+            route.isFull = isFull;
+            route.hasPlan = allocInfo.hasPlan;
+        });
+
+        const responsePayload = {
+            success: true,
+            routes
+        };
+
+        routesListCache.set(cacheKey, {
+            timestamp: Date.now(),
+            data: responsePayload
+        });
 
         console.log(`[PERFORMANCE] routes API query: ${Date.now() - tStart} ms`);
 
-        res.json({
-            success: true,
-            routes
-        });
+        res.json(responsePayload);
     } catch (error) {
         console.error(
             "Get routes error:",
@@ -150,6 +370,10 @@ export const addRoute = async (req, res) => {
 
         let vehicle = null;
 
+        // Parse direction: accept INWARD, OUTWARD, or BOTH
+        const rawDirection = String(direction || "").toUpperCase().trim();
+        const canonicalDirection = (rawDirection === "OUTWARD" || rawDirection === "BOTH") ? rawDirection : "INWARD";
+
         if (assignedVehicle) {
             vehicle = await validateVehicle(assignedVehicle);
 
@@ -169,8 +393,19 @@ export const addRoute = async (req, res) => {
                 });
             }
 
-            // CRITICAL: Reject if vehicle is already allocated to another active route
-            const existingAssignedRoute = await Route.findOne({ assignedVehicle: vehicle._id });
+            // Direction-specific vehicle conflict check:
+            // For BOTH routes: the vehicle must not be assigned to ANY existing route
+            //   (INWARD, OUTWARD, or BOTH) since it covers both directions.
+            // For INWARD/OUTWARD: the vehicle must not be assigned to another route in
+            //   the SAME direction OR to an existing BOTH route (which also occupies both).
+            const vehicleConflictQuery = canonicalDirection === "BOTH"
+                ? { assignedVehicle: vehicle._id }          // BOTH occupies all directions
+                : {
+                    assignedVehicle: vehicle._id,
+                    direction: { $in: [canonicalDirection, "BOTH"] } // BOTH conflicts with either
+                };
+
+            const existingAssignedRoute = await Route.findOne(vehicleConflictQuery);
             if (existingAssignedRoute) {
                 return res.status(400).json({
                     success: false,
@@ -178,8 +413,6 @@ export const addRoute = async (req, res) => {
                 });
             }
         }
-
-        const canonicalDirection = (String(direction || "").toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
 
         const route = await Route.create({
             routeName: trimmedName,
@@ -197,6 +430,7 @@ export const addRoute = async (req, res) => {
         );
 
         clearActiveApprovedPlansCache();
+        invalidateRouteAllocationCache(canonicalDirection);
 
         res.status(201).json({
             success: true,
@@ -267,6 +501,14 @@ export const updateRoute = async (req, res) => {
             });
         }
 
+        const existingRoute = await Route.findById(req.params.id);
+        if (!existingRoute) {
+            return res.status(404).json({
+                success: false,
+                message: "Route not found."
+            });
+        }
+
         const trimmedName = routeName.trim();
 
         // Check for duplicate route name on another route
@@ -304,6 +546,12 @@ export const updateRoute = async (req, res) => {
 
         let vehicle = null;
 
+        // Parse direction: accept INWARD, OUTWARD, or BOTH
+        const rawTargetDir = req.body.direction
+            ? String(req.body.direction).toUpperCase().trim()
+            : String(existingRoute.direction || "INWARD").toUpperCase().trim();
+        const targetDirection = (rawTargetDir === "OUTWARD" || rawTargetDir === "BOTH") ? rawTargetDir : "INWARD";
+
         if (assignedVehicle) {
             vehicle = await validateVehicle(assignedVehicle);
 
@@ -323,11 +571,16 @@ export const updateRoute = async (req, res) => {
                 });
             }
 
-            // CRITICAL: Reject if vehicle is already allocated to ANOTHER route
-            const existingAssignedRoute = await Route.findOne({
-                assignedVehicle: vehicle._id,
-                _id: { $ne: req.params.id }
-            });
+            // Direction-specific vehicle conflict check (same logic as addRoute):
+            const vehicleConflictQuery = targetDirection === "BOTH"
+                ? { assignedVehicle: vehicle._id, _id: { $ne: req.params.id } }
+                : {
+                    assignedVehicle: vehicle._id,
+                    direction: { $in: [targetDirection, "BOTH"] },
+                    _id: { $ne: req.params.id }
+                };
+
+            const existingAssignedRoute = await Route.findOne(vehicleConflictQuery);
             if (existingAssignedRoute) {
                 return res.status(400).json({
                     success: false,
@@ -344,7 +597,7 @@ export const updateRoute = async (req, res) => {
             assignedVehicle: vehicle ? vehicle._id : null
         };
         if (req.body.direction) {
-            updateFields.direction = (String(req.body.direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
+            updateFields.direction = targetDirection;
         }
         if (Array.isArray(roadGeometry)) {
             updateFields.roadGeometry = roadGeometry;
@@ -370,6 +623,7 @@ export const updateRoute = async (req, res) => {
         }
 
         clearActiveApprovedPlansCache();
+        invalidateRouteAllocationCache();
 
         res.json({
             success: true,
@@ -405,6 +659,7 @@ export const deleteRoute = async (req, res) => {
         }
 
         clearActiveApprovedPlansCache();
+        invalidateRouteAllocationCache();
 
         res.json({
             success: true,
@@ -474,12 +729,14 @@ export const approveManualPlan = async (req, res) => {
         const canonicalDirection = (String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
         const startingPoint = req.body.startingPoint || null;
 
-        // 1. Fetch routes configured with assigned vehicles in this direction
+        // 1. Fetch routes configured with assigned vehicles in this direction.
+        //    Include BOTH routes — they serve this direction as well.
         const assignedRoutes = await Route.find({
             $or: [
                 { direction: canonicalDirection },
                 { direction: canonicalDirection.toLowerCase() },
-                { direction: new RegExp(`^${canonicalDirection}$`, "i") }
+                { direction: new RegExp(`^${canonicalDirection}$`, "i") },
+                { direction: "BOTH" }
             ],
             assignedVehicle: { $ne: null }
         })
@@ -510,15 +767,16 @@ export const approveManualPlan = async (req, res) => {
                 }
                 seenVehicleIds.add(vehicleId);
 
-                // Check if bus is assigned to another route in the database outside this direction
+                // Check if bus is assigned to another route in the SAME direction
                 const otherRoute = await Route.findOne({
                     assignedVehicle: vehicle._id || vehicle,
+                    direction: canonicalDirection,
                     _id: { $ne: route._id }
                 }).lean();
                 if (otherRoute) {
                     return res.status(400).json({
                         success: false,
-                        message: `Selected bus is already assigned to another route`
+                        message: `Selected bus is already assigned to another route in ${canonicalDirection} direction`
                     });
                 }
             }
@@ -567,6 +825,9 @@ export const approveManualPlan = async (req, res) => {
         });
 
         clearActiveApprovedPlansCache();
+        clearActiveAIPlanCache(canonicalDirection);
+        clearAIDataCache();
+        invalidateRouteAllocationCache(canonicalDirection);
 
         res.json({
             success: true,
@@ -640,6 +901,9 @@ export const resetManualPlan = async (req, res) => {
         }
 
         clearActiveApprovedPlansCache();
+        clearActiveAIPlanCache(canonicalDirection);
+        clearAIDataCache();
+        invalidateRouteAllocationCache(canonicalDirection);
 
         res.json({
             success: true,
@@ -701,6 +965,9 @@ export const resetManualAllocations = async (req, res) => {
         }
 
         clearActiveApprovedPlansCache();
+        clearActiveAIPlanCache(canonicalDirection);
+        clearAIDataCache();
+        invalidateRouteAllocationCache(canonicalDirection);
 
         res.json({
             success: true,
@@ -726,12 +993,14 @@ export const confirmManualPlan = async (req, res) => {
         const direction = req.body.direction || req.query.direction || "INWARD";
         const canonicalDirection = (String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
 
-        // Find all routes in this direction with assigned vehicles
+        // Find all routes in this direction with assigned vehicles.
+        // Include BOTH routes — they serve this direction as well.
         const assignedRoutes = await Route.find({
             $or: [
                 { direction: canonicalDirection },
                 { direction: canonicalDirection.toLowerCase() },
-                { direction: new RegExp(`^${canonicalDirection}$`, "i") }
+                { direction: new RegExp(`^${canonicalDirection}$`, "i") },
+                { direction: "BOTH" }
             ],
             assignedVehicle: { $ne: null }
         })
@@ -750,7 +1019,9 @@ export const confirmManualPlan = async (req, res) => {
             });
         }
 
-        // Record the confirmed/submitted plan state in MongoDB
+        const plan = await buildManualTransportationPlan({ direction: canonicalDirection });
+
+        // Record the confirmed/submitted plan state and pre-calculated buses in MongoDB
         if (mongoose.connection?.db) {
             await mongoose.connection.db.collection("manual_plan_submissions").updateOne(
                 {
@@ -763,9 +1034,14 @@ export const confirmManualPlan = async (req, res) => {
                     $set: {
                         direction: canonicalDirection,
                         isSubmitted: true,
+                        status: "active",
                         submittedAt: new Date(),
                         totalAssignedRoutes: validAssignedRoutes.length,
-                        routeIds: validAssignedRoutes.map((r) => r._id)
+                        routeIds: validAssignedRoutes.map((r) => r._id),
+                        buses: plan.buses || []
+                    },
+                    $unset: {
+                        resetAt: ""
                     }
                 },
                 { upsert: true }
@@ -784,7 +1060,9 @@ export const confirmManualPlan = async (req, res) => {
             );
         }
 
-        const plan = await buildManualTransportationPlan({ direction: canonicalDirection });
+        clearActiveAIPlanCache(canonicalDirection);
+        clearAIDataCache();
+        invalidateRouteAllocationCache(canonicalDirection);
 
         res.json({
             success: true,

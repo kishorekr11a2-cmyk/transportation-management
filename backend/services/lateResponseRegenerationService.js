@@ -3,13 +3,17 @@ import User from "../models/User.js";
 import Vehicle from "../models/Vehicle.js";
 import Route from "../models/Route.js";
 import Schedule from "../models/Schedule.js";
+import InwardStartingPlace from "../models/InwardStartingPlace.js";
 import {
     calculateDistanceKm,
     getRoadRouteGeometry,
     isValidCoordinate,
     canonicalizeDirection,
     sanitizeTransportationPlan,
-    persistPlanToUsers
+    persistPlanToUsers,
+    findStartingPlaceForBus,
+    isBusHubSuitableForStops,
+    isStopNearOrAlongRoute
 } from "./aiAgentService.js";
 import {
     getInstitutionalHub,
@@ -245,11 +249,41 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         };
     }
 
-    // 6. Fetch fleet inventory and vehicle availability
-    const [allVehicles, allRoutesInDb] = await Promise.all([
+    // 6. Fetch fleet inventory, vehicle availability, and inward starting places
+    const [allVehicles, allRoutesInDb, allSchedules] = await Promise.all([
         Vehicle.find().lean(),
-        Route.find().populate("assignedVehicle").lean()
+        Route.find().populate("assignedVehicle").lean(),
+        Schedule.find().lean()
     ]);
+
+    let activeInwardStartingPlaces = [];
+    if (!isOutward) {
+        try {
+            activeInwardStartingPlaces = await InwardStartingPlace.find({ active: true }).lean();
+        } catch (err) {
+            console.error("Error loading inward starting places in late response regeneration:", err);
+            activeInwardStartingPlaces = [];
+        }
+    }
+
+    // Filter out vehicles marked unavailable in Schedule
+    const unavailableVehicleIds = new Set();
+    allSchedules.forEach((s) => {
+        const vId = String(s.vehicle?._id || s.vehicle || "");
+        const status = String(s.availability || s.status || "").toLowerCase().trim();
+        if (
+            status === "not available" ||
+            status === "unavailable" ||
+            status.includes("not available") ||
+            status.includes("unavailable") ||
+            status.includes("maintenance") ||
+            status === "disabled" ||
+            status === "inactive" ||
+            status === "off"
+        ) {
+            if (vId) unavailableVehicleIds.add(vId);
+        }
+    });
 
     // Track vehicle usage in the existing active plan
     const usedVehicleIds = new Set();
@@ -258,7 +292,10 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         if (vId) usedVehicleIds.add(String(vId));
     });
 
-    const idleVehicles = allVehicles.filter((v) => !usedVehicleIds.has(String(v._id)));
+    const idleVehicles = allVehicles.filter((v) => {
+        const vid = String(v._id);
+        return !usedVehicleIds.has(vid) && !unavailableVehicleIds.has(vid);
+    });
 
     // 7. Group late students by residential stopping area
     const lateStopsMap = new Map();
@@ -299,19 +336,41 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                 existingAllocatedStudents.push({ userId: uId, seatNumber: uIdx + 1 });
             });
         }
+
+        // Recalculate changed demand: filter to only students currently confirmed as Coming
+        const confirmedComingSet = new Set(
+            confirmedComingStudents.map((s) => String(s.userId || s._id).toLowerCase().trim())
+        );
+
+        const currentStops = (bus.stops || []).map((s, sIdx) => {
+            const validUserIds = (Array.isArray(s.userIds) ? s.userIds : []).filter((uid) =>
+                confirmedComingSet.has(String(uid).toLowerCase().trim())
+            );
+            const userCount = validUserIds.length > 0
+                ? validUserIds.length
+                : (s.userIds && s.userIds.length > 0 ? 0 : Number(s.userCount || 0));
+            return {
+                order: s.order || (sIdx + 1),
+                name: s.name || `Stop ${sIdx + 1}`,
+                address: s.address || "",
+                latitude: Number(s.latitude),
+                longitude: Number(s.longitude),
+                userCount,
+                userIds: validUserIds,
+                isNewStop: false,
+                newLateStudentsCount: 0
+            };
+        });
+
+        const activeUsers = existingUsers.filter((uId) => confirmedComingSet.has(String(uId).toLowerCase().trim()));
+        const activeAllocatedStudents = existingAllocatedStudents.filter((st) =>
+            confirmedComingSet.has(String(st.userId).toLowerCase().trim())
+        );
         const existingCapacity = Number(bus.capacity) || 70;
-        const currentAssignedCount = existingUsers.length;
-        const currentStops = (bus.stops || []).map((s, sIdx) => ({
-            order: s.order || (sIdx + 1),
-            name: s.name || `Stop ${sIdx + 1}`,
-            address: s.address || "",
-            latitude: Number(s.latitude),
-            longitude: Number(s.longitude),
-            userCount: Number(s.userCount || s.passengers || s.passengersBoarded || s.passengersDropped || 0),
-            userIds: Array.isArray(s.userIds) ? [...s.userIds] : [],
-            isNewStop: false,
-            newLateStudentsCount: 0
-        }));
+        const currentAssignedCount = activeUsers.length > 0 ? activeUsers.length : currentStops.reduce((sum, s) => sum + s.userCount, 0);
+
+        const configuredStartPlace = !isOutward ? findStartingPlaceForBus(bus, activeInwardStartingPlaces) : null;
+        const resolvedStartLoc = bus.startLocation || bus.inwardStartLocation || configuredStartPlace || null;
 
         return {
             routeNumber: bus.routeNumber || (idx + 1),
@@ -324,8 +383,11 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
             assignedUsers: currentAssignedCount,
             remainingSeats: Math.max(0, existingCapacity - currentAssignedCount),
             stops: currentStops,
-            users: existingUsers,
-            allocatedStudents: existingAllocatedStudents,
+            users: activeUsers,
+            allocatedStudents: activeAllocatedStudents,
+            startLocation: resolvedStartLoc,
+            inwardStartLocation: resolvedStartLoc,
+            sourceHub: resolvedStartLoc,
             newStopsAdded: [],
             newLateStudentsAccommodated: 0,
             roadDistanceKm: Number(bus.routeDistanceKm || bus.roadDistanceKm || 0),
@@ -356,18 +418,47 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
 
         // OPTION A: Accommodate in an existing route that passes near the stop and has capacity
         let bestRouteIdx = -1;
-        let minCorridorDist = Infinity;
+        let minDetourOrDist = Infinity;
 
         if (isValidCoordinate(stopLat, stopLon)) {
+            const candStop = { name: stopName, latitude: stopLat, longitude: stopLon };
             proposedRoutes.forEach((route, rIdx) => {
                 if (route.remainingSeats >= stopGroup.count) {
-                    // Check distance from new stop to each stop on this route
-                    for (const existingStop of route.stops) {
-                        if (isValidCoordinate(existingStop.latitude, existingStop.longitude)) {
-                            const d = calculateDistanceKm(stopLat, stopLon, existingStop.latitude, existingStop.longitude);
-                            if (d < minCorridorDist) {
-                                minCorridorDist = d;
-                                bestRouteIdx = rIdx;
+                    const existingStopIndex = (route.stops || []).findIndex(
+                        (s) => normalizeStopName(s.name) === normalizeStopName(stopName)
+                    );
+
+                    if (existingStopIndex !== -1) {
+                        // Stop already exists on this route: detour is 0, highest priority
+                        if (0 < minDetourOrDist) {
+                            minDetourOrDist = 0;
+                            bestRouteIdx = rIdx;
+                        }
+                    } else if (!isOutward) {
+                        // Strict Inward condition: stop must be near/along the alternative bus's current route
+                        // AND adding it does not create an unreasonable route deviation (detour <= 5.0km).
+                        const check = isStopNearOrAlongRoute({
+                            stop: candStop,
+                            route,
+                            sourceHub: route.startLocation || route.inwardStartLocation || route.sourceHub,
+                            destinationHub: collegeCoord,
+                            maxDetourKm: 5.0,
+                            maxProximityKm: 5.5
+                        });
+
+                        if (check.suitable && check.detourKm < minDetourOrDist) {
+                            minDetourOrDist = check.detourKm;
+                            bestRouteIdx = rIdx;
+                        }
+                    } else {
+                        // Outward: standard corridor threshold (within 5.5km)
+                        for (const existingStop of (route.stops || [])) {
+                            if (isValidCoordinate(existingStop.latitude, existingStop.longitude)) {
+                                const d = calculateDistanceKm(stopLat, stopLon, existingStop.latitude, existingStop.longitude);
+                                if (d <= 5.5 && d < minDetourOrDist) {
+                                    minDetourOrDist = d;
+                                    bestRouteIdx = rIdx;
+                                }
                             }
                         }
                     }
@@ -375,8 +466,8 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
             });
         }
 
-        // Corridor threshold: Within 5.5 km of an existing route corridor
-        if (bestRouteIdx !== -1 && minCorridorDist <= 5.5) {
+        // If a suitable route was found within constraints
+        if (bestRouteIdx !== -1) {
             const targetRoute = proposedRoutes[bestRouteIdx];
             
             // Check if stop already exists in this route
@@ -505,7 +596,20 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                 const neededCapacity = targetRoute.assignedUsers + stopGroup.count;
                 
                 // Look for an idle vehicle with sufficient capacity
-                const upgradeVehicleIdx = idleVehicles.findIndex((v) => Number(v.capacity) >= neededCapacity);
+                // STRICT INWARD BUS CHANGE RULE:
+                // Alternative bus is available AND has sufficient capacity AND its configured starting hub is near/suitable.
+                let upgradeVehicleIdx = -1;
+                if (!isOutward && activeInwardStartingPlaces.length > 0) {
+                    upgradeVehicleIdx = idleVehicles.findIndex((v) => {
+                        const hasCap = Number(v.capacity) >= neededCapacity;
+                        if (!hasCap) return false;
+                        const suitability = isBusHubSuitableForStops(v, targetRoute.stops, activeInwardStartingPlaces);
+                        return suitability.suitable;
+                    });
+                } else {
+                    upgradeVehicleIdx = idleVehicles.findIndex((v) => Number(v.capacity) >= neededCapacity);
+                }
+
                 if (upgradeVehicleIdx !== -1) {
                     const upgradeVehicle = idleVehicles.splice(upgradeVehicleIdx, 1)[0];
                     targetRoute.vehicleName = upgradeVehicle.vehicleName;
@@ -513,6 +617,24 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                     targetRoute.vehicleId = upgradeVehicle._id;
                     targetRoute.capacity = Number(upgradeVehicle.capacity);
                     targetRoute.vehicleUpgraded = true;
+
+                    if (!isOutward && activeInwardStartingPlaces.length > 0) {
+                        const sp = findStartingPlaceForBus(upgradeVehicle, activeInwardStartingPlaces);
+                        if (sp) {
+                            const formattedPlace = {
+                                vehicleId: sp.vehicleId || sp.busId || upgradeVehicle._id,
+                                busName: sp.busName || upgradeVehicle.vehicleName,
+                                name: sp.locationName || sp.name,
+                                locationName: sp.locationName || sp.name,
+                                address: sp.address || "",
+                                latitude: Number(sp.latitude),
+                                longitude: Number(sp.longitude)
+                            };
+                            targetRoute.startLocation = formattedPlace;
+                            targetRoute.inwardStartLocation = formattedPlace;
+                            targetRoute.sourceHub = formattedPlace;
+                        }
+                    }
 
                     // Now insert the stop
                     const newStopObj = {
@@ -561,8 +683,24 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         }
 
         // OPTION C: Form a new route if idle fleet vehicle is available
+        // STRICT INWARD BUS CHANGE RULE:
+        // Alternative bus is available AND has capacity AND its starting hub is near/suitable.
+        let newVehIdx = -1;
         if (!assignedToRoute && idleVehicles.length > 0) {
-            const newVeh = idleVehicles.shift();
+            if (!isOutward && activeInwardStartingPlaces.length > 0) {
+                newVehIdx = idleVehicles.findIndex((v) => {
+                    const hasCap = (Number(v.capacity) || 50) >= stopGroup.count;
+                    if (!hasCap) return false;
+                    const suitability = isBusHubSuitableForStops(v, [stopGroup], activeInwardStartingPlaces);
+                    return suitability.suitable;
+                });
+            } else {
+                newVehIdx = 0;
+            }
+        }
+
+        if (newVehIdx !== -1) {
+            const newVeh = idleVehicles.splice(newVehIdx, 1)[0];
             const newRouteNumber = proposedRoutes.length + 1;
             const newRouteCode = `R-${String(newRouteNumber).padStart(2, "0")}`;
             const newRouteName = `${newRouteCode}: ${newVeh.vehicleName}`;
@@ -572,6 +710,22 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                 name: st.name || "",
                 seatNumber: sIdx + 1
             }));
+
+            let configuredStartLocation = null;
+            if (!isOutward && activeInwardStartingPlaces.length > 0) {
+                const sp = findStartingPlaceForBus(newVeh, activeInwardStartingPlaces);
+                if (sp) {
+                    configuredStartLocation = {
+                        vehicleId: sp.vehicleId || sp.busId || newVeh._id,
+                        busName: sp.busName || newVeh.vehicleName,
+                        name: sp.locationName || sp.name,
+                        locationName: sp.locationName || sp.name,
+                        address: sp.address || "",
+                        latitude: Number(sp.latitude),
+                        longitude: Number(sp.longitude)
+                    };
+                }
+            }
 
             const newRouteObj = {
                 routeNumber: newRouteNumber,
@@ -593,11 +747,15 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
                         userCount: stopGroup.count,
                         userIds: stopGroup.students.map((st) => String(st.userId || st._id)),
                         isNewStop: true,
-                        newLateStudentsCount: stopGroup.count
+                        newLateStudentsCount: stopGroup.count,
+                        previousStopName: configuredStartLocation?.name || null
                     }
                 ],
                 users: stopGroup.students.map((st) => String(st.userId || st._id)),
                 allocatedStudents: newAllocatedStudents,
+                startLocation: configuredStartLocation,
+                inwardStartLocation: configuredStartLocation,
+                sourceHub: configuredStartLocation,
                 newStopsAdded: [stopName],
                 newLateStudentsAccommodated: stopGroup.count,
                 isNewRoute: true,
@@ -626,16 +784,109 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
             assignedToRoute = true;
         }
 
-        // OPTION D: Unable to accommodate -> Mark as standby
+        // OPTION D: Unable to accommodate via any alternative bus or new route.
+        // INWARD STANDING PASSENGER FALLBACK:
+        // For INWARD direction: do NOT leave the student unallocated.
+        // Keep them on the nearest existing route as standing passengers.
+        // They ARE allocated — they will travel standing/over-capacity.
+        // OUTWARD: mark as standby (cannot board over capacity for outward).
         if (!assignedToRoute) {
-            stopGroup.students.forEach((st) => {
-                standbyStudents.push({
-                    studentId: String(st.userId || st._id),
-                    studentName: st.name,
-                    stoppingArea: stopName,
-                    reason: "FLEET_CAPACITY_LIMIT"
+            if (!isOutward && proposedRoutes.length > 0) {
+                // Find the nearest existing route (by closest stop to this student stop)
+                let nearestRouteIdx = 0;
+                let minDist = Infinity;
+                proposedRoutes.forEach((route, rIdx) => {
+                    for (const existingSt of (route.stops || [])) {
+                        if (isValidCoordinate(existingSt.latitude, existingSt.longitude)) {
+                            const d = calculateDistanceKm(stopLat, stopLon, existingSt.latitude, existingSt.longitude);
+                            if (d < minDist) {
+                                minDist = d;
+                                nearestRouteIdx = rIdx;
+                            }
+                        }
+                    }
                 });
-            });
+
+                const standingRoute = proposedRoutes[nearestRouteIdx];
+                const standingExistingIdx = standingRoute.stops.findIndex(
+                    (s) => normalizeStopName(s.name) === normalizeStopName(stopName)
+                );
+
+                if (standingExistingIdx !== -1) {
+                    // Add to existing stop as standing passengers
+                    standingRoute.stops[standingExistingIdx].userCount += stopGroup.count;
+                    standingRoute.stops[standingExistingIdx].userIds.push(
+                        ...stopGroup.students.map((st) => String(st.userId || st._id))
+                    );
+                    standingRoute.stops[standingExistingIdx].standingCount =
+                        (standingRoute.stops[standingExistingIdx].standingCount || 0) + stopGroup.count;
+                } else {
+                    // Insert a new stop entry marked as standing
+                    const distToCollege = calculateDistanceKm(stopLat, stopLon, collegeCoord.latitude, collegeCoord.longitude);
+                    let insertIndex = standingRoute.stops.length;
+                    for (let i = 0; i < standingRoute.stops.length; i++) {
+                        const curDist = calculateDistanceKm(
+                            standingRoute.stops[i].latitude, standingRoute.stops[i].longitude,
+                            collegeCoord.latitude, collegeCoord.longitude
+                        );
+                        if (distToCollege > curDist) { insertIndex = i; break; }
+                    }
+                    standingRoute.stops.splice(insertIndex, 0, {
+                        order: insertIndex + 1,
+                        name: stopName,
+                        latitude: stopLat,
+                        longitude: stopLon,
+                        userCount: stopGroup.count,
+                        userIds: stopGroup.students.map((st) => String(st.userId || st._id)),
+                        standingCount: stopGroup.count,
+                        isStandingStop: true,
+                        newLateStudentsCount: stopGroup.count
+                    });
+                    standingRoute.stops.forEach((s, idx) => { s.order = idx + 1; });
+                }
+
+                // Accumulate standing stats on the route
+                standingRoute.standingPassengers = (standingRoute.standingPassengers || 0) + stopGroup.count;
+                standingRoute.assignedUsers += stopGroup.count;
+                standingRoute.isOverCapacity = standingRoute.assignedUsers > standingRoute.capacity;
+                standingRoute.seatedPassengers = Math.min(standingRoute.assignedUsers, standingRoute.capacity);
+                standingRoute.overCapacityCount = Math.max(0, standingRoute.assignedUsers - standingRoute.capacity);
+                standingRoute.remainingSeats = 0;
+                standingRoute.newLateStudentsAccommodated += stopGroup.count;
+
+                stopGroup.students.forEach((st) => {
+                    const sId = String(st.userId || st._id);
+                    standingRoute.users.push(sId);
+                    if (!Array.isArray(standingRoute.allocatedStudents)) standingRoute.allocatedStudents = [];
+                    standingRoute.allocatedStudents.push({
+                        userId: sId,
+                        name: st.name || "",
+                        standingPassenger: true
+                    });
+                    accommodatedStudents.push({
+                        studentId: sId,
+                        studentName: st.name,
+                        stoppingArea: stopName,
+                        assignedRouteCode: standingRoute.routeCode,
+                        assignedVehicleName: standingRoute.vehicleName,
+                        integrationType: "STANDING_PASSENGER_FALLBACK",
+                        isStandingPassenger: true
+                    });
+                });
+
+                console.log(`[STANDING FALLBACK LATE] ${standingRoute.vehicleName}: +${stopGroup.count} standing at "${stopName}" (${standingRoute.assignedUsers}/${standingRoute.capacity} total — ${standingRoute.overCapacityCount} over capacity)`);
+
+            } else {
+                // OUTWARD: standard standby (cannot exceed capacity for outward)
+                stopGroup.students.forEach((st) => {
+                    standbyStudents.push({
+                        studentId: String(st.userId || st._id),
+                        studentName: st.name,
+                        stoppingArea: stopName,
+                        reason: "FLEET_CAPACITY_LIMIT"
+                    });
+                });
+            }
         }
     }
 
@@ -660,9 +911,17 @@ export const regenerateLateResponsePlan = async ({ direction = "OUTWARD" } = {})
         route.stops.forEach((s, idx) => { s.order = idx + 1; });
 
         // Build waypoint array for OSRM validation
+        const routeStartLoc = route.startLocation || route.inwardStartLocation;
+        const validStops = route.stops.filter((s) => isValidCoordinate(s.latitude, s.longitude));
         const waypoints = isOutward
-            ? [collegeCoord, ...route.stops.filter((s) => isValidCoordinate(s.latitude, s.longitude))]
-            : [...route.stops.filter((s) => isValidCoordinate(s.latitude, s.longitude)), collegeCoord];
+            ? [collegeCoord, ...validStops]
+            : (routeStartLoc && isValidCoordinate(routeStartLoc.latitude, routeStartLoc.longitude)
+                ? [routeStartLoc, ...validStops, collegeCoord]
+                : [...validStops, collegeCoord]);
+
+        if (!isOutward && routeStartLoc && route.stops.length > 0) {
+            route.stops[0].previousStopName = routeStartLoc.locationName || routeStartLoc.name;
+        }
 
         if (waypoints.length >= 2) {
             try {
@@ -1015,7 +1274,8 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         draft.sourceHub || null,
         draft.destinationHub || null,
         effectivePlanType,
-        isManualOriginal ? "MANUAL" : "AI"
+        isManualOriginal ? "MANUAL" : "AI",
+        planVersion
     );
 
     // If original plan was manual, also keep manual_plan_submissions in sync
@@ -1093,7 +1353,9 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
                     isUnallocated: false,
                     allocationStatus: "Assigned",
                     assignedVehicle,
-                    assignedRoute
+                    assignedRoute,
+                    planVersion: Number(planVersion) || 1,
+                    activePlanVersion: Number(planVersion) || 1
                 };
                 if (!alloc || !alloc.isAllocated) {
                     userUpdate.allocatedBus = {

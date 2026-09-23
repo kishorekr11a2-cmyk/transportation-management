@@ -253,7 +253,6 @@ export const validateStudentResponseForPlanVersion = async ({
     travelStatus,
     responseSubmittedAt = new Date()
 }) => {
-    // If no approved plan exists, normal pre-approval submission is allowed
     if (!activePlan || !activePlan.isApproved) {
         return {
             allowed: true,
@@ -285,14 +284,15 @@ export const validateStudentResponseForPlanVersion = async ({
         };
     }
 
-    // 2. Database check in LateResponseEvent for any submission against this approvalEventId
+    // 2. Database check in LateResponseEvent for any active submission against this approvalEventId
     if (currentApprovalEventId) {
         const planDir = activePlan.direction ? String(activePlan.direction).toUpperCase().trim() : null;
         const query = {
             userId: { $in: [user.userId, studentUserId] },
+            status: { $in: ["OPEN", "ACTIVE"] },
             $or: [
                 { approvalEventId: currentApprovalEventId },
-                { planVersion: currentPlanVersion, status: "ACTIVE" }
+                { planVersion: currentPlanVersion }
             ]
         };
         if (planDir) {
@@ -343,73 +343,183 @@ export const validateStudentResponseForPlanVersion = async ({
 };
 
 /**
- * 3. CREATE LATE RESPONSE EVENT
- * Creates a single ACTIVE late-response event bound to studentId + planVersion/approvalEventId.
- * No direction required. Idempotent: duplicate calls for same plan version will not create duplicate records.
+ * 3. AUTHORITATIVE LATE RESPONSE LIFECYCLE: CREATE OR GET
+ * Receives:
+ * - userId
+ * - direction (OUTWARD | INWARD | null)
+ * - planType (AI | MANUAL)
+ * - approvedPlan (optional plan context)
+ * - responseEventId (stable response event identity)
+ * - responseSubmittedAt (Date)
+ * - previousTravelStatus
+ *
+ * Enforces:
+ * 1. Idempotency: same user + direction + responseEventId returns existing event.
+ * 2. Immutable RESOLVED: if the existing event is RESOLVED, it MUST NEVER become OPEN again.
+ * 3. Only a genuinely NEW response event creates a NEW LateResponseEvent with status: OPEN.
  */
-export const createLateResponseEvent = async ({
-    user,
+export const createOrGetLateResponseEvent = async ({
+    userId,
+    user = null,
     direction = null,
+    planType = "AI",
     approvedPlan = null,
+    responseEventId = null,
     responseSubmittedAt = new Date(),
     previousTravelStatus = "Pending"
 }) => {
-    let plan = approvedPlan;
-    if (!plan || !plan.isApproved) {
-        plan = await getCurrentApprovedPlan(null);
+    const rawUserId = userId || user?.userId || "";
+    const uId = String(rawUserId).trim();
+    if (!uId) {
+        return { isLate: false, event: null, reason: "MISSING_USER_ID" };
     }
 
-    const planVersion = plan?.planVersion || 1;
-    const approvalEventId = plan?.approvalEventId || plan?.planId || `plan_v${planVersion}`;
-    const planApprovedAt = plan?.approvedAt || new Date();
+    const canonicalDirection = (direction && String(direction).toUpperCase().trim() === "OUTWARD")
+        ? "OUTWARD"
+        : ((direction && String(direction).toUpperCase().trim() === "INWARD") ? "INWARD" : null);
 
-    // Stable, deterministic event key based on studentId + plan approval identifier
+    const canonicalPlanType = (planType && String(planType).toUpperCase().trim() === "MANUAL") ? "MANUAL" : "AI";
+
+    const respTime = responseSubmittedAt instanceof Date ? responseSubmittedAt : new Date(responseSubmittedAt);
+    const respTimestamp = respTime.getTime();
+
+    // Stable response event identity
+    const effectiveResponseEventId = responseEventId
+        ? String(responseEventId).trim()
+        : (user?.responseEventId || `resp_${uId.toLowerCase()}_${respTimestamp}`);
+
+    // Deterministic event key
     const eventKey = generateLateResponseEventKey(
-        user.userId,
-        approvalEventId,
-        planApprovedAt
+        uId,
+        canonicalDirection,
+        effectiveResponseEventId
     );
+
+    // 1. IDEMPOTENCY CHECK: Search by userId + direction + responseEventId OR eventKey
+    const lookupQuery = {
+        userId: { $regex: new RegExp(`^${uId}$`, "i") },
+        $or: [
+            { eventKey },
+            { responseEventId: effectiveResponseEventId }
+        ]
+    };
+    if (canonicalDirection) {
+        lookupQuery.$or.push({ direction: canonicalDirection, responseEventId: effectiveResponseEventId });
+    }
+
+    const existingEvent = await LateResponseEvent.findOne(lookupQuery).lean();
+
+    if (existingEvent) {
+        if (existingEvent.status === "RESOLVED") {
+            console.log(`[LATE-RESPONSE] user=${uId} direction=${canonicalDirection || "GLOBAL"} responseEvent=${effectiveResponseEventId} status=RESOLVED action=NO_REOPEN`);
+            return {
+                isLate: true,
+                event: existingEvent,
+                isNew: false,
+                alreadyResolved: true,
+                status: "RESOLVED"
+            };
+        }
+
+        console.log(`[LATE-RESPONSE] user=${uId} direction=${canonicalDirection || "GLOBAL"} responseEvent=${effectiveResponseEventId} status=${existingEvent.status} action=EXISTING_EVENT`);
+        return {
+            isLate: true,
+            event: existingEvent,
+            isNew: false,
+            alreadyResolved: false,
+            status: existingEvent.status
+        };
+    }
+
+    // 2. Check if a plan is currently approved
+    let plan = approvedPlan;
+    if (!plan || !plan.isApproved) {
+        plan = await getCurrentApprovedPlan(canonicalDirection);
+    }
+
+    if (!plan || !plan.isApproved) {
+        // No approved plan exists — student response is normal pre-plan response, NOT late
+        return {
+            isLate: false,
+            event: null,
+            reason: "NO_APPROVED_PLAN"
+        };
+    }
+
+    // 3. Check if response qualifies as LATE:
+    // Submitted Coming AFTER plan was approved AND student was not allocated
+    const planApprovedAt = plan.approvedAt ? new Date(plan.approvedAt) : null;
+    const planApprovalTime = planApprovedAt ? planApprovedAt.getTime() : 0;
+    const isSubmittedAfterPlanApproval = planApprovalTime > 0 && respTimestamp > planApprovalTime;
+
+    const uIdLower = uId.toLowerCase();
+    const isAllocated = plan.allocatedUserIds ? plan.allocatedUserIds.has(uIdLower) : false;
+
+    if (!isSubmittedAfterPlanApproval || isAllocated) {
+        return {
+            isLate: false,
+            event: null,
+            reason: isAllocated ? "ALREADY_ALLOCATED" : "SUBMITTED_BEFORE_APPROVAL"
+        };
+    }
+
+    // 4. Genuinely NEW qualifying response event -> create LateResponseEvent with status: OPEN
+    const planVersion = plan.planVersion || 1;
+    const approvalEventId = plan.approvalEventId || plan.planId || `plan_v${planVersion}`;
 
     const eventPayload = {
         eventKey,
-        userId: String(user.userId || ""),
-        planId: plan?.planId || null,
+        userId: uId,
+        direction: canonicalDirection,
+        planType: canonicalPlanType,
+        planId: plan.planId || null,
         planVersion,
         approvalEventId,
-        direction: null,
-        previousTravelStatus: previousTravelStatus || user.previousTravelStatus || "Pending",
-        currentTravelStatus: "Coming",
-        responseTimestamp: responseSubmittedAt,
-        responseSubmittedAt: responseSubmittedAt,
+        responseEventId: effectiveResponseEventId,
+        responseAt: respTime,
+        detectedAt: new Date(),
+        responseSubmittedAt: respTime,
+        responseTimestamp: respTime,
         planApprovedAt,
-        planType: plan?.planType || "AI",
+        previousTravelStatus: previousTravelStatus || user?.previousTravelStatus || "Pending",
+        currentTravelStatus: "Coming",
+        status: "OPEN",
         isLateResponse: true,
-        status: "ACTIVE",
         isNotified: false,
         notifiedAt: null,
         resolvedAt: null,
+        resolvedPlanId: null,
         resolutionReason: null
     };
 
-    // Upsert using eventKey to guarantee single record at database level
     const upsertRes = await LateResponseEvent.updateOne(
-        {
-            $or: [
-                { eventKey },
-                { userId: String(user.userId || ""), approvalEventId, status: "ACTIVE" }
-            ]
-        },
+        { eventKey },
         {
             $set: {
-                status: "ACTIVE",
+                status: "OPEN",
                 isLateResponse: true,
+                direction: canonicalDirection,
+                planType: canonicalPlanType,
                 planVersion,
                 approvalEventId,
-                responseSubmittedAt,
+                responseEventId: effectiveResponseEventId,
+                responseAt: respTime,
+                responseSubmittedAt: respTime,
                 updatedAt: new Date()
             },
             $setOnInsert: {
-                ...eventPayload,
+                eventKey,
+                userId: uId,
+                planId: plan.planId || null,
+                responseTimestamp: respTime,
+                planApprovedAt,
+                previousTravelStatus: previousTravelStatus || user?.previousTravelStatus || "Pending",
+                currentTravelStatus: "Coming",
+                isNotified: false,
+                notifiedAt: null,
+                resolvedAt: null,
+                resolvedPlanId: null,
+                resolutionReason: null,
                 createdAt: new Date()
             }
         },
@@ -417,13 +527,9 @@ export const createLateResponseEvent = async ({
     );
 
     // Update student document in MongoDB:
-    // Rule 3:
-    // Mark student as:
-    // * travelStatus: Coming
-    // * allocationStatus: Unallocated
-    // * lateResponse: true
+    // Set responseEventId, lastResponseEventId, lateResponse: true, allocationStatus: "Unallocated"
     await User.updateOne(
-        { _id: user._id },
+        { $or: [{ userId: uId }, { userId: uIdLower }] },
         {
             $set: {
                 travelStatus: "Coming",
@@ -436,45 +542,62 @@ export const createLateResponseEvent = async ({
                 assignedVehicle: null,
                 assignedRoute: null,
                 allocatedBus: null,
-                lateResponseAt: responseSubmittedAt,
-                travelResponseSubmittedAt: responseSubmittedAt,
-                lastTravelResponseAt: responseSubmittedAt,
+                lateResponseAt: respTime,
+                travelResponseSubmittedAt: respTime,
+                lastTravelResponseAt: respTime,
+                responseEventId: effectiveResponseEventId,
+                lastResponseEventId: effectiveResponseEventId,
                 requiresReallocation: true,
                 submittedPlanVersion: planVersion,
                 submittedApprovalEventId: approvalEventId,
                 lateResponseEventId: eventKey,
-                affectedDirections: []
+                affectedDirections: canonicalDirection ? [canonicalDirection] : []
             }
         }
     );
 
-    console.log(`[LIFECYCLE] Active LateResponseEvent created/updated: ${eventKey} (Student: ${user.userId}, Plan Version: ${planVersion})`);
+    console.log(`[LATE-RESPONSE] user=${uId} direction=${canonicalDirection || "GLOBAL"} responseEvent=${effectiveResponseEventId} status=OPEN action=NEW_EVENT`);
 
     return {
+        isLate: true,
+        event: eventPayload,
         eventKey,
-        eventPayload,
-        upserted: upsertRes.upsertedCount > 0
+        responseEventId: effectiveResponseEventId,
+        isNew: true,
+        alreadyResolved: false,
+        status: "OPEN"
     };
 };
 
 /**
- * 4. RESOLVE LATE RESPONSES FOR PREVIOUS PLAN
- * Rule 9: Generating a plan alone must not resolve the late response.
- * Rule 10: The late response should be resolved only when the admin manually assigns/approves the student's route.
+ * Backwards-compatible wrapper for createLateResponseEvent
  */
-export const resolveLateResponsesForPreviousPlan = async ({
+export const createLateResponseEvent = async (params) => {
+    return createOrGetLateResponseEvent(params);
+};
+
+/**
+ * 4. RESOLVE LATE RESPONSES FOR PLAN
+ * Invoked during plan approval / activation when a newly approved plan handles late-response users.
+ * Transitions matching OPEN/ACTIVE late-response events to RESOLVED forever.
+ * Storing resolvedAt and resolvedPlanId.
+ */
+export const resolveLateResponsesForPlan = async ({
     allocatedUserIds = null,
     direction = null,
+    resolvedPlanId = null,
     newPlanVersion = null,
-    newApprovalEventId = null
+    newApprovalEventId = null,
+    resolutionReason = "Admin approved plan including student"
 } = {}) => {
     if (!isDbConnected() || !mongoose.connection?.db) {
         return { success: false, resolvedCount: 0 };
     }
 
-    // Rule 9 & 10: Generating a plan alone must NOT resolve the late response.
-    // Late responses must only be resolved for students who are actually allocated to a route/bus.
-    const userIdsList = allocatedUserIds ? (allocatedUserIds instanceof Set ? Array.from(allocatedUserIds) : (Array.isArray(allocatedUserIds) ? allocatedUserIds : [allocatedUserIds])) : null;
+    const userIdsList = allocatedUserIds
+        ? (allocatedUserIds instanceof Set ? Array.from(allocatedUserIds) : (Array.isArray(allocatedUserIds) ? allocatedUserIds : [allocatedUserIds]))
+        : null;
+
     if (!userIdsList || userIdsList.length === 0) {
         console.log("[LIFECYCLE] Generating a plan alone does not resolve late response students without allocation.");
         return { success: true, resolvedEventsCount: 0, updatedUsersCount: 0 };
@@ -482,13 +605,39 @@ export const resolveLateResponsesForPreviousPlan = async ({
 
     try {
         const normalizedIds = userIdsList.map((id) => String(id).toLowerCase().trim()).filter(Boolean);
+        const canonicalDirection = (direction && String(direction).toUpperCase().trim() === "OUTWARD")
+            ? "OUTWARD"
+            : ((direction && String(direction).toUpperCase().trim() === "INWARD") ? "INWARD" : null);
+
+        const openStatuses = ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION", "REGENERATION_DRAFT", "AWAITING_APPROVAL"];
+
+        // Query OPEN events for allocated users
         const eventFilter = {
-            status: { $in: ["ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] },
-            userId: { $in: normalizedIds }
+            status: { $in: openStatuses },
+            $or: [
+                { userId: { $in: normalizedIds } },
+                { userId: { $in: userIdsList } }
+            ]
         };
 
+        // Direction isolation: an outward plan resolves outward or unassigned events, not inward
+        if (canonicalDirection) {
+            eventFilter.$and = [
+                {
+                    $or: [
+                        { direction: canonicalDirection },
+                        { direction: null },
+                        { direction: "" }
+                    ]
+                }
+            ];
+        }
+
         const now = new Date();
-        const reason = "Admin manually assigned and approved student route";
+        const planIdentifier = resolvedPlanId || newApprovalEventId || (newPlanVersion ? `v${newPlanVersion}` : "plan_approved");
+
+        // Find matching events before updating to log each resolved transition
+        const eventsToResolve = await LateResponseEvent.find(eventFilter).select("userId direction responseEventId").lean();
 
         const lreResult = await LateResponseEvent.updateMany(
             eventFilter,
@@ -496,17 +645,24 @@ export const resolveLateResponsesForPreviousPlan = async ({
                 $set: {
                     status: "RESOLVED",
                     resolvedAt: now,
-                    resolutionReason: reason,
+                    resolvedPlanId: planIdentifier,
+                    resolutionReason,
                     updatedAt: now
                 }
             }
         );
 
+        for (const ev of (eventsToResolve || [])) {
+            console.log(`[LATE-RESPONSE] user=${ev.userId} direction=${ev.direction || canonicalDirection || "GLOBAL"} responseEvent=${ev.responseEventId} status=RESOLVED resolvedPlan=${planIdentifier}`);
+        }
+
+        // Clear late flags on the allocated users in the User collection
         const userResult = await User.updateMany(
             {
                 role: "student",
                 $or: [
                     { userId: { $in: normalizedIds } },
+                    { userId: { $in: userIdsList } },
                     { _id: { $in: normalizedIds.filter((id) => mongoose.Types.ObjectId.isValid(id)) } }
                 ]
             },
@@ -523,7 +679,7 @@ export const resolveLateResponsesForPreviousPlan = async ({
             }
         );
 
-        console.log(`[LIFECYCLE] Resolved late response for ${userResult.modifiedCount} allocated student(s)`);
+        console.log(`[LIFECYCLE] Resolved ${lreResult.modifiedCount} LateResponseEvent(s) and cleared late flags for ${userResult.modifiedCount} user(s) (Plan: ${planIdentifier})`);
 
         return {
             success: true,
@@ -531,16 +687,23 @@ export const resolveLateResponsesForPreviousPlan = async ({
             updatedUsersCount: userResult.modifiedCount
         };
     } catch (err) {
-        console.error("[LIFECYCLE] Error resolving previous late responses:", err.message);
+        console.error("[LIFECYCLE] Error resolving late responses for plan:", err.message);
         return { success: false, error: err.message, resolvedCount: 0 };
     }
 };
 
 /**
+ * Backwards-compatible alias for resolveLateResponsesForPlan
+ */
+export const resolveLateResponsesForPreviousPlan = async (params) => {
+    return resolveLateResponsesForPlan(params);
+};
+
+/**
  * 5. GET ACTIVE LATE RESPONSES (AUTHORITATIVE)
- * Sourced directly from LateResponseEvent where status === 'ACTIVE'.
- * Used by GET /users/late-travel-responses, Admin Dashboard, and User Management.
- * Rule 4 & 5: One common list, no OUTWARD/INWARD late responses or direction-wise totals!
+ * Sourced STRICTLY from LateResponseEvent where status is OPEN or ACTIVE.
+ * Does NOT synthesize fake events from User collection flags.
+ * Does NOT perform state-changing side-effects (read-only idempotency).
  */
 export const getActiveLateResponses = async () => {
     const defaultResponse = {
@@ -564,29 +727,24 @@ export const getActiveLateResponses = async () => {
     }
 
     try {
-        // 1. Fetch active events from LateResponseEvent collection
+        // Fetch authoritative OPEN / ACTIVE events from LateResponseEvent collection
         const activeEvents = await LateResponseEvent.find({
-            status: "ACTIVE"
+            status: { $in: ["OPEN", "ACTIVE"] }
         }).sort({ responseSubmittedAt: -1, createdAt: -1 }).lean();
 
-        // 2. Fetch all student candidates from User collection who have travelStatus === 'Coming'
-        // and any late response flags, OR whose userId is in activeEvents
-        const activeEventUserIds = (activeEvents || []).map((e) => String(e.userId || "").trim()).filter(Boolean);
+        if (!activeEvents || activeEvents.length === 0) {
+            return defaultResponse;
+        }
 
-        const studentCandidates = await User.find({
+        const activeEventUserIds = activeEvents.map((e) => String(e.userId || "").trim()).filter(Boolean);
+        const activeUserIdsLower = activeEventUserIds.map((id) => id.toLowerCase());
+
+        // Fetch student details for these active events
+        const students = await User.find({
             role: "student",
             $or: [
-                {
-                    travelStatus: "Coming",
-                    $or: [
-                        { lateResponse: true },
-                        { isLateResponse: true },
-                        { lateResponseDetected: true }
-                    ]
-                },
-                {
-                    userId: { $in: activeEventUserIds }
-                }
+                { userId: { $in: activeEventUserIds } },
+                { userId: { $in: activeUserIdsLower } }
             ]
         })
             .select({
@@ -610,6 +768,7 @@ export const getActiveLateResponses = async () => {
                 lateResponseNotifiedAt: 1,
                 travelResponseSubmittedAt: 1,
                 lastTravelResponseAt: 1,
+                responseEventId: 1,
                 requiresReallocation: 1,
                 submittedPlanVersion: 1,
                 submittedApprovalEventId: 1,
@@ -620,132 +779,69 @@ export const getActiveLateResponses = async () => {
             .lean();
 
         const studentMap = new Map();
-        for (const s of studentCandidates) {
+        for (const s of students) {
             studentMap.set(String(s.userId).toLowerCase().trim(), s);
         }
 
-        const eventsByUserId = new Map();
-        const staleEventIdsToResolve = [];
+        const formattedList = [];
+        const unnotifiedEventKeys = [];
+        const seenKeys = new Set();
 
         for (const ev of activeEvents) {
             const uId = String(ev.userId || "").toLowerCase().trim();
             const student = studentMap.get(uId);
 
-            // Rule: Ignore acknowledged, resolved, old, or stale late-response events.
-            // If student travel status is no longer "Coming" or student is already allocated, resolve stale event.
-            const isAlreadyAllocated = Boolean(
-                student && (
-                    student.assignedVehicle ||
-                    student.allocatedBus?.isAllocated ||
-                    student.allocatedBus?.vehicleName ||
-                    student.allocatedBus?.inward?.isAllocated ||
-                    student.allocatedBus?.outward?.isAllocated ||
-                    student.allocationStatus === "Assigned" ||
-                    student.allocationStatus === "Re-assigned"
-                )
-            );
-
-            if (!student || student.travelStatus !== "Coming" || isAlreadyAllocated) {
-                staleEventIdsToResolve.push(ev._id);
-            } else if (!eventsByUserId.has(uId)) {
-                eventsByUserId.set(uId, ev);
+            // If the student travelStatus is no longer Coming (e.g. changed to Not Coming), skip
+            if (student && student.travelStatus && student.travelStatus !== "Coming") {
+                continue;
             }
-        }
 
-        // Asynchronously resolve stale events in the background
-        if (staleEventIdsToResolve.length > 0) {
-            LateResponseEvent.updateMany(
-                { _id: { $in: staleEventIdsToResolve } },
-                { $set: { status: "RESOLVED", resolvedAt: new Date(), resolutionReason: "Student status reset or allocated" } }
-            ).catch((err) => console.warn("[LIFECYCLE] Error resolving stale events:", err.message));
-        }
+            const eventKey = ev.eventKey || generateLateResponseEventKey(ev.userId, ev.direction, ev.responseEventId || ev.approvalEventId);
+            if (seenKeys.has(eventKey)) continue;
+            seenKeys.add(eventKey);
 
-        // 3. Collect unique qualifying students:
-        // Must have travelStatus === 'Coming', be unallocated, and have late response flag or active event
-        const seenUserIds = new Set();
-        const formattedList = [];
-        const unnotifiedEventKeys = [];
-
-        for (const student of studentCandidates) {
-            const uId = String(student.userId).toLowerCase().trim();
-            if (seenUserIds.has(uId)) continue;
-
-            // Must have travelStatus === 'Coming'
-            if (student.travelStatus !== "Coming") continue;
-
-            // Must not be already allocated
-            const isAlreadyAllocated = Boolean(
-                student.assignedVehicle ||
-                student.allocatedBus?.isAllocated ||
-                student.allocatedBus?.vehicleName ||
-                student.allocatedBus?.inward?.isAllocated ||
-                student.allocatedBus?.outward?.isAllocated ||
-                student.allocationStatus === "Assigned" ||
-                student.allocationStatus === "Re-assigned"
-            );
-            if (isAlreadyAllocated) continue;
-
-            // Must be flagged as late response or have an active event
-            const isLate = Boolean(
-                student.lateResponse ||
-                student.isLateResponse ||
-                student.lateResponseDetected ||
-                eventsByUserId.has(uId)
-            );
-            if (!isLate) continue;
-
-            seenUserIds.add(uId);
-
-            const ev = eventsByUserId.get(uId);
-            const responseTime = student.lateResponseAt || student.travelResponseSubmittedAt || student.lastTravelResponseAt || ev?.responseSubmittedAt || ev?.responseTimestamp || new Date();
-            const approvalEventId = ev?.approvalEventId || student.submittedApprovalEventId || "approved_plan";
-            const planApprovedAt = ev?.planApprovedAt || null;
-            const planVersion = ev?.planVersion || student.submittedPlanVersion || 1;
-
-            const eventKey = ev?.eventKey || generateLateResponseEventKey(student.userId, approvalEventId, planApprovedAt || responseTime);
-
-            // Determine if acknowledged / notified:
-            // A notification is considered acknowledged if:
-            // 1. student.lateResponseNotifiedAt is present
-            // 2. student.lateResponseNotifiedEventKeys contains the eventKey
-            // 3. LateResponseEvent has isNotified: true or notifiedAt
             const isNotified = Boolean(
-                student.lateResponseNotifiedAt ||
-                (Array.isArray(student.lateResponseNotifiedEventKeys) && student.lateResponseNotifiedEventKeys.includes(eventKey)) ||
-                ev?.isNotified ||
-                ev?.notifiedAt
+                ev.isNotified ||
+                ev.notifiedAt ||
+                student?.lateResponseNotifiedAt ||
+                (Array.isArray(student?.lateResponseNotifiedEventKeys) && student.lateResponseNotifiedEventKeys.includes(eventKey))
             );
 
             if (!isNotified) {
                 unnotifiedEventKeys.push(eventKey);
             }
 
+            const responseTime = ev.responseSubmittedAt || ev.responseTimestamp || student?.travelResponseSubmittedAt || new Date();
+
             formattedList.push({
-                _id: student._id || ev?._id,
-                userId: student.userId,
-                name: student.name || student.userId,
+                _id: ev._id,
+                userId: ev.userId,
+                name: student?.name || ev.userId,
+                direction: ev.direction || null,
                 travelStatus: "Coming",
                 currentTravelStatus: "Coming",
-                previousTravelStatus: student.previousTravelStatus || ev?.previousTravelStatus || "Pending",
+                previousTravelStatus: ev.previousTravelStatus || student?.previousTravelStatus || "Pending",
                 allocationStatus: "Unallocated",
                 lateResponse: true,
                 isLateResponse: true,
                 lateResponseDetected: true,
                 requiresReallocation: true,
+                responseEventId: ev.responseEventId || student?.responseEventId || null,
                 responseSubmittedAt: responseTime,
                 responseSubmittedTime: responseTime,
-                planApprovedAt,
-                planApprovalTime: planApprovedAt,
-                planVersion,
-                approvalEventId,
-                planId: ev?.planId || null,
+                planApprovedAt: ev.planApprovedAt || null,
+                planApprovalTime: ev.planApprovedAt || null,
+                planVersion: ev.planVersion || 1,
+                approvalEventId: ev.approvalEventId || null,
+                planId: ev.planId || null,
                 eventKey,
                 eventKeys: [eventKey],
                 isNotified,
                 isUnnotified: !isNotified,
+                status: ev.status || "OPEN",
                 processingStatus: isNotified ? "NOTIFIED" : "DETECTED",
-                stoppings: student.stoppings || "—",
-                city: student.city || "—",
+                stoppings: student?.stoppings || "—",
+                city: student?.city || "—",
                 busName: "Not Assigned",
                 routeName: "—",
                 seatNumber: "—",
@@ -776,4 +872,5 @@ export const getActiveLateResponses = async () => {
         return defaultResponse;
     }
 };
+
 

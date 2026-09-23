@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { HiArrowLeft } from "react-icons/hi";
 import api from "../services/api";
 import {
     normalizeLocation,
@@ -15,13 +16,8 @@ import {
     DEFAULT_LOCATION
 } from "../constants/locationConstants";
 import LocationSearchBox from "../components/LocationSearchBox";
-import {
-    getManualPlan,
-    confirmManualPlan,
-    resetManualPlan
-} from "../services/aiAgentService";
+import { confirmManualPlan, getActivePlan } from "../services/aiAgentService";
 import { extractPolylineLatLngs } from "../utils/routeGeometry";
-import ResetManualPlanModal from "../components/ResetManualPlanModal";
 import "../css/RouteManagement.css";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -51,11 +47,13 @@ export default function RouteManagement() {
     const [routes, setRoutes] = useState([]);
     const [vehicles, setVehicles] = useState([]);
     const [schedules, setSchedules] = useState([]);
+    const [outwardPlan, setOutwardPlan] = useState(null);
+    const [inwardPlan, setInwardPlan] = useState(null);
 
     // Single Unified Route Stop Form State
     const [routeName, setRouteName] = useState("");
-    const [routeDirection, setRouteDirection] = useState("INWARD");
-    const [directionFilter, setDirectionFilter] = useState("ALL");
+    const [routeDirection, setRouteDirection] = useState("OUTWARD");
+    const [directionFilter, setDirectionFilter] = useState("OUTWARD");
     const [selectedVehicle, setSelectedVehicle] = useState("");
     const [selectedStops, setSelectedStops] = useState([]);
     const [newStopCandidate, setNewStopCandidate] = useState(null);
@@ -70,13 +68,9 @@ export default function RouteManagement() {
     // AI Generated Route Inspection State (Read-only viewer)
     const [aiViewingRoute, setAiViewingRoute] = useState(null);
 
-    // Admin Manual Transportation Plan State
-    const [manualPlan, setManualPlan] = useState(null);
-    const [manualPlanLoading, setManualPlanLoading] = useState(false);
+    // Manual Plan Submission State (Submits configured routes to separate Admin Manual Plan page)
     const [planActionLoading, setPlanActionLoading] = useState(false);
-    const [activePlanDirection, setActivePlanDirection] = useState("INWARD");
-    const [showManualResetModal, setShowManualResetModal] = useState(false);
-    const [manualPlanResetting, setManualPlanResetting] = useState(false);
+    const [activePlanDirection, setActivePlanDirection] = useState("OUTWARD");
 
     // ==================================================
     // 1. VEHICLE ALLOCATION AVAILABILITY (SCHEDULED + AVAILABLE + UNASSIGNED)
@@ -91,15 +85,32 @@ export default function RouteManagement() {
             }
         });
 
-        // Set of vehicle IDs allocated to other active routes
-        const assignedVehicleIds = new Set(
+        const isBoth = String(routeDirection || "").toUpperCase().trim() === "BOTH";
+
+        // Direction-specific assignment check.
+        // Rules:
+        // - A BOTH route on the existing list occupies BOTH directions.
+        // - For BOTH new direction: exclude vehicles already on ANY route (INWARD, OUTWARD, or BOTH).
+        // - For INWARD/OUTWARD: exclude vehicles already on a same-direction route OR a BOTH route.
+        const getAssignedVehicleIds = (direction) => new Set(
             routes
-                .filter((r) => !editingRoute || String(r._id) !== String(editingRoute._id))
+                .filter((r) => {
+                    if (editingRoute && String(r._id) === String(editingRoute._id)) return false;
+                    const rDir = String(r.direction || "INWARD").toUpperCase().trim();
+                    // A BOTH route in the list occupies every direction
+                    if (rDir === "BOTH") return true;
+                    return rDir === direction;
+                })
                 .map((r) => String(r.assignedVehicle?._id || r.assignedVehicle || ""))
                 .filter(Boolean)
         );
 
-        // Filter vehicles: MUST have schedule === "Available" AND NOT allocated to other routes
+        const currentDirection = isBoth ? null : ((String(routeDirection || "INWARD").toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD");
+        const assignedOutward = isBoth ? getAssignedVehicleIds("OUTWARD") : null;
+        const assignedInward = isBoth ? getAssignedVehicleIds("INWARD") : null;
+        const assignedVehicleIds = isBoth ? null : getAssignedVehicleIds(currentDirection);
+
+        // Filter vehicles: MUST have schedule === "Available" AND NOT allocated to other routes in the relevant direction(s)
         return vehicles.filter((v) => {
             const vId = String(v._id);
 
@@ -113,9 +124,16 @@ export default function RouteManagement() {
                 }
             }
 
-            // Check if allocated to another route
-            if (assignedVehicleIds.has(vId)) {
-                return false;
+            // For BOTH: vehicle must not be allocated in either direction
+            if (isBoth) {
+                if (assignedOutward.has(vId) || assignedInward.has(vId)) {
+                    return false;
+                }
+            } else {
+                // Check if allocated to another route in the SAME direction
+                if (assignedVehicleIds.has(vId)) {
+                    return false;
+                }
             }
 
             // Check if vehicle is scheduled and available in Schedule Management
@@ -126,30 +144,104 @@ export default function RouteManagement() {
 
             return true;
         });
-    }, [routes, vehicles, schedules, editingRoute]);
+    }, [routes, vehicles, schedules, editingRoute, routeDirection]);
 
     const assignedVehicleObj = useMemo(() => {
         return vehicles.find((v) => String(v._id) === String(selectedVehicle)) || null;
     }, [vehicles, selectedVehicle]);
 
-    const inwardRoutesCount = useMemo(
-        () => routes.filter((r) => (r.direction || "INWARD") === "INWARD").length,
-        [routes]
-    );
-    const outwardRoutesCount = useMemo(
-        () => routes.filter((r) => r.direction === "OUTWARD").length,
+    // If selected vehicle is not available in the active direction (when not editing), clear it
+    useEffect(() => {
+        if (selectedVehicle && !editingRoute) {
+            const isAvailable = availableVehicles.some((v) => String(v._id) === String(selectedVehicle));
+            if (!isAvailable) {
+                setSelectedVehicle("");
+            }
+        }
+    }, [availableVehicles, selectedVehicle, editingRoute]);
+
+    const outwardRoutes = useMemo(
+        () => routes.filter((r) => {
+            const d = String(r.direction || "").toUpperCase().trim();
+            return d === "OUTWARD" || d === "BOTH";
+        }),
         [routes]
     );
 
-    const filteredRoutes = useMemo(() => {
-        if (directionFilter === "INWARD") {
-            return routes.filter((r) => (r.direction || "INWARD") === "INWARD");
+    const inwardRoutes = useMemo(
+        () => routes.filter((r) => {
+            const d = String(r.direction || "").toUpperCase().trim();
+            return d === "INWARD" || d === "BOTH";
+        }),
+        [routes]
+    );
+
+    const inwardRoutesCount = inwardRoutes.length;
+    const outwardRoutesCount = outwardRoutes.length;
+
+    // Metric stats calculations for both directions
+    const outwardAllocatedSeats = useMemo(() => {
+        return outwardPlan?.allocatedSeats ?? outwardRoutes.reduce((s, r) => s + Number(r.outwardAllocatedSeats ?? r.allocatedSeats ?? 0), 0);
+    }, [outwardPlan, outwardRoutes]);
+
+    const outwardTotalCapacity = useMemo(() => {
+        return outwardPlan?.totalCapacity ?? outwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || 0), 0);
+    }, [outwardPlan, outwardRoutes]);
+
+    const outwardVehiclesCount = useMemo(() => {
+        return outwardRoutes.filter(r => r.assignedVehicle || r.vehicleName).length;
+    }, [outwardRoutes]);
+
+    const outwardPlanStatus = useMemo(() => {
+        return outwardPlan
+            ? (outwardPlan.isApproved ? "Approved & Active" : (outwardPlan.isSubmitted ? "Submitted (Pending)" : "Saved Draft"))
+            : (outwardRoutes.length > 0 ? "Routes Configured" : "No Plan Available");
+    }, [outwardPlan, outwardRoutes]);
+
+    const inwardAllocatedSeats = useMemo(() => {
+        return inwardPlan?.allocatedSeats ?? inwardRoutes.reduce((s, r) => s + Number(r.inwardAllocatedSeats ?? r.allocatedSeats ?? 0), 0);
+    }, [inwardPlan, inwardRoutes]);
+
+    const inwardTotalCapacity = useMemo(() => {
+        return inwardPlan?.totalCapacity ?? inwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || 0), 0);
+    }, [inwardPlan, inwardRoutes]);
+
+    const inwardVehiclesCount = useMemo(() => {
+        return inwardRoutes.filter(r => r.assignedVehicle || r.vehicleName).length;
+    }, [inwardRoutes]);
+
+    const inwardPlanStatus = useMemo(() => {
+        return inwardPlan
+            ? (inwardPlan.isApproved ? "Approved & Active" : (inwardPlan.isSubmitted ? "Submitted (Pending)" : "Saved Draft"))
+            : (inwardRoutes.length > 0 ? "Routes Configured" : "No Plan Available");
+    }, [inwardPlan, inwardRoutes]);
+
+    // Ordered stops helper [1. Source -> 2. Stop -> ... -> Destination]
+    const getRouteOrderedStops = (route) => {
+        const stopsList = [];
+        if (route.source?.name) {
+            stopsList.push(route.source.name);
+        } else if (typeof route.source === "string" && route.source) {
+            stopsList.push(route.source);
         }
-        if (directionFilter === "OUTWARD") {
-            return routes.filter((r) => r.direction === "OUTWARD");
+        if (Array.isArray(route.stops)) {
+            route.stops.forEach((st) => {
+                const name = typeof st === "string" ? st : (st.name || st.stopName);
+                if (name && !stopsList.includes(name)) {
+                    stopsList.push(name);
+                }
+            });
         }
-        return routes;
-    }, [routes, directionFilter]);
+        if (route.destination?.name && !stopsList.includes(route.destination.name)) {
+            stopsList.push(route.destination.name);
+        } else if (typeof route.destination === "string" && route.destination && !stopsList.includes(route.destination)) {
+            stopsList.push(route.destination);
+        }
+        if (stopsList.length === 0) {
+            return ["Origin Hub", "Corridor Stops", "Destination Hub"];
+        }
+        return stopsList;
+    };
 
     const handleSelectStopCandidateRef = useRef(null);
 
@@ -265,10 +357,11 @@ export default function RouteManagement() {
     const loadData = async () => {
         try {
             setLoading(true);
-            const [routeRes, vehicleRes, scheduleRes] = await Promise.all([
+            const [routeRes, vehicleRes, scheduleRes, activePlanRes] = await Promise.all([
                 api.get("/routes"),
                 api.get("/vehicles"),
-                api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
+                api.get("/schedules").catch(() => ({ data: { schedules: [] } })),
+                getActivePlan({ forceRefresh: true }).catch(() => null)
             ]);
 
             const routeData = Array.isArray(routeRes.data)
@@ -281,6 +374,14 @@ export default function RouteManagement() {
                 : vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
             setVehicles(vehicleData);
             setSchedules(scheduleRes.data?.schedules || []);
+
+            if (activePlanRes?.success) {
+                setOutwardPlan(activePlanRes.outwardPlan || null);
+                setInwardPlan(activePlanRes.inwardPlan || null);
+            } else {
+                setOutwardPlan(null);
+                setInwardPlan(null);
+            }
         } catch (err) {
             console.error("Load Data Error:", err);
             setError("Unable to load routes and vehicle schedules.");
@@ -291,10 +392,11 @@ export default function RouteManagement() {
 
     const loadDataSilently = async () => {
         try {
-            const [routeRes, vehicleRes, scheduleRes] = await Promise.all([
+            const [routeRes, vehicleRes, scheduleRes, activePlanRes] = await Promise.all([
                 api.get("/routes"),
                 api.get("/vehicles"),
-                api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
+                api.get("/schedules").catch(() => ({ data: { schedules: [] } })),
+                getActivePlan({ forceRefresh: true }).catch(() => null)
             ]);
 
             const routeData = Array.isArray(routeRes.data)
@@ -306,85 +408,48 @@ export default function RouteManagement() {
                 ? vehicleRes.data
                 : vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
             setVehicles(vehicleData);
-
             setSchedules(scheduleRes.data?.schedules || []);
+
+            if (activePlanRes?.success) {
+                setOutwardPlan(activePlanRes.outwardPlan || null);
+                setInwardPlan(activePlanRes.inwardPlan || null);
+            }
         } catch {
             // silent background sync
         }
     };
 
-    const fetchManualPlan = useCallback(async (direction = null) => {
-        try {
-            setManualPlanLoading(true);
-            const dir = direction || activePlanDirection || "INWARD";
-            const res = await getManualPlan({ direction: dir });
-            if (res?.success) {
-                setManualPlan(res.plan);
-            }
-        } catch (err) {
-            console.error("Error loading manual plan:", err);
-        } finally {
-            setManualPlanLoading(false);
-        }
-    }, [activePlanDirection]);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        const runFetch = async () => {
-            try {
-                setManualPlanLoading(true);
-                const dir = activePlanDirection || "INWARD";
-                const res = await getManualPlan({ direction: dir });
-                if (!cancelled && res?.success) {
-                    setManualPlan(res.plan);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    console.error("Error loading manual plan:", err);
-                }
-            } finally {
-                if (!cancelled) {
-                    setManualPlanLoading(false);
-                }
-            }
-        };
-
-        runFetch();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [activePlanDirection]);
-
-    const handleManualPlanOk = async () => {
+    const handleManualPlanOk = async (targetDir = null) => {
+        const dirToSubmit = targetDir || activePlanDirection || "OUTWARD";
         try {
             setPlanActionLoading(true);
             setError("");
             setSuccessMessage("");
 
             const routesInDir = (routes || []).filter((r) => {
-                const d = (String(r.direction || "").toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
-                return d === activePlanDirection;
+                const d = String(r.direction || "").toUpperCase().trim();
+                return d === dirToSubmit || d === "BOTH";
             });
             const assignedInDir = routesInDir.filter((r) => Boolean(r.assignedVehicle || r.vehicleName));
 
-            if (assignedInDir.length === 0 && (!manualPlan?.buses || manualPlan.buses.length === 0)) {
-                const msg = `No routes with assigned buses found for ${activePlanDirection}. Please allocate an available bus to at least one ${activePlanDirection} route before clicking OK.`;
+            if (assignedInDir.length === 0) {
+                const msg = `No routes with assigned buses found for ${dirToSubmit}. Please allocate an available bus to at least one ${dirToSubmit} route before clicking OK.`;
                 setError(msg);
                 toast.error(msg);
                 return;
             }
 
-            const res = await confirmManualPlan({ direction: activePlanDirection });
+            const res = await confirmManualPlan({ direction: dirToSubmit });
             if (res?.success) {
-                const msg = res.message || `Admin manual ${activePlanDirection} plan confirmed and submitted! Open AI Route Management to review and approve.`;
-                setSuccessMessage(msg);
+                const msg = res.message || `Admin manual ${dirToSubmit} plan submitted! Opening Final Confirmation...`;
                 toast.success(msg);
                 try {
-                    localStorage.setItem("active_manual_plan_direction", activePlanDirection);
+                    localStorage.setItem("active_manual_plan_direction", dirToSubmit);
+                    localStorage.setItem("active_confirmation_direction", dirToSubmit);
+                    localStorage.setItem("active_confirmation_plan_type", "ADMIN");
                 } catch (e) {}
-                await Promise.all([loadDataSilently(), fetchManualPlan(activePlanDirection)]);
+                // Open the existing Final Confirmation page with the manual plan data
+                navigate(`/admin/plan-confirmation?direction=${dirToSubmit}&type=ADMIN`);
             }
         } catch (err) {
             console.error("Confirm manual plan error:", err);
@@ -393,51 +458,6 @@ export default function RouteManagement() {
             toast.error(msg);
         } finally {
             setPlanActionLoading(false);
-        }
-    };
-
-    const handleResetManualPlan = async () => {
-        try {
-            setManualPlanResetting(true);
-            setError("");
-            setSuccessMessage("");
-            const res = await resetManualPlan({ direction: activePlanDirection });
-            if (res?.success) {
-                const msg = res.message || `Admin manual ${activePlanDirection} plan reset successfully.`;
-                setSuccessMessage(msg);
-                toast.success(msg);
-                setShowManualResetModal(false);
-
-                try {
-                    localStorage.removeItem("active_manual_plan_direction");
-                    const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
-                    if (activeSelection?.planType === "ADMIN" || activeSelection?.planType === "MANUAL") {
-                        localStorage.removeItem("active_ai_selection");
-                    }
-                    if (activePlanDirection === "OUTWARD") {
-                        const storedOut = JSON.parse(localStorage.getItem("active_outward_plan") || "null");
-                        if (storedOut?.planType === "ADMIN" || storedOut?.planType === "MANUAL") {
-                            localStorage.removeItem("active_outward_plan");
-                        }
-                    } else {
-                        const storedIn = JSON.parse(localStorage.getItem("active_inward_plan") || "null");
-                        if (storedIn?.planType === "ADMIN" || storedIn?.planType === "MANUAL") {
-                            localStorage.removeItem("active_inward_plan");
-                        }
-                    }
-                } catch (e) {}
-
-                await Promise.all([loadDataSilently(), fetchManualPlan(activePlanDirection)]);
-            } else {
-                throw new Error(res?.message || "Failed to reset manual plan.");
-            }
-        } catch (err) {
-            console.error("Reset manual plan error:", err);
-            const msg = err.response?.data?.message || err.message || "Failed to reset manual plan.";
-            setError(msg);
-            toast.error(msg);
-        } finally {
-            setManualPlanResetting(false);
         }
     };
 
@@ -764,15 +784,12 @@ export default function RouteManagement() {
             return;
         }
 
+        const isBoth = String(routeDirection || "").toUpperCase().trim() === "BOTH";
+
         try {
             setLoading(true);
             setError("");
             setSuccessMessage("");
-
-            // Internally derive source, stops, destination from unified sequence
-            const source = selectedStops[0];
-            const destination = selectedStops[selectedStops.length - 1];
-            const stops = selectedStops.length > 2 ? selectedStops.slice(1, -1) : [];
 
             let roadGeometry = [];
             if (lineRef.current && typeof lineRef.current.getLatLngs === "function") {
@@ -783,36 +800,75 @@ export default function RouteManagement() {
                 }));
             }
 
-            const payload = {
-                routeName: routeName.trim(),
-                direction: routeDirection,
-                source,
-                stops,
-                destination,
-                assignedVehicle: selectedVehicle,
-                roadGeometry
-            };
+            if (isBoth && !editingRoute) {
+                // BOTH: save ONE route record with direction "BOTH"
+                // The backend now accepts this and returns the route in both Outward and Inward tabs.
+                const source = selectedStops[0];
+                const destination = selectedStops[selectedStops.length - 1];
+                const stops = selectedStops.length > 2 ? selectedStops.slice(1, -1) : [];
 
-            if (editingRoute) {
-                await api.put(`/routes/${editingRoute._id}`, payload);
-                const msg = `Route "${routeName.trim()}" updated successfully!`;
+                const payload = {
+                    routeName: routeName.trim(),
+                    direction: "BOTH",
+                    source,
+                    stops,
+                    destination,
+                    assignedVehicle: selectedVehicle,
+                    roadGeometry
+                };
+
+                await api.post("/routes", payload);
+
+                const msg = `Route "${routeName.trim()}" saved with BOTH directions (Outward + Inward)!`;
                 setSuccessMessage(msg);
                 toast.success(msg);
             } else {
-                await api.post("/routes", payload);
-                const msg = `Route "${routeName.trim()}" created successfully!`;
-                setSuccessMessage(msg);
-                toast.success(msg);
+                // Single direction (OUTWARD or INWARD), or editing an existing BOTH route
+                const effectiveDirection = isBoth ? "BOTH" : routeDirection;
+                const source = selectedStops[0];
+                const destination = selectedStops[selectedStops.length - 1];
+                const stops = selectedStops.length > 2 ? selectedStops.slice(1, -1) : [];
+
+                const payload = {
+                    routeName: routeName.trim(),
+                    direction: effectiveDirection,
+                    source,
+                    stops,
+                    destination,
+                    assignedVehicle: selectedVehicle,
+                    roadGeometry
+                };
+
+                if (editingRoute) {
+                    await api.put(`/routes/${editingRoute._id}`, payload);
+                    const msg = `Route "${routeName.trim()}" updated successfully!`;
+                    setSuccessMessage(msg);
+                    toast.success(msg);
+                } else {
+                    await api.post("/routes", payload);
+                    const msg = `Route "${routeName.trim()}" created successfully!`;
+                    setSuccessMessage(msg);
+                    toast.success(msg);
+                }
             }
 
             await loadDataSilently();
             clearRoute();
 
-            if (routeDirection && routeDirection !== activePlanDirection) {
-                setActivePlanDirection(routeDirection);
-                fetchManualPlan(routeDirection);
+            // After saving:
+            // - If route was BOTH: keep the current active filter tab (OUTWARD or INWARD), since BOTH route appears in both lists.
+            // - If route was OUTWARD: switch to OUTWARD tab.
+            // - If route was INWARD: switch to INWARD tab.
+            if (isBoth) {
+                setActivePlanDirection(directionFilter === "INWARD" ? "INWARD" : "OUTWARD");
             } else {
-                fetchManualPlan(activePlanDirection);
+                if (routeDirection === "OUTWARD") {
+                    setDirectionFilter("OUTWARD");
+                    setActivePlanDirection("OUTWARD");
+                } else if (routeDirection === "INWARD") {
+                    setDirectionFilter("INWARD");
+                    setActivePlanDirection("INWARD");
+                }
             }
         } catch (err) {
             console.error("Save Route Error:", err);
@@ -827,7 +883,9 @@ export default function RouteManagement() {
     const editRoute = (route) => {
         setEditingRoute(route);
         setRouteName(route.routeName || "");
-        setRouteDirection(route.direction === "OUTWARD" ? "OUTWARD" : "INWARD");
+        // Preserve the actual stored direction — including "BOTH"
+        const dir = String(route.direction || "INWARD").toUpperCase().trim();
+        setRouteDirection(dir === "OUTWARD" || dir === "BOTH" ? dir : "INWARD");
         setSelectedVehicle(route.assignedVehicle?._id || route.assignedVehicle || "");
 
         // Reconstruct unified sequence: source + stops + destination
@@ -881,7 +939,6 @@ export default function RouteManagement() {
                 clearRoute();
             }
             setSuccessMessage(`Route "${route.routeName}" deleted successfully.`);
-            fetchManualPlan(activePlanDirection);
         } catch (err) {
             console.error("Delete Route Error:", err);
             setError(err.response?.data?.message || err.message || "Unable to delete route.");
@@ -939,7 +996,20 @@ export default function RouteManagement() {
 
     return (
         <div className={`route-container ${fullscreen ? "route-fullscreen" : ""}`}>
-            {!fullscreen && <h2>🛣️ Route Management</h2>}
+            {!fullscreen && (
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px" }}>
+                    <button
+                        type="button"
+                        className="route-back-btn"
+                        onClick={() => navigate(-1)}
+                        aria-label="Go back"
+                    >
+                        <HiArrowLeft size={16} />
+                        Back
+                    </button>
+                    <h2 style={{ margin: 0 }}>🛣️ Route Management</h2>
+                </div>
+            )}
 
             {error && <div className="route-error">{error}</div>}
             {successMessage && (
@@ -957,161 +1027,7 @@ export default function RouteManagement() {
                 </div>
             )}
 
-            {/* MANUAL TRANSPORTATION PLAN CONTROL & APPROVAL BAR */}
-            {!fullscreen && (
-                <section className="manual-plan-control-card">
-                    <div className="manual-plan-control-header">
-                        <div className="plan-title-col">
-                            <div className="plan-title-row">
-                                <span className="plan-type-chip">👨‍💼 ADMIN MANUAL PLAN</span>
-                                <span className={`plan-approval-badge ${manualPlan?.isApproved ? "badge-approved" : (manualPlan?.isSubmitted ? "badge-ready" : ((manualPlan?.totalRoutes || 0) > 0 ? "badge-saved" : "badge-pending"))}`}>
-                                    {manualPlan?.isApproved
-                                        ? "✓ Approved & Active in MongoDB"
-                                        : (manualPlan?.isSubmitted
-                                            ? "✓ Confirmed & Submitted to AI Agent"
-                                            : ((manualPlan?.totalRoutes || 0) > 0
-                                                ? "✓ Saved / Click OK to Submit"
-                                                : "⏳ Draft / No Routes Configured"))}
-                                </span>
-                            </div>
-                            <p className="plan-title-sub">
-                                Live capacity validation &amp; passenger seat allocation. Bus details are visible to students only after approval.
-                            </p>
-                        </div>
-
-                        <div className="plan-direction-toggle-group">
-                            <span className="toggle-label">Inspect Direction:</span>
-                            <div className="plan-direction-pills">
-                                <button
-                                    type="button"
-                                    className={`dir-pill-btn ${activePlanDirection === "INWARD" ? "active inward" : ""}`}
-                                    onClick={() => setActivePlanDirection("INWARD")}
-                                >
-                                    🟢 Inward (To College)
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`dir-pill-btn ${activePlanDirection === "OUTWARD" ? "active outward" : ""}`}
-                                    onClick={() => setActivePlanDirection("OUTWARD")}
-                                >
-                                    🔵 Outward (From College)
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Capacity & Demand Metrics */}
-                    <div className="plan-metrics-row">
-                        <div className="plan-metric-item">
-                            <span className="metric-label">Confirmed Coming Students</span>
-                            {manualPlanLoading ? (
-                                <span className="metric-loading-inline">Loading...</span>
-                            ) : (
-                                <strong className="metric-num">{manualPlan?.totalComingUsers ?? 0}</strong>
-                            )}
-                            <span className="metric-sub">Daily Travel Confirmed</span>
-                        </div>
-                        <div className="plan-metric-item">
-                            <span className="metric-label">Fleet Bus Capacity</span>
-                            {manualPlanLoading ? (
-                                <span className="metric-loading-inline">Loading...</span>
-                            ) : (
-                                <strong className="metric-num">{manualPlan?.totalCapacity ?? 0}</strong>
-                            )}
-                            <span className="metric-sub">{manualPlan?.totalRoutes ?? 0} Routes Scheduled</span>
-                        </div>
-                        <div className="plan-metric-item">
-                            <span className="metric-label">Allocated Seats</span>
-                            {manualPlanLoading ? (
-                                <span className="metric-loading-inline">Loading...</span>
-                            ) : (
-                                <strong className="metric-num text-success">{manualPlan?.assignedUsers ?? 0}</strong>
-                            )}
-                            <span className="metric-sub">
-                                {manualPlan?.totalCapacity > 0
-                                    ? `${Math.round(((manualPlan?.assignedUsers || 0) / manualPlan.totalCapacity) * 100)}% Fleet Load`
-                                    : "No capacity"}
-                            </span>
-                        </div>
-                        <div className="plan-metric-item">
-                            <span className="metric-label">Standby / Unallocated</span>
-                            {manualPlanLoading ? (
-                                <span className="metric-loading-inline">Loading...</span>
-                            ) : (
-                                <strong className={`metric-num ${manualPlan?.unassignedUsers > 0 ? "text-danger" : ""}`}>
-                                    {manualPlan?.unassignedUsers ?? 0}
-                                </strong>
-                            )}
-                            <span className="metric-sub">
-                                {manualPlan?.unassignedUsers > 0 ? "⚠️ Capacity Exceeded" : "✓ All Accommodated"}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Warnings Banner */}
-                    {manualPlan?.warnings && manualPlan.warnings.length > 0 && (
-                        <div className="plan-warnings-banner">
-                            <div className="warning-heading">
-                                <span>⚠️</span>
-                                <strong>Fleet Capacity &amp; Route Configuration Warnings:</strong>
-                            </div>
-                            <ul className="warning-list">
-                                {manualPlan.warnings.map((warn, i) => (
-                                    <li key={i}>{warn}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-
-                    {/* Action Row */}
-                    <div className="manual-plan-actions-row">
-                        <div className="status-hint">
-                            {manualPlan?.isApproved ? (
-                                <span>
-                                    🟢 <strong>Plan Active in MongoDB:</strong> All confirmed students are currently seeing their allocated <strong>{activePlanDirection}</strong> buses, stops, and seat numbers.
-                                </span>
-                            ) : manualPlan?.isSubmitted ? (
-                                <span>
-                                    ✓ <strong>Plan Confirmed &amp; Submitted:</strong> Confirmed {activePlanDirection} Manual Plan Submitted. Ready for admin review and final approval.
-                                </span>
-                            ) : (
-                                <span>
-                                    Click <strong>"✓ OK"</strong> to confirm and submit these {activePlanDirection} routes for approval.
-                                </span>
-                            )}
-                        </div>
-
-                        <div className="plan-btn-group" style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                            <button
-                                type="button"
-                                className="btn-ok-manual"
-                                onClick={handleManualPlanOk}
-                                disabled={planActionLoading || manualPlanResetting}
-                                title={((manualPlan?.totalRoutes || 0) > 0) ? `Confirm & submit ${activePlanDirection} plan to AI Route Management` : `Assign a bus to at least one ${activePlanDirection} route first`}
-                                style={{
-                                    cursor: (planActionLoading || manualPlanResetting) ? "wait" : "pointer"
-                                }}
-                            >
-                                {planActionLoading ? "⏳ Submitting..." : "✓ OK"}
-                            </button>
-
-                            <button
-                                type="button"
-                                className="btn-reset-manual"
-                                onClick={() => setShowManualResetModal(true)}
-                                disabled={planActionLoading || manualPlanResetting}
-                                title={`Reset Admin Manual ${activePlanDirection} Plan and clear manual allocations`}
-                                style={{
-                                    cursor: (planActionLoading || manualPlanResetting) ? "wait" : "pointer"
-                                }}
-                            >
-                                {manualPlanResetting ? "⏳ Resetting..." : "🔄 Reset Manual Plan"}
-                            </button>
-                        </div>
-                    </div>
-                </section>
-            )}
-
+            {/* Main Interactive Route Layout */}
             <div className="route-layout">
                 {/* 100% INTERACTIVE ROAD MAP */}
                 <div className="map-section">
@@ -1238,16 +1154,6 @@ export default function RouteManagement() {
                                     <div style={{ marginBottom: "14px" }}>
                                         <label>Route Direction</label>
                                         <div className="direction-selector-group">
-                                            <label className={`direction-radio-label ${routeDirection === "INWARD" ? "active-inward" : ""}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="routeDirection"
-                                                    value="INWARD"
-                                                    checked={routeDirection === "INWARD"}
-                                                    onChange={() => setRouteDirection("INWARD")}
-                                                />
-                                                🟢 INWARD (Residential → College)
-                                            </label>
                                             <label className={`direction-radio-label ${routeDirection === "OUTWARD" ? "active-outward" : ""}`}>
                                                 <input
                                                     type="radio"
@@ -1258,7 +1164,32 @@ export default function RouteManagement() {
                                                 />
                                                 🔵 OUTWARD (College → Residential)
                                             </label>
+                                            <label className={`direction-radio-label ${routeDirection === "INWARD" ? "active-inward" : ""}`}>
+                                                <input
+                                                    type="radio"
+                                                    name="routeDirection"
+                                                    value="INWARD"
+                                                    checked={routeDirection === "INWARD"}
+                                                    onChange={() => setRouteDirection("INWARD")}
+                                                />
+                                                🟢 INWARD (Residential → College)
+                                            </label>
+                                            <label className={`direction-radio-label ${routeDirection === "BOTH" ? "active-both" : ""}`}>
+                                                <input
+                                                    type="radio"
+                                                    name="routeDirection"
+                                                    value="BOTH"
+                                                    checked={routeDirection === "BOTH"}
+                                                    onChange={() => setRouteDirection("BOTH")}
+                                                />
+                                                🔄 BOTH (Outward + Inward)
+                                            </label>
                                         </div>
+                                        {routeDirection === "BOTH" && (
+                                            <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#7c3aed", fontWeight: "600", lineHeight: "1.5" }}>
+                                                ⚡ BOTH mode: Saves a single route configuration that appears in both <strong>Outward</strong> and <strong>Inward</strong> lists with the same assigned vehicle.
+                                            </p>
+                                        )}
                                     </div>
 
                                     <div>
@@ -1441,138 +1372,216 @@ export default function RouteManagement() {
                                     </button>
                                 </div>
 
-                                {/* 3. SAVED ROUTES LIST */}
+                                {/* 3. SAVED ROUTES & TRANSPORTATION PLANS */}
                                 <section className="route-card">
-                                    <div className="section-title">
-                                        <h3>Saved Routes ({loading ? "..." : filteredRoutes.length})</h3>
-                                        <span>{loading ? "..." : routes.length} total</span>
-                                    </div>
-                                    <div className="saved-routes-hint" style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 10px 0" }}>
-                                        Click "✓ OK" to confirm and submit these {activePlanDirection} routes for approval.
-                                    </div>
-
-                                    {/* Direction Filter Tabs */}
-                                    <div className="direction-filter-tabs">
-                                        <button
-                                            type="button"
-                                            className={`dir-filter-tab ${directionFilter === "ALL" ? "active" : ""}`}
-                                            onClick={() => setDirectionFilter("ALL")}
-                                        >
-                                            All ({loading ? "..." : routes.length})
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={`dir-filter-tab ${directionFilter === "INWARD" ? "active inward" : ""}`}
-                                            onClick={() => setDirectionFilter("INWARD")}
-                                        >
-                                            🟢 Inward ({loading ? "..." : inwardRoutesCount})
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={`dir-filter-tab ${directionFilter === "OUTWARD" ? "active outward" : ""}`}
-                                            onClick={() => setDirectionFilter("OUTWARD")}
-                                        >
-                                            🔵 Outward ({loading ? "..." : outwardRoutesCount})
-                                        </button>
-                                    </div>
-
-                                    {filteredRoutes.length === 0 ? (
-                                        <div className="empty-stops">
-                                            {loading
-                                                ? "Loading saved routes..."
-                                                : routes.length === 0
-                                                ? "No saved routes found. Create a route above."
-                                                : `No ${directionFilter.toLowerCase()} routes found.`}
+                                    {/* Direction Filter Tabs & Header */}
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+                                        <div>
+                                            <h3 style={{ margin: 0, fontSize: "17px", color: "#0f172a" }}>Route Management</h3>
+                                            <span style={{ fontSize: "12px", color: "#64748b" }}>
+                                                {routes.length} total saved routes ({outwardRoutes.length} Outward · {inwardRoutes.length} Inward)
+                                            </span>
                                         </div>
-                                    ) : (
-                                        <div className="saved-routes">
-                                            {filteredRoutes.map((route) => {
-                                                const vehicleName =
-                                                    route.assignedVehicle?.vehicleName ||
-                                                    route.vehicleName ||
-                                                    "Unassigned Bus";
-                                                const capacity =
-                                                    route.assignedVehicle?.capacity ||
-                                                    route.capacity ||
-                                                    0;
-                                                const source = route.source;
-                                                const stops = Array.isArray(route.stops) ? route.stops : [];
-                                                const dest = route.destination;
 
-                                                const matchingBus = (manualPlan?.buses || manualPlan?.routes || []).find(
-                                                    (b) => String(b.routeId) === String(route._id) || b.routeName === route.routeName
-                                                );
-                                                const allocatedCount = matchingBus?.assignedUsers ?? 0;
-                                                const remainingCount = matchingBus?.remainingSeats ?? Math.max(0, capacity - allocatedCount);
+                                        <div className="direction-filter-tabs">
+                                            <button
+                                                type="button"
+                                                className={`dir-filter-tab ${directionFilter === "OUTWARD" ? "active outward" : ""}`}
+                                                onClick={() => {
+                                                    setDirectionFilter("OUTWARD");
+                                                    setActivePlanDirection("OUTWARD");
+                                                }}
+                                            >
+                                                🔵 OUTWARD ({loading ? "..." : outwardRoutesCount})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={`dir-filter-tab ${directionFilter === "INWARD" ? "active inward" : ""}`}
+                                                onClick={() => {
+                                                    setDirectionFilter("INWARD");
+                                                    setActivePlanDirection("INWARD");
+                                                }}
+                                            >
+                                                🟢 INWARD ({loading ? "..." : inwardRoutesCount})
+                                            </button>
+                                        </div>
+                                    </div>
 
-                                                return (
-                                                    <div className="saved-route" key={route._id}>
-                                                        <div className="saved-route-header">
-                                                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                                                <strong>{route.routeName}</strong>
-                                                                <span className={`direction-badge ${route.direction === "OUTWARD" ? "outward" : "inward"}`}>
-                                                                    {route.direction === "OUTWARD" ? "🔵 OUTWARD" : "🟢 INWARD"}
-                                                                </span>
-                                                            </div>
-                                                            <span style={{ fontSize: "13px", fontWeight: "600" }}>
-                                                                🚌 {vehicleName} {capacity > 0 ? (
-                                                                    matchingBus ? (
-                                                                        <span style={{ marginLeft: "4px", color: remainingCount > 0 ? "#15803d" : "#dc2626" }}>
-                                                                            • <strong>{allocatedCount} / {capacity}</strong> seats ({remainingCount} left)
-                                                                        </span>
-                                                                    ) : (
-                                                                        `(${capacity} seats)`
-                                                                    )
-                                                                ) : "(No vehicle)"}
+                                    {/* Helper to render a single route card */}
+                                    {(() => {
+                                        // renderSingleRoute: displayDirection overrides the badge for BOTH routes
+                                        // so they show the correct 🔵/🟢 badge depending on which tab they appear in.
+                                        const renderSingleRoute = (route, displayDirection) => {
+                                            const vehicleName =
+                                                route.assignedVehicle?.vehicleName ||
+                                                route.vehicleName ||
+                                                "";
+                                            const capacity = Number(
+                                                route.assignedVehicle?.capacity ||
+                                                route.capacity ||
+                                                route.totalSeats ||
+                                                0
+                                            );
+                                            const allocatedSeats = Number(
+                                                (displayDirection === "OUTWARD" ? route.outwardAllocatedSeats : route.inwardAllocatedSeats) ??
+                                                route.allocatedSeats ??
+                                                0
+                                            );
+                                            const remainingSeats = Number(
+                                                Math.max(0, capacity - allocatedSeats)
+                                            );
+                                            const hasVehicle = Boolean(vehicleName && capacity > 0);
+                                            const isFull = hasVehicle && (remainingSeats === 0 || route.isFull);
+                                            const orderedStops = getRouteOrderedStops(route);
+
+                                            // Determine effective direction for badge display:
+                                            // When rendered in Outward section -> 🔵 OUTWARD
+                                            // When rendered in Inward section -> 🟢 INWARD
+                                            const routeDir = String(route.direction || "").toUpperCase().trim();
+                                            const effectiveDisplayDir = displayDirection || (routeDir === "BOTH" ? "OUTWARD" : routeDir);
+                                            const badgeIsOutward = effectiveDisplayDir === "OUTWARD";
+                                            const badgeClass = badgeIsOutward ? "outward" : "inward";
+                                            const badgeLabel = badgeIsOutward ? "🔵 OUTWARD" : "🟢 INWARD";
+
+                                            return (
+                                                <div className="saved-route" key={`${route._id}-${effectiveDisplayDir}`}>
+                                                    <div className="saved-route-header">
+                                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                            <strong>{route.routeName}</strong>
+                                                            <span className={`direction-badge ${badgeClass}`}>
+                                                                {badgeLabel}
                                                             </span>
                                                         </div>
-
-                                                        <div className="route-preview">
-                                                            {source && (
-                                                                <span style={{ color: "#4f46e5", fontWeight: "600" }}>
-                                                                    {source.name} →{" "}
+                                                        <div className="route-allocation-display">
+                                                            {hasVehicle ? (
+                                                                <>
+                                                                    <div className="route-allocation-main">
+                                                                        <span className="route-vehicle-name">🚌 {vehicleName}</span>
+                                                                        <span className="route-seat-ratio">
+                                                                            <strong>{allocatedSeats} / {capacity}</strong> seats allocated
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className={`route-standby-badge ${isFull ? "full" : "available"}`}>
+                                                                        {!isFull
+                                                                            ? `+${remainingSeats} standby seats available`
+                                                                            : "Bus full (0 seats left)"}
+                                                                    </span>
+                                                                </>
+                                                            ) : (
+                                                                <span className="route-no-vehicle-badge">
+                                                                    🚌 (No vehicle assigned)
                                                                 </span>
                                                             )}
-                                                            {stops.map((stop, sIdx) => (
-                                                                <span key={`${stop.name}-${sIdx}`}>
-                                                                    {stop.name} →{" "}
-                                                                </span>
-                                                            ))}
-                                                            {dest && (
-                                                                <strong style={{ color: "#16a34a" }}>
-                                                                    🏁 {dest.name}
-                                                                </strong>
-                                                            )}
-                                                        </div>
-
-                                                        <div className="saved-route-actions">
-                                                            <button onClick={() => editRoute(route)}>
-                                                                Edit
-                                                            </button>
-                                                            <button onClick={() => deleteRoute(route)}>
-                                                                Delete
-                                                            </button>
                                                         </div>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
+
+                                                    {/* Ordered Stops: 1. Source -> 2. Stop -> ... -> Destination */}
+                                                    <div className="route-preview-ordered">
+                                                        <span className="ordered-stops-title">📍 Ordered Stops:</span>
+                                                        <div className="ordered-stops-chips">
+                                                            {orderedStops.map((stopName, sIdx) => (
+                                                                <React.Fragment key={sIdx}>
+                                                                    <span className="route-stop-chip">
+                                                                        <b>{sIdx + 1}.</b> {stopName}
+                                                                    </span>
+                                                                    {sIdx < orderedStops.length - 1 && (
+                                                                        <span className="stop-chip-arrow">→</span>
+                                                                    )}
+                                                                </React.Fragment>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="saved-route-actions">
+                                                        <button onClick={() => editRoute(route)}>
+                                                            Edit
+                                                        </button>
+                                                        <button onClick={() => deleteRoute(route)}>
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        };
+
+                                        // Render saved route list based on selected direction tab
+                                        if (directionFilter === "OUTWARD") {
+                                            return (
+                                                <div className="direction-plan-section">
+                                                    <div className="direction-plan-section-header outward">
+                                                        <div className="plan-section-title-group">
+                                                            <h4 className="plan-section-title">🔵 Outward Routes</h4>
+                                                            <span className="plan-section-stats">
+                                                                ({outwardRoutes.length} routes · {outwardAllocatedSeats} / {outwardTotalCapacity} seats allocated)
+                                                            </span>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            className="btn-ok-manual"
+                                                            onClick={() => handleManualPlanOk("OUTWARD")}
+                                                            disabled={planActionLoading || outwardRoutes.length === 0}
+                                                            style={{ padding: "6px 14px", fontSize: "12px", background: "#2563eb" }}
+                                                            title="Submit Outward Plan to Final Confirmation"
+                                                        >
+                                                            {planActionLoading ? "⏳..." : "✓ Submit Outward Plan →"}
+                                                        </button>
+                                                    </div>
+
+                                                    {outwardRoutes.length === 0 ? (
+                                                        <div className="no-plan-card">
+                                                            <span className="no-plan-badge">No Plan Available</span>
+                                                            <p>No Outward plan or routes available. Configure an Outward route above.</p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="saved-routes">
+                                                            {outwardRoutes.map(r => renderSingleRoute(r, "OUTWARD"))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        }
+
+                                        // INWARD ONLY
+                                        return (
+                                            <div className="direction-plan-section">
+                                                <div className="direction-plan-section-header inward">
+                                                    <div className="plan-section-title-group">
+                                                        <h4 className="plan-section-title">🟢 Inward Routes</h4>
+                                                        <span className="plan-section-stats">
+                                                            ({inwardRoutes.length} routes · {inwardAllocatedSeats} / {inwardTotalCapacity} seats allocated)
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn-ok-manual"
+                                                        onClick={() => handleManualPlanOk("INWARD")}
+                                                        disabled={planActionLoading || inwardRoutes.length === 0}
+                                                        style={{ padding: "6px 14px", fontSize: "12px", background: "#059669" }}
+                                                        title="Submit Inward Plan to Final Confirmation"
+                                                    >
+                                                        {planActionLoading ? "⏳..." : "✓ Submit Inward Plan →"}
+                                                    </button>
+                                                </div>
+
+                                                {inwardRoutes.length === 0 ? (
+                                                    <div className="no-plan-card">
+                                                        <span className="no-plan-badge">No Plan Available</span>
+                                                        <p>No Inward plan or routes available. Configure an Inward route above.</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="saved-routes">
+                                                        {inwardRoutes.map(r => renderSingleRoute(r, "INWARD"))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </section>
                             </>
                         )}
                     </div>
                 )}
             </div>
-
-            {/* Safe Reset Manual Plan Confirmation Modal */}
-            <ResetManualPlanModal
-                isOpen={showManualResetModal}
-                onClose={() => !manualPlanResetting && setShowManualResetModal(false)}
-                onConfirm={handleResetManualPlan}
-                isResetting={manualPlanResetting}
-                direction={activePlanDirection}
-            />
         </div>
     );
 }
