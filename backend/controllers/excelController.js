@@ -73,7 +73,7 @@ export const uploadExcel = async (req, res) => {
         }
 
         // ==========================================
-        // 6 REQUIRED COLUMNS VALIDATION
+        // REQUIRED COLUMNS VALIDATION
         // ==========================================
         const sampleRow = data[0];
         const rowKeys = Object.keys(sampleRow).map((k) =>
@@ -81,20 +81,17 @@ export const uploadExcel = async (req, res) => {
         );
 
         const REQUIRED_COLUMNS = [
-            { field: "userId", aliases: ["userid", "user_id", "id"] },
-            { field: "name", aliases: ["name", "studentname", "username"] },
-            { field: "stoppings", aliases: ["stoppings", "stopping", "stop", "stoppingarea"] },
-            { field: "city", aliases: ["city"] },
-            { field: "state", aliases: ["state"] },
-            { field: "country", aliases: ["country"] }
+            { field: "userId", aliases: ["userid", "user_id", "id", "user id"] },
+            { field: "name", aliases: ["name", "studentname", "username", "student name", "user name"] },
+            { field: "stoppings", aliases: ["stoppings", "stopping", "stop", "stoppingarea", "stopping area"] }
         ];
 
         for (const reqCol of REQUIRED_COLUMNS) {
-            const hasCol = reqCol.aliases.some((alias) => rowKeys.includes(alias));
+            const hasCol = reqCol.aliases.some((alias) => rowKeys.includes(alias.toLowerCase().replace(/[\s_-]/g, "")));
             if (!hasCol) {
                 return res.status(400).json({
                     success: false,
-                    message: `Missing required column: ${reqCol.field}. Required columns: userId, name, stoppings, city, state, country.`
+                    message: `Missing required column: ${reqCol.field}. Required columns: User ID, Name, Stopping Area.`
                 });
             }
         }
@@ -103,9 +100,9 @@ export const uploadExcel = async (req, res) => {
         // If any row is missing required data, reject the entire import to preserve existing records unchanged
         const invalidRowNumbers = [];
         data.forEach((row, idx) => {
-            const userId = getFieldValue(row, "userId", "user_id", "id");
-            const name = getFieldValue(row, "name", "studentName", "userName");
-            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
+            const userId = getFieldValue(row, "userId", "user_id", "id", "user id");
+            const name = getFieldValue(row, "name", "studentName", "userName", "student name", "user name");
+            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea", "stopping area");
             if (!userId || !name || !stoppings) {
                 invalidRowNumbers.push(idx + 2); // Excel 1-indexed row number (header is row 1)
             }
@@ -121,12 +118,23 @@ export const uploadExcel = async (req, res) => {
         // Deduplicate Excel rows by userId (keeping latest row)
         const rowMap = new Map();
         for (const row of data) {
-            const userId = getFieldValue(row, "userId", "user_id", "id");
-            const name = getFieldValue(row, "name", "studentName", "userName");
-            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea");
-            const city = getFieldValue(row, "city");
-            const state = getFieldValue(row, "state");
-            const country = getFieldValue(row, "country");
+            const userId = getFieldValue(row, "userId", "user_id", "id", "user id");
+            const name = getFieldValue(row, "name", "studentName", "userName", "student name", "user name");
+            const stoppings = getFieldValue(row, "stoppings", "stopping", "stop", "stoppingArea", "stopping area");
+            const city = getFieldValue(row, "city") || "";
+            const state = getFieldValue(row, "state") || "";
+            const country = getFieldValue(row, "country") || "India";
+            const rawPhone = getFieldValue(row, "phoneNumber", "phone_number", "phone", "phoneno", "phonenumber", "mobile", "mobilenumber", "contact", "contactnumber", "phone number", "mobile number");
+            const phoneNumber = rawPhone ? rawPhone.trim() : null;
+
+            const rawStatus = getFieldValue(row, "travelStatus", "travel_status", "status", "travel status");
+            let travelStatus = "Coming";
+            if (rawStatus) {
+                const s = rawStatus.toLowerCase().trim();
+                if (s === "pending") travelStatus = "Pending";
+                else if (s === "not coming" || s === "notcoming" || s === "not_coming") travelStatus = "Not Coming";
+                else if (s === "coming") travelStatus = "Coming";
+            }
 
             rowMap.set(userId, {
                 userId,
@@ -134,7 +142,9 @@ export const uploadExcel = async (req, res) => {
                 stoppings,
                 city,
                 state,
-                country
+                country,
+                phoneNumber,
+                travelStatus
             });
         }
 
@@ -144,7 +154,7 @@ export const uploadExcel = async (req, res) => {
         // Batch fetch existing students in ONE query (avoids N sequential queries)
         const existingStudents = await User.find({
             role: "student"
-        }).select("userId password").lean();
+        }).select("userId password phoneNumber").lean();
 
         const existingMap = new Map();
         for (const s of existingStudents) {
@@ -173,6 +183,7 @@ export const uploadExcel = async (req, res) => {
         const bulkOps = deduplicatedRows.map((row) => {
             const existing = existingMap.get(row.userId);
             const password = existing?.password || hashMap.get(row.name);
+            const phoneNumber = row.phoneNumber !== null ? row.phoneNumber : (existing?.phoneNumber || null);
 
             return {
                 updateOne: {
@@ -185,9 +196,10 @@ export const uploadExcel = async (req, res) => {
                             city: row.city || "",
                             state: row.state || "",
                             country: row.country || "",
+                            phoneNumber,
                             password,
                             role: "student",
-                            travelStatus: "Coming",
+                            travelStatus: row.travelStatus || "Coming",
                             allocatedBus: null,
                             assignedVehicle: null,
                             assignedRoute: null,

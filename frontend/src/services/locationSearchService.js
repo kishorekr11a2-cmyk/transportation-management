@@ -658,17 +658,25 @@ export const generateQueryVariants = (rawQuery) => {
         variants.add(unpunct);
     }
 
-    // 3. Comma-separated hierarchy variants
+    // 3. Comma-separated hierarchy variants & Fallback Stages (Requirement 2 & 8)
     if (parsed.commaParts && parsed.commaParts.length >= 2) {
         const p0 = parsed.commaParts[0];
         const p1 = parsed.commaParts[1];
         const p2 = parsed.commaParts[2];
         const pLast = parsed.commaParts[parsed.commaParts.length - 1];
+        const stateCandidate = parsed.requestedState || (p2 && !/india/i.test(p2) ? p2 : "Tamil Nadu");
 
-        // Place + City (Primary anchored variants)
+        // Stage A: Full query: "Name, City, State, India"
+        variants.add(`${p0}, ${p1}, ${stateCandidate}, India`);
+        // Stage B: Name + City
         variants.add(`${p0}, ${p1}`);
         variants.add(`${p0} ${p1}`);
         variants.add(`${p1} ${p0}`);
+        // Stage C: Name + State
+        variants.add(`${p0}, ${stateCandidate}, India`);
+        variants.add(`${p0}, ${stateCandidate}`);
+        // Stage D: Name only
+        variants.add(p0);
 
         if (parsed.commaParts.length >= 3 && p2) {
             variants.add(`${p0}, ${p1}, ${p2}`);
@@ -679,9 +687,28 @@ export const generateQueryVariants = (rawQuery) => {
             variants.add(`${p0} ${pLast}`);
         }
 
-        // Only add place alone if no explicit locality or for unanchored fallbacks
-        if (!parsed.hasExplicitLocality) {
-            variants.add(p0);
+        // Spelling / transliteration variations (Requirement 8)
+        const p0Lower = p0.toLowerCase();
+        if (/keela/i.test(p0Lower)) {
+            const alt = p0.replace(/keela/gi, "Keezha");
+            variants.add(`${alt}, ${p1}`);
+            variants.add(`${alt} ${p1}`);
+            variants.add(alt);
+        } else if (/keezha/i.test(p0Lower)) {
+            const alt = p0.replace(/keezha/gi, "Keela");
+            variants.add(`${alt}, ${p1}`);
+            variants.add(`${alt} ${p1}`);
+            variants.add(alt);
+        }
+
+        if (/vasal\b/i.test(p0Lower) && !/\s+vasal\b/i.test(p0Lower)) {
+            const spaced = p0.replace(/vasal\b/gi, " Vasal");
+            variants.add(`${spaced}, ${p1}`);
+            variants.add(spaced);
+        } else if (/\s+vasal\b/i.test(p0Lower)) {
+            const joined = p0.replace(/\s+vasal\b/gi, "vasal");
+            variants.add(`${joined}, ${p1}`);
+            variants.add(joined);
         }
     }
 
@@ -1136,15 +1163,37 @@ export const reverseGeocode = async (latitude, longitude) => {
    8. PROVIDER ADAPTERS
    ========================================================================== */
 
-export const searchNominatim = async (query, signal) => {
+export const searchNominatim = async (query, signal, options = {}) => {
     try {
         const clean = String(query || "").trim();
         if (!clean) return [];
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean)}&format=jsonv2&addressdetails=1&namedetails=1&limit=6&accept-language=en`;
+        let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean)}&format=jsonv2&addressdetails=1&namedetails=1&limit=8&accept-language=en`;
         
+        // Geographic viewbox boosting (Requirement 3: boost rather than blind filter)
+        const cityRef = options?.cityRef;
+        if (cityRef && isValidCoordinate(cityRef.latitude, cityRef.longitude)) {
+            const delta = 0.45;
+            const lat = Number(cityRef.latitude);
+            const lon = Number(cityRef.longitude);
+            const minLon = (lon - delta).toFixed(4);
+            const maxLat = (lat + delta).toFixed(4);
+            const maxLon = (lon + delta).toFixed(4);
+            const minLat = (lat - delta).toFixed(4);
+            url += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`;
+        } else if (options?.viewbox) {
+            url += `&viewbox=${encodeURIComponent(options.viewbox)}&bounded=0`;
+        }
+
+        // Country filtering when applicable
+        if (options?.countrycodes) {
+            url += `&countrycodes=${encodeURIComponent(options.countrycodes)}`;
+        } else if (clean.toLowerCase().includes("india") || (cityRef?.state && /tamil nadu|kerala|karnataka|andhra|telangana|maharashtra|delhi/i.test(cityRef.state)) || (cityRef?.country && /india/i.test(cityRef.country))) {
+            url += `&countrycodes=in`;
+        }
+
         const isBrowser = typeof window !== "undefined";
         const headers = { Accept: "application/json" };
         if (!isBrowser) {
@@ -1211,15 +1260,23 @@ export const searchNominatim = async (query, signal) => {
     }
 };
 
-export const searchPhoton = async (query, signal) => {
+export const searchPhoton = async (query, signal, options = {}) => {
     try {
         const clean = String(query || "").trim();
         if (!clean) return [];
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(clean)}&limit=6&lang=en`;
+        let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(clean)}&limit=8&lang=en`;
         
+        // Geographic coordinate center proximity bias (Requirement 3)
+        const cityRef = options?.cityRef;
+        if (cityRef && isValidCoordinate(cityRef.latitude, cityRef.longitude)) {
+            url += `&lat=${Number(cityRef.latitude)}&lon=${Number(cityRef.longitude)}`;
+        } else if (options?.lat && options?.lon) {
+            url += `&lat=${Number(options.lat)}&lon=${Number(options.lon)}`;
+        }
+
         let res;
         try {
             res = await fetch(url, {
@@ -1295,6 +1352,82 @@ export const searchPhoton = async (query, signal) => {
                 source: "Komoot Photon"
             };
         }).filter(isValidCoordinate);
+    } catch {
+        return [];
+    }
+};
+
+export const searchWikipedia = async (query, signal) => {
+    try {
+        const clean = String(query || "").trim();
+        if (!clean || clean.length < 2) return [];
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(clean)}&gsrlimit=6&prop=coordinates|pageprops|description&format=json&origin=*`;
+        
+        let res;
+        try {
+            res = await fetch(url, {
+                headers: { Accept: "application/json" },
+                signal: signal || controller.signal
+            });
+        } catch {
+            return [];
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        if (!res || !res.ok) return [];
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("json")) return [];
+
+        const data = await res.json();
+        if (!data?.query?.pages) return [];
+
+        const pages = Object.values(data.query.pages).filter(
+            (p) => p.coordinates?.[0]?.lat && p.coordinates?.[0]?.lon
+        );
+
+        const results = await Promise.all(
+            pages.slice(0, 4).map(async (p) => {
+                const lat = Number(p.coordinates[0].lat);
+                const lon = Number(p.coordinates[0].lon);
+                const title = p.title.replace(/,\s*(India|Tamil Nadu|Karnataka|Kerala|Maharashtra)$/i, "").trim();
+                const name = title.split(",")[0].trim();
+                let rev = null;
+                try {
+                    rev = await reverseGeocodeFast(lat, lon, signal);
+                } catch {
+                    // ignore
+                }
+
+                const desc = p.description || p.pageprops?.["wikibase-shortdesc"] || "";
+                const address = rev?.address || (desc ? `${desc}` : `${name}, India`);
+                const rawType = desc ? desc.toLowerCase() : "place";
+
+                return {
+                    name: String(name).trim(),
+                    displayName: `${name}, ${address}`,
+                    address,
+                    latitude: lat,
+                    longitude: lon,
+                    city: rev?.city || (p.title.includes(",") ? p.title.split(",")[1].trim() : ""),
+                    district: rev?.district || "",
+                    state: rev?.state || "",
+                    country: rev?.country || "India",
+                    postalCode: rev?.postalCode || "",
+                    placeId: `wiki-${p.pageid}`,
+                    types: [rawType],
+                    type: formatPlaceType(rawType, "place"),
+                    category: detectCategory([rawType]),
+                    importance: 0.88,
+                    source: "Wikipedia Knowledge"
+                };
+            })
+        );
+
+        return results.filter(isValidCoordinate);
     } catch {
         return [];
     }
@@ -1504,17 +1637,17 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
 
     let score = 0;
 
-    // 1. Exact / Substring Name Match against parsed place name and full clean query
+    // 1. Exact / Substring Name Match against parsed place name and full clean query (Requirement 5)
     if (parsed.normClean && normName === parsed.normClean) {
-        score += 350;
+        score += 1000;
     } else if (parsed.normPlace && normName === parsed.normPlace) {
-        score += 300;
-    } else if (parsed.normPlace && normName.startsWith(parsed.normPlace)) {
-        score += 240;
+        score += 800;
+    } else if (parsed.normPlace && (normName.startsWith(parsed.normPlace) || parsed.normPlace.startsWith(normName))) {
+        score += 600;
     } else if (parsed.normPlace && normName.includes(parsed.normPlace)) {
-        score += 180;
+        score += 400;
     } else if (parsed.normPlace && parsed.normPlace.includes(normName) && normName.length >= 3) {
-        score += 140;
+        score += 250;
     }
 
     // 2. Distinctive Place Tokens Matching
@@ -1524,10 +1657,10 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
     for (const dt of parsed.distinctivePlaceTokens) {
         if (normName.includes(dt)) {
             matchedDistinctiveInName++;
-            score += 120;
+            score += 150;
         } else if (normAddr.includes(dt)) {
             matchedDistinctiveInAddr++;
-            score += 40;
+            score += 50;
         }
     }
 
@@ -1536,7 +1669,7 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
         const nameRatio = matchedDistinctiveInName / totalDistinctive;
 
         if (nameRatio >= 0.99) {
-            score += 220;
+            score += 250;
         } else if (nameRatio >= 0.5) {
             score += 120;
         } else if (matchedDistinctiveInName === 0 && matchedDistinctiveInAddr === 0) {
@@ -1557,7 +1690,7 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
         score += 100;
     }
 
-    // 4. Locality Matching & Spatial Coordinate Verification (Crucial for City Ranking)
+    // 4. Locality Matching & Spatial Coordinate Verification (Requirement 3, 5, 6)
     if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
         const reqCity = parsed.normRequestedCity;
         const reqState = parsed.normRequestedState;
@@ -1574,8 +1707,10 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
         let distKm = 999999;
 
         const ref = cityReference || KNOWN_CITY_COORDINATES[reqCity] || dynamicCityCache.get(reqCity);
-        if (ref && isValidCoordinate(ref.lat, ref.lon) && isValidCoordinate(item.latitude, item.longitude)) {
-            distKm = calculateDistanceKm(item.latitude, item.longitude, ref.lat, ref.lon);
+        if (ref && isValidCoordinate(ref.latitude || ref.lat, ref.longitude || ref.lon) && isValidCoordinate(item.latitude, item.longitude)) {
+            const rLat = ref.latitude || ref.lat;
+            const rLon = ref.longitude || ref.lon;
+            distKm = calculateDistanceKm(item.latitude, item.longitude, rLat, rLon);
             const radius = ref.radiusKm || 40;
             if (distKm <= radius) {
                 isWithinCityRadius = true;
@@ -1584,45 +1719,39 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
             }
         }
 
-        // Detect conflicting cities (e.g. result is explicitly in Chennai when Madurai was requested)
+        // Requirement 6: Do NOT treat suburbs/localities within the urban radius as contradicting cities!
         let isContradictingCity = false;
-        if (normCity && !normCity.includes(reqCity) && !reqCity.includes(normCity)) {
-            isContradictingCity = true;
-        }
-        for (const knownCity of Object.keys(KNOWN_CITY_COORDINATES)) {
-            if (knownCity !== reqCity && normAddr.includes(knownCity) && !normAddr.includes(reqCity)) {
-                isContradictingCity = true;
-                break;
-            }
-        }
-
         if (isConfirmedOutsideCity) {
             isContradictingCity = true;
+        } else {
+            for (const knownCity of Object.keys(KNOWN_CITY_COORDINATES)) {
+                if (knownCity !== reqCity && (normCity === knownCity || normAddr.includes(` ${knownCity} `) || normAddr.endsWith(` ${knownCity}`))) {
+                    if (!hasCityTextMatch && (distKm > 40 || !isWithinCityRadius)) {
+                        isContradictingCity = true;
+                        break;
+                    }
+                }
+            }
         }
 
-        if (hasCityTextMatch && !isConfirmedOutsideCity) {
-            // Confirmed requested city match!
+        if (hasCityTextMatch || isWithinCityRadius) {
+            // Confirmed requested city / regional / metropolitan match!
             score += 1500;
-            item._isRequestedCityMatch = true;
-        } else if (isWithinCityRadius && !isContradictingCity) {
-            // Geographically confirmed within requested city bounds!
-            score += 1200;
+            if (distKm <= 10) score += 300;
             item._isRequestedCityMatch = true;
         } else if (isContradictingCity || isConfirmedOutsideCity) {
-            // Severe penalty: location is from a different city!
-            score -= 2500;
+            // Informational: location is from a different city (Requirement 6)
+            score -= 800;
             item._isDifferentCity = true;
-            const conflictName = item.city || (isConfirmedOutsideCity ? `Outside ${parsed.requestedCity}` : "Other city");
+            const conflictName = item.city || (isConfirmedOutsideCity ? `Outside ${parsed.requestedCity}` : "Other region");
             item.cityWarning = `⚠️ Different city: ${conflictName}`;
         } else {
-            score -= 600;
+            score -= 200;
         }
 
-        // State match credit only if not a conflicting city
+        // State match credit
         if (reqState && (normState.includes(reqState) || normAddr.includes(reqState))) {
-            if (!item._isDifferentCity) {
-                score += 100;
-            }
+            score += 200;
         }
     } else if (parsed.hasExplicitLocality && parsed.localityTokens.length > 0) {
         let hasLocMatch = false;
@@ -1633,7 +1762,7 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
             }
         }
         if (!hasLocMatch) {
-            score -= 500;
+            score -= 400;
         }
     } else {
         // Unanchored query
@@ -1649,7 +1778,7 @@ export const calculateRelevanceScore = (item, rawQuery, parsedQuery = null, city
 
     // 5. Geocoder Importance
     if (item.importance) {
-        score += Number(item.importance) * 30;
+        score += Number(item.importance) * 50;
     }
 
     return score;
@@ -1717,15 +1846,18 @@ export const deduplicateAndRankResults = (candidates, rawQuery, cityReference = 
 
     // If an explicit city was requested:
     // Prioritize confirmed city matches completely.
-    // If valid city matches exist, place different-city results at the very bottom.
-    // If NO city matches exist, return empty list so the required empty state displays.
+    // If valid city matches exist, place different-city results at the bottom.
+    // If NO city matches exist, do NOT return empty list (Requirement 6: show potentially relevant results with warning)
     if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
         const cityMatches = scored.filter((s) => s._isRequestedCityMatch || (s._score > 0 && !s._isDifferentCity));
+        const otherCities = scored.filter((s) => s._isDifferentCity);
+
         if (cityMatches.length > 0) {
-            const otherCities = scored.filter((s) => s._isDifferentCity);
             return [...cityMatches, ...otherCities].slice(0, 10);
+        } else if (otherCities.length > 0) {
+            return otherCities.slice(0, 8);
         } else {
-            return [];
+            return scored.filter((s) => s._score > -2000).slice(0, 8);
         }
     }
 
@@ -1798,77 +1930,57 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
     let providerError = null;
 
     try {
-        // Resolve city reference coordinates for spatial verification
+        // Resolve city reference coordinates for spatial verification & viewbox boosting (Requirement 3)
         let cityRef = null;
         if (parsed.hasExplicitLocality && parsed.requestedCity) {
             cityRef = await getCityReferenceCoordinates(parsed.requestedCity, signal);
-
-            // Check pre-seeded known locality transit directory for zero-latency, rate-limit resilient matching
-            const locKey = `${parsed.cleanPlaceName.toLowerCase()}|${parsed.normRequestedCity}`;
-            if (KNOWN_LOCALITY_COORDINATES[locKey]) {
-                candidates.push(KNOWN_LOCALITY_COORDINATES[locKey]);
-            } else {
-                for (const [k, loc] of Object.entries(KNOWN_LOCALITY_COORDINATES)) {
-                    const [pPart, cPart] = k.split("|");
-                    if (
-                        (pPart === parsed.cleanPlaceName.toLowerCase() || pPart === parsed.normClean) &&
-                        (cPart === parsed.normRequestedCity || parsed.normClean.includes(cPart) || parsed.normClean.includes(pPart))
-                    ) {
-                        candidates.push(loc);
-                    }
-                }
-            }
-        } else {
-            // Check known locality directory for unanchored place matches
-            const normCleanLower = clean.toLowerCase();
-            for (const [k, loc] of Object.entries(KNOWN_LOCALITY_COORDINATES)) {
-                const [pPart] = k.split("|");
-                if (pPart === normCleanLower || pPart === parsed.normClean || (parsed.normPlace && pPart === parsed.normPlace)) {
-                    candidates.push(loc);
-                }
-            }
+        } else if (signalOrOptions && typeof signalOrOptions === "object" && signalOrOptions.contextLocation) {
+            cityRef = signalOrOptions.contextLocation;
         }
 
         const fastPromises = [];
 
-        // 1. Primary searches
-        fastPromises.push(searchNominatim(clean, signal));
-        fastPromises.push(searchPhoton(clean, signal));
+        // 1. Primary searches with viewbox / coordinate bias
+        fastPromises.push(searchNominatim(clean, signal, { cityRef }));
+        fastPromises.push(searchPhoton(clean, signal, { cityRef }));
+        fastPromises.push(searchWikipedia(clean, signal));
         fastPromises.push(searchBackend(clean, signal));
 
-        // 2. City-anchored targeted variants
+        // 2. City-anchored targeted variants (Stage B: Name + City)
         if (parsed.hasExplicitLocality && parsed.requestedCity) {
             const placeWithCityComma = `${parsed.placeName}, ${parsed.requestedCity}`;
             const placeWithCitySpace = `${parsed.placeName} ${parsed.requestedCity}`;
 
             if (placeWithCityComma !== clean) {
-                fastPromises.push(searchNominatim(placeWithCityComma, signal));
+                fastPromises.push(searchNominatim(placeWithCityComma, signal, { cityRef }));
+                fastPromises.push(searchWikipedia(placeWithCityComma, signal));
             }
             if (placeWithCitySpace !== clean) {
-                fastPromises.push(searchPhoton(placeWithCitySpace, signal));
+                fastPromises.push(searchPhoton(placeWithCitySpace, signal, { cityRef }));
             }
 
-            // Add top distinctive city-anchored variants (e.g. "seventh day madurai", "seventh day school madurai")
+            // Add top distinctive city-anchored variants (including transliteration variants)
             const cityAnchoredVariants = Array.from(variants).filter((v) => {
                 const nv = normalizeSearchText(v);
                 return nv.includes(parsed.normRequestedCity) && v !== clean && v !== placeWithCityComma && v !== placeWithCitySpace;
             }).slice(0, 3);
 
             for (const cv of cityAnchoredVariants) {
-                fastPromises.push(searchNominatim(cv, signal));
-                fastPromises.push(searchPhoton(cv, signal));
+                fastPromises.push(searchNominatim(cv, signal, { cityRef }));
+                fastPromises.push(searchPhoton(cv, signal, { cityRef }));
+                fastPromises.push(searchWikipedia(cv, signal));
             }
 
-            // Only query Wikidata with city-anchored name to prevent cross-city confusion
             fastPromises.push(searchWikidata(placeWithCityComma, signal));
         } else {
-            // Unanchored query: standard Wikidata and top 3 variants
+            // Unanchored query: standard Wikidata, Wikipedia and top variants
             fastPromises.push(searchWikidata(clean, signal));
             const targetedVariants = variants.slice(1, 4);
             for (const v of targetedVariants) {
                 if (signal?.aborted) break;
-                fastPromises.push(searchPhoton(v, signal));
-                fastPromises.push(searchNominatim(v, signal));
+                fastPromises.push(searchPhoton(v, signal, { cityRef }));
+                fastPromises.push(searchNominatim(v, signal, { cityRef }));
+                fastPromises.push(searchWikipedia(v, signal));
             }
         }
 
@@ -1879,27 +1991,73 @@ export const searchPlaces = async (rawQuery, signalOrOptions = null) => {
             }
         }
 
-        // If no candidate matches target locality, run fallback queries
-        let hasLocalityMatch = true;
+        // Check if candidates contain a confirmed local match (Requirement 11)
+        let hasLocalityMatch = false;
         if (parsed.hasExplicitLocality && parsed.normRequestedCity) {
             hasLocalityMatch = candidates.some((c) => {
                 const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
-                return cNorm.includes(parsed.normRequestedCity);
+                let distKm = 999999;
+                if (cityRef && isValidCoordinate(c.latitude, c.longitude)) {
+                    const rLat = cityRef.latitude || cityRef.lat;
+                    const rLon = cityRef.longitude || cityRef.lon;
+                    distKm = calculateDistanceKm(c.latitude, c.longitude, rLat, rLon);
+                }
+                return cNorm.includes(parsed.normRequestedCity) || distKm <= (cityRef?.radiusKm || 40);
             });
         }
 
+        // 3. Fallback Query Strategy (Requirement 2 & 11)
+        // If first queries produced no local result, execute fallback queries:
+        // A. Full query: "Name, City, State, India"
+        // C. Name + state: "Name, State, India"
+        // D. Name only: "Name"
+        // E. Transliterations: "Keezhavasal", etc.
         if (!hasLocalityMatch && parsed.hasExplicitLocality && parsed.requestedCity) {
-            const fallbackVariants = [
-                `${parsed.placeName} ${parsed.requestedCity}`,
-                `${parsed.requestedCity} ${parsed.placeName}`
+            const stateCandidate = parsed.requestedState || (cityRef?.state || "Tamil Nadu");
+            const fallbackList = [
+                `${parsed.placeName}, ${parsed.requestedCity}, ${stateCandidate}, India`,
+                `${parsed.placeName}, ${stateCandidate}, India`,
+                parsed.placeName
             ];
-            for (const v of fallbackVariants) {
+
+            // Add transliteration fallbacks
+            if (/keela/i.test(parsed.placeName)) {
+                const alt = parsed.placeName.replace(/keela/gi, "Keezha");
+                fallbackList.push(`${alt}, ${parsed.requestedCity}`);
+                fallbackList.push(alt);
+            } else if (/keezha/i.test(parsed.placeName)) {
+                const alt = parsed.placeName.replace(/keezha/gi, "Keela");
+                fallbackList.push(`${alt}, ${parsed.requestedCity}`);
+                fallbackList.push(alt);
+            }
+
+            const uniqueFallbacks = Array.from(new Set(fallbackList)).filter((v) => v !== clean);
+
+            for (const v of uniqueFallbacks) {
                 if (signal?.aborted) break;
-                const nomRes = await searchNominatim(v, signal);
-                if (Array.isArray(nomRes) && nomRes.length > 0) {
-                    candidates.push(...nomRes);
-                    break;
+                const fbPromises = [
+                    searchWikipedia(v, signal),
+                    searchNominatim(v, signal, { cityRef }),
+                    searchPhoton(v, signal, { cityRef })
+                ];
+                const fbRes = await Promise.allSettled(fbPromises);
+                let gotLocalInThisBatch = false;
+                for (const r of fbRes) {
+                    if (r.status === "fulfilled" && Array.isArray(r.value) && r.value.length > 0) {
+                        candidates.push(...r.value);
+                        gotLocalInThisBatch = r.value.some((c) => {
+                            const cNorm = normalizeSearchText(`${c.city} ${c.district} ${c.state} ${c.country} ${c.address}`);
+                            let distKm = 999999;
+                            if (cityRef && isValidCoordinate(c.latitude, c.longitude)) {
+                                const rLat = cityRef.latitude || cityRef.lat;
+                                const rLon = cityRef.longitude || cityRef.lon;
+                                distKm = calculateDistanceKm(c.latitude, c.longitude, rLat, rLon);
+                            }
+                            return cNorm.includes(parsed.normRequestedCity) || distKm <= (cityRef?.radiusKm || 40);
+                        });
+                    }
                 }
+                if (gotLocalInThisBatch) break;
             }
         }
 
@@ -1966,6 +2124,10 @@ export const getPlaceDetails = async () => null;
 
 export default {
     searchPlaces,
+    searchNominatim,
+    searchPhoton,
+    searchWikipedia,
+    searchWikidata,
     searchBackend,
     getPlaceDetails,
     reverseGeocode,

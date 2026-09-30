@@ -12,9 +12,11 @@ import {
     getManualPlan,
     getManualPlanRecommendations,
     approveManualPlan,
-    resetManualPlanAllocations,
     saveSelectedPlan,
+    confirmAIPlan,
+    approveAIPlan,
     getSelectedPlan,
+    getPlanStatus,
     fetchLateResponses,
     getLateResponseDraft,
     getInwardStartingPlaces,
@@ -27,7 +29,6 @@ import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
 import OptimizationResultSummary from "../components/OptimizationResultSummary";
 import ResetRouteModal from "../components/ResetRouteModal";
-import ResetManualAllocationModal from "../components/ResetManualAllocationModal";
 import SelectGeneratedRouteModal from "../components/SelectGeneratedRouteModal";
 import RecommendedRouteMapModal from "../components/RecommendedRouteMapModal";
 import api from "../services/api";
@@ -181,6 +182,7 @@ export default function AIAgent() {
 
     const [generating, setGenerating] =
         useState(false);
+    const isGeneratingRef = useRef(false);
 
     const [generationError, setGenerationError] =
         useState("");
@@ -216,6 +218,8 @@ export default function AIAgent() {
         }
     });
     const [stalePlanInfo, setStalePlanInfo] = useState(null);
+    const [lateResponsesData, setLateResponsesData] = useState(null);
+    const [planStatusData, setPlanStatusData] = useState(null);
 
     const [planDirectionTab, setPlanDirectionTab] = useState(() => {
         try {
@@ -235,6 +239,10 @@ export default function AIAgent() {
         }
         return "OUTWARD";
     });
+    const planDirectionTabRef = useRef(planDirectionTab);
+    useEffect(() => {
+        planDirectionTabRef.current = planDirectionTab;
+    }, [planDirectionTab]);
 
     const [selectedPlanType, setSelectedPlanType] = useState("");
 
@@ -260,11 +268,7 @@ export default function AIAgent() {
     const [showResetModal, setShowResetModal] =
         useState(false);
 
-    const [showManualAllocResetModal, setShowManualAllocResetModal] =
-        useState(false);
 
-    const [manualAllocResetting, setManualAllocResetting] =
-        useState(false);
 
     const [showSelectRouteModal, setShowSelectRouteModal] =
         useState(false);
@@ -457,6 +461,10 @@ export default function AIAgent() {
             return;
         }
         try {
+            const routeId = route.routeId || route.routeCode || route.busNumber || route.vehicleName || route.vehicleNumber || route.busId || route.vehicleId || route._id || route.id;
+            if (routeId) {
+                sessionStorage.setItem("activeAiViewRouteId", String(routeId).trim());
+            }
             sessionStorage.setItem("activeAiViewRoute", JSON.stringify(route));
             if (planData?.aiPlan || planData) {
                 sessionStorage.setItem("activeAiPlan", JSON.stringify(planData?.aiPlan || planData));
@@ -479,11 +487,13 @@ export default function AIAgent() {
         loadPageData(isMounted);
 
         const handleSync = () => {
-            if (document.visibilityState === "visible" && !generating && !savingSelection && !resetting) {
+            if (document.visibilityState === "visible" && !isGeneratingRef.current && !isSavingSelectionRef.current && !resetting) {
                 loadAIData(false, isMounted);
                 loadActivePlan(false);
                 loadLastSelection();
                 loadManualRoutes();
+                loadInwardStartingPlaces();
+                refreshPlanStatusAndLateResponses();
             }
         };
 
@@ -492,10 +502,12 @@ export default function AIAgent() {
 
         // Cross-tab background polling to sync resets and live updates (only when tab is visible)
         const pollInterval = setInterval(() => {
-            if (document.visibilityState === "visible" && !generating && !savingSelection && !resetting) {
+            if (document.visibilityState === "visible" && !isGeneratingRef.current && !isSavingSelectionRef.current && !resetting) {
                 loadAIData(false, isMounted);
                 loadActivePlan(false);
                 loadLastSelection();
+                loadInwardStartingPlaces();
+                refreshPlanStatusAndLateResponses();
             }
         }, 15000);
 
@@ -507,13 +519,31 @@ export default function AIAgent() {
         };
     }, []);
 
+    const refreshPlanStatusAndLateResponses = async () => {
+        try {
+            const [statusRes, lateRes] = await Promise.allSettled([
+                getPlanStatus(),
+                fetchLateResponses()
+            ]);
+            if (statusRes.status === "fulfilled" && statusRes.value?.success) {
+                setPlanStatusData(statusRes.value);
+            }
+            if (lateRes.status === "fulfilled" && lateRes.value?.success) {
+                setLateResponsesData(lateRes.value);
+            }
+        } catch (err) {
+            console.warn("Unable to refresh plan status & late responses:", err?.message || err);
+        }
+    };
+
     const loadPageData = async (isMounted = true) => {
         await Promise.all([
             loadAIData(true, isMounted),
             loadActivePlan(true),
             loadLastSelection(),
             loadManualRoutes(),
-            loadInwardStartingPlaces()
+            loadInwardStartingPlaces(),
+            refreshPlanStatusAndLateResponses()
         ]);
 
         if (isMounted) {
@@ -548,20 +578,29 @@ export default function AIAgent() {
         }
     };
 
-    const loadActivePlan = async (isInitial = false) => {
+    const loadActivePlan = async (isInitial = false, overrideDir = null, forceRefresh = false) => {
+        if (isGeneratingRef.current) {
+            return;
+        }
+
         try {
-            const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const response = await getActivePlan({ direction: currentDir, forceRefresh: true });
+            const currentDir = overrideDir || planDirectionTabRef.current || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+            const response = await getActivePlan({ direction: currentDir, planType: "AI", forceRefresh });
+
+            if (isGeneratingRef.current) {
+                return;
+            }
 
             if (response?.wasReset === true) {
                 const isOutwardReset = response.wasOutwardReset === true || response.resetDirection === "OUTWARD" || response.resetDirection === "BOTH";
                 const isInwardReset = response.wasInwardReset === true || response.resetDirection === "INWARD" || response.resetDirection === "BOTH";
+                const activeTab = overrideDir || planDirectionTabRef.current || planDirectionTab;
 
                 if (isInwardReset && !response.inwardPlan) {
                     try {
                         localStorage.removeItem("active_inward_plan");
                         sessionStorage.removeItem("active_inward_plan");
-                        if (planDirectionTab === "INWARD") {
+                        if (activeTab === "INWARD") {
                             localStorage.removeItem("active_ai_plan");
                             localStorage.removeItem("active_ai_selection");
                             sessionStorage.removeItem("active_ai_plan");
@@ -576,7 +615,7 @@ export default function AIAgent() {
                     try {
                         localStorage.removeItem("active_outward_plan");
                         sessionStorage.removeItem("active_outward_plan");
-                        if (planDirectionTab === "OUTWARD") {
+                        if (activeTab === "OUTWARD") {
                             localStorage.removeItem("active_ai_plan");
                             localStorage.removeItem("active_ai_selection");
                             sessionStorage.removeItem("active_ai_plan");
@@ -588,7 +627,9 @@ export default function AIAgent() {
                 }
 
                 setStalePlanInfo(null);
-                setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
+                if ((isOutwardReset && activeTab === "OUTWARD") || (isInwardReset && activeTab === "INWARD")) {
+                    setSelectedPlanType((prev) => (prev === "AI" ? "" : prev));
+                }
             }
 
             if (!response?.success) {
@@ -596,30 +637,28 @@ export default function AIAgent() {
                 return;
             }
 
-            // Sync Outward Plan: only clear if explicit reset occurred for outward
+            // Sync Outward Plan: authoritative from server
             const outP = response.outwardPlan || null;
+            setOutwardPlan(outP);
             if (outP) {
-                setOutwardPlan(outP);
                 try {
                     localStorage.setItem("active_outward_plan", JSON.stringify(outP));
                 } catch {}
-            } else if (response.wasOutwardReset || (response.wasReset && (response.resetDirection === "OUTWARD" || response.resetDirection === "BOTH"))) {
-                setOutwardPlan(null);
+            } else {
                 try {
                     localStorage.removeItem("active_outward_plan");
                     sessionStorage.removeItem("active_outward_plan");
                 } catch {}
             }
 
-            // Sync Inward Plan: only clear if explicit reset occurred for inward
+            // Sync Inward Plan: authoritative from server
             const inP = response.inwardPlan || null;
+            setInwardPlan(inP);
             if (inP) {
-                setInwardPlan(inP);
                 try {
                     localStorage.setItem("active_inward_plan", JSON.stringify(inP));
                 } catch {}
-            } else if (response.wasInwardReset || (response.wasReset && (response.resetDirection === "INWARD" || response.resetDirection === "BOTH"))) {
-                setInwardPlan(null);
+            } else {
                 try {
                     localStorage.removeItem("active_inward_plan");
                     sessionStorage.removeItem("active_inward_plan");
@@ -637,14 +676,40 @@ export default function AIAgent() {
                 setStalePlanInfo(null);
             }
 
-            // Strictly match the current direction tab
-            const activePlan = currentDir === "OUTWARD" ? (outP || outwardPlan) : (inP || inwardPlan);
+            // Determine active plan to display (authoritative server response)
+            let activePlan = null;
+            const effectiveDir = overrideDir || planDirectionTabRef.current || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+
+            if (effectiveDir === "OUTWARD") {
+                if (outP) {
+                    activePlan = outP;
+                } else if (isInitial && inP) {
+                    // On initial hydration: if OUTWARD has no plan but INWARD has an active plan, auto-switch to INWARD!
+                    activePlan = inP;
+                    setPlanDirectionTab("INWARD");
+                    planDirectionTabRef.current = "INWARD";
+                    setTripMode("TO_DESTINATION");
+                    setActiveEndpointField("destination");
+                }
+            } else { // INWARD
+                if (inP) {
+                    activePlan = inP;
+                } else if (isInitial && outP) {
+                    // On initial hydration: if INWARD has no plan but OUTWARD has an active plan, auto-switch to OUTWARD!
+                    activePlan = outP;
+                    setPlanDirectionTab("OUTWARD");
+                    planDirectionTabRef.current = "OUTWARD";
+                    setTripMode("FROM_SOURCE");
+                    setActiveEndpointField("source");
+                }
+            }
 
             if (activePlan) {
                 setPlanData(activePlan);
                 const activeDir = activePlan.direction || (activePlan.tripMode === "FROM_SOURCE" || activePlan.tripMode === "OUTWARD" ? "OUTWARD" : "INWARD");
                 if (activeDir && !planDirectionTab) {
                     setPlanDirectionTab(activeDir);
+                    planDirectionTabRef.current = activeDir;
                 }
 
                 try {
@@ -653,27 +718,13 @@ export default function AIAgent() {
 
                 // Restore endpoint ONLY on initial hydration if user has not yet interacted
                 if (isInitial && !userInteractedRef.current) {
-                    const hasPlanSource = activePlan.source && hasValidCoordinates(activePlan.source);
-                    const hasPlanDest = activePlan.destination && hasValidCoordinates(activePlan.destination);
-                    const hasPlanStart = activePlan.startingPoint && hasValidCoordinates(activePlan.startingPoint);
-
-                    if (activePlan.tripMode === "FROM_SOURCE" || (hasPlanSource && !hasPlanDest)) {
-                        if (hasPlanSource) {
-                            setSourceLocation(activePlan.source);
-                            setActiveEndpointField("source");
-                            setTripMode("FROM_SOURCE");
-                        }
-                    } else if (activePlan.tripMode === "TO_DESTINATION" || hasPlanDest || hasPlanStart) {
-                        const dest = hasPlanDest ? activePlan.destination : (hasPlanStart ? activePlan.startingPoint : null);
-                        if (dest) {
-                            setDestinationLocation(dest);
-                            setActiveEndpointField("destination");
-                            setTripMode("TO_DESTINATION");
-                        }
-                    } else if (hasPlanSource) {
-                        setSourceLocation(activePlan.source);
-                        setActiveEndpointField("source");
-                        setTripMode("FROM_SOURCE");
+                    if (outP?.source && hasValidCoordinates(outP.source)) {
+                        setSourceLocation(outP.source);
+                    }
+                    if (inP?.destination && hasValidCoordinates(inP.destination)) {
+                        setDestinationLocation(inP.destination);
+                    } else if (inP?.startingPoint && hasValidCoordinates(inP.startingPoint)) {
+                        setDestinationLocation(inP.startingPoint);
                     }
                 }
             } else {
@@ -748,10 +799,17 @@ export default function AIAgent() {
     const loadLateResponseDraft = async (targetDirection = null) => {
         try {
             const currentDir = targetDirection || manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const [draftRes] = await Promise.allSettled([
+            const [draftRes, lateRes, statusRes] = await Promise.allSettled([
                 getLateResponseDraft({ direction: currentDir }),
-                fetchLateResponses()
+                fetchLateResponses(),
+                getPlanStatus()
             ]);
+            if (lateRes.status === "fulfilled" && lateRes.value?.success) {
+                setLateResponsesData(lateRes.value);
+            }
+            if (statusRes.status === "fulfilled" && statusRes.value?.success) {
+                setPlanStatusData(statusRes.value);
+            }
             if (draftRes.status === "fulfilled" && draftRes.value?.success && draftRes.value?.draft) {
                 return draftRes.value.draft;
             }
@@ -762,11 +820,12 @@ export default function AIAgent() {
         }
     };
 
-    // Automatically synchronize manual plan and late response draft whenever selected direction changes
+    // Automatically synchronize manual plan, late response draft, and active AI plan whenever selected direction changes
     useEffect(() => {
         if (initialHydratedRef.current) {
             loadManualRoutes(planDirectionTab);
             loadLateResponseDraft(planDirectionTab);
+            loadActivePlan(false, planDirectionTab);
         }
     }, [planDirectionTab]);
 
@@ -805,7 +864,7 @@ export default function AIAgent() {
                     loadManualRoutes(currentDir),
                     loadLastSelection(currentDir),
                     loadActivePlan(false),
-                    fetchLateResponses()
+                    refreshPlanStatusAndLateResponses()
                 ]);
             }
         } catch (err) {
@@ -816,66 +875,7 @@ export default function AIAgent() {
         }
     };
 
-    const handleResetManualPlanAllocations = async () => {
-        const currentDir = manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-        try {
-            setManualAllocResetting(true);
-            const res = await resetManualPlanAllocations({ direction: currentDir });
-            if (res?.success) {
-                toast.success("Manual plan allocations reset successfully");
-                setShowManualAllocResetModal(false);
 
-                try {
-                    localStorage.removeItem("active_manual_plan_direction");
-                    const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
-                    if (activeSelection?.planType === "ADMIN" || activeSelection?.planType === "MANUAL") {
-                        localStorage.removeItem("active_ai_selection");
-                        setSelectedPlanType("");
-                        setLastSelection(null);
-                    }
-                    if (currentDir === "OUTWARD") {
-                        const storedOut = JSON.parse(localStorage.getItem("active_outward_plan") || "null");
-                        if (storedOut?.planType === "ADMIN" || storedOut?.planType === "MANUAL") {
-                            localStorage.removeItem("active_outward_plan");
-                            setOutwardPlan(null);
-                        }
-                    } else {
-                        const storedIn = JSON.parse(localStorage.getItem("active_inward_plan") || "null");
-                        if (storedIn?.planType === "ADMIN" || storedIn?.planType === "MANUAL") {
-                            localStorage.removeItem("active_inward_plan");
-                            setInwardPlan(null);
-                        }
-                    }
-                } catch (e) {}
-
-                await Promise.all([
-                    loadManualRoutes(currentDir),
-                    loadLastSelection(currentDir),
-                    loadActivePlan(false),
-                    loadAIData(),
-                    fetchLateResponses()
-                ]);
-            } else {
-                throw new Error(res?.message || "Failed to reset manual plan allocations.");
-            }
-        } catch (err) {
-            console.error("Reset manual plan allocations error:", err);
-            toast.error(err.response?.data?.message || err.message || "Failed to reset manual plan allocations.");
-        } finally {
-            setManualAllocResetting(false);
-        }
-    };
-
-    const handleResetManualPlanAllocationsClick = () => {
-        if (typeof window !== "undefined" && window.confirm && window.confirm.toString().indexOf("[native code]") === -1) {
-            const confirmed = window.confirm("Are you sure you want to remove all manual plan allocations? This will not delete your manual routes or affect the AI plan.");
-            if (confirmed) {
-                handleResetManualPlanAllocations();
-            }
-            return;
-        }
-        setShowManualAllocResetModal(true);
-    };
 
     const handleFetchManualRecommendations = async () => {
         const currentDir = manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
@@ -941,7 +941,11 @@ export default function AIAgent() {
         setActiveEndpointField("source");
         setTripMode("FROM_SOURCE");
         setPlanDirectionTab("OUTWARD");
+        planDirectionTabRef.current = "OUTWARD";
         setGenerationError("");
+        if (outwardPlan) {
+            setPlanData(outwardPlan);
+        }
     };
 
     const handleDestinationSelect = (location) => {
@@ -950,7 +954,11 @@ export default function AIAgent() {
         setActiveEndpointField("destination");
         setTripMode("TO_DESTINATION");
         setPlanDirectionTab("INWARD");
+        planDirectionTabRef.current = "INWARD";
         setGenerationError("");
+        if (inwardPlan) {
+            setPlanData(inwardPlan);
+        }
     };
 
     const handleSourceClear = () => {
@@ -1024,6 +1032,7 @@ export default function AIAgent() {
         const isOutward = effectiveTripMode === "FROM_SOURCE";
 
         try {
+            isGeneratingRef.current = true;
             setGenerating(true);
             setOptStage(1);
             setOptStatusMessage("Analyzing confirmed passenger demand...");
@@ -1115,9 +1124,13 @@ export default function AIAgent() {
             if (isOutward) {
                 setOutwardPlan(response);
                 setPlanDirectionTab("OUTWARD");
+                planDirectionTabRef.current = "OUTWARD";
+                setStalePlanInfo((prev) => (prev ? { ...prev, outward: null } : null));
             } else {
                 setInwardPlan(response);
                 setPlanDirectionTab("INWARD");
+                planDirectionTabRef.current = "INWARD";
+                setStalePlanInfo((prev) => (prev ? { ...prev, inward: null } : null));
             }
 
             try {
@@ -1143,6 +1156,8 @@ export default function AIAgent() {
             }
 
             await loadAIData();
+            await refreshPlanStatusAndLateResponses();
+            await loadInwardStartingPlaces();
         } catch (error) {
             console.error(
                 "AI plan generation error:",
@@ -1162,6 +1177,7 @@ export default function AIAgent() {
         } finally {
             stageTimersRef.current.forEach(clearTimeout);
             stageTimersRef.current = [];
+            isGeneratingRef.current = false;
             setGenerating(false);
         }
     };
@@ -1245,9 +1261,9 @@ export default function AIAgent() {
 
                 setResetSuccessMessage(msg);
                 toast.success(`${dirName} transportation plan has been reset successfully.`);
-                await loadActivePlan(false);
+                await loadActivePlan(false, targetDirection, true);
                 loadAIData(); // Refresh counts in background
-                fetchLateResponses(); // Update late response events immediately
+                await refreshPlanStatusAndLateResponses();
             } else {
                 throw new Error(
                     response?.message ||
@@ -1463,13 +1479,125 @@ export default function AIAgent() {
     const stalePlanForCurrentDir = planDirectionTab === "OUTWARD" ? stalePlanInfo?.outward : stalePlanInfo?.inward;
     const planDemandCount = planData?.summary?.confirmedUsers ?? planData?.comingUsers ?? stalePlanForCurrentDir?.planDemandCount ?? null;
     const hasActivePlan = Boolean(aiPlan || planData?.buses?.length > 0 || (planData?.summary && planData.summary.allocatedSeats > 0));
-    const isPlanInvalidated = Boolean(
-        stalePlanForCurrentDir ||
-        (hasActivePlan &&
-        planDemandCount !== null &&
-        currentDemandCount > 0 &&
-        planDemandCount !== currentDemandCount)
+
+    // Directional late response checks
+    const inwardLateCount = Number(
+        lateResponsesData?.inwardCount ??
+        (Array.isArray(lateResponsesData?.affectedDirections) && lateResponsesData.affectedDirections.includes("INWARD")
+            ? (lateResponsesData?.count || 0)
+            : (lateResponsesData?.lateComingResponsesCount || 0)) ??
+        0
     );
+    const outwardLateCount = Number(
+        lateResponsesData?.outwardCount ??
+        (Array.isArray(lateResponsesData?.affectedDirections) && lateResponsesData.affectedDirections.includes("OUTWARD")
+            ? (lateResponsesData?.count || 0)
+            : (lateResponsesData?.lateComingResponsesCount || 0)) ??
+        0
+    );
+
+    const isInwardLateAffected = Boolean(
+        inwardLateCount > 0 ||
+        (Array.isArray(lateResponsesData?.affectedDirections) && lateResponsesData.affectedDirections.includes("INWARD")) ||
+        ((lateResponsesData?.count || 0) > 0 && (!lateResponsesData?.affectedDirections?.length || lateResponsesData?.affectedDirections?.includes("INWARD"))) ||
+        inwardPlan?.requiresReview ||
+        inwardPlan?.hasLateResponses ||
+        inwardPlan?.pendingReallocation ||
+        planStatusData?.inward?.requiresReview ||
+        planStatusData?.inward?.hasLateResponses ||
+        (planDirectionTab === "INWARD" && (manualPlanData?.requiresReview || manualPlanData?.hasLateResponses))
+    );
+
+    const isOutwardLateAffected = Boolean(
+        outwardLateCount > 0 ||
+        (Array.isArray(lateResponsesData?.affectedDirections) && lateResponsesData.affectedDirections.includes("OUTWARD")) ||
+        ((lateResponsesData?.count || 0) > 0 && (!lateResponsesData?.affectedDirections?.length || lateResponsesData?.affectedDirections?.includes("OUTWARD"))) ||
+        outwardPlan?.requiresReview ||
+        outwardPlan?.hasLateResponses ||
+        outwardPlan?.pendingReallocation ||
+        planStatusData?.outward?.requiresReview ||
+        planStatusData?.outward?.hasLateResponses ||
+        (planDirectionTab === "OUTWARD" && (manualPlanData?.requiresReview || manualPlanData?.hasLateResponses))
+    );
+
+    const isInwardDemandMismatch = Boolean(
+        (inwardPlan?.planDemandCount !== undefined && inwardPlan?.planDemandCount !== null && currentDemandCount > 0 && Number(inwardPlan.planDemandCount) !== Number(currentDemandCount)) ||
+        (stalePlanInfo?.inward?.planDemandCount && Number(stalePlanInfo.inward.planDemandCount) !== Number(currentDemandCount)) ||
+        planStatusData?.inward?.isStale
+    );
+
+    const isOutwardDemandMismatch = Boolean(
+        (outwardPlan?.planDemandCount !== undefined && outwardPlan?.planDemandCount !== null && currentDemandCount > 0 && Number(outwardPlan.planDemandCount) !== Number(currentDemandCount)) ||
+        (stalePlanInfo?.outward?.planDemandCount && Number(stalePlanInfo.outward.planDemandCount) !== Number(currentDemandCount)) ||
+        planStatusData?.outward?.isStale
+    );
+
+    const hasInwardPlan = Boolean(
+        inwardPlan ||
+        planStatusData?.inward?.exists ||
+        (planStatusData?.inward?.status && planStatusData.inward.status !== "NO_PLAN") ||
+        stalePlanInfo?.inward ||
+        (planDirectionTab === "INWARD" && (hasActivePlan || manualPlanData?.isApproved || displayedManualRoutes.length > 0))
+    );
+
+    const hasOutwardPlan = Boolean(
+        outwardPlan ||
+        planStatusData?.outward?.exists ||
+        (planStatusData?.outward?.status && planStatusData.outward.status !== "NO_PLAN") ||
+        stalePlanInfo?.outward ||
+        (planDirectionTab === "OUTWARD" && (hasActivePlan || manualPlanData?.isApproved || displayedManualRoutes.length > 0))
+    );
+
+    const isInwardResetRequired = Boolean(
+        hasInwardPlan && (
+            isInwardLateAffected ||
+            isInwardDemandMismatch ||
+            inwardPlan?.requiresReset ||
+            inwardPlan?.isStale ||
+            stalePlanInfo?.inward ||
+            planStatusData?.inward?.requiresReset
+        )
+    );
+
+    const isOutwardResetRequired = Boolean(
+        hasOutwardPlan && (
+            isOutwardLateAffected ||
+            isOutwardDemandMismatch ||
+            outwardPlan?.requiresReset ||
+            outwardPlan?.isStale ||
+            stalePlanInfo?.outward ||
+            planStatusData?.outward?.requiresReset
+        )
+    );
+
+    const isCurrentResetRequired = planDirectionTab === "OUTWARD" ? isOutwardResetRequired : isInwardResetRequired;
+    const hasCurrentActivePlan = Boolean(
+        hasActivePlan ||
+        (planDirectionTab === "OUTWARD" ? hasOutwardPlan : hasInwardPlan) ||
+        displayedManualRoutes.length > 0 ||
+        manualPlanData?.isApproved
+    );
+
+    const isPlanInvalidated = isCurrentResetRequired;
+
+    const resetReasonText = (() => {
+        const isOut = planDirectionTab === "OUTWARD";
+        const isLate = isOut ? isOutwardLateAffected : isInwardLateAffected;
+        const lateCount = isOut ? outwardLateCount : inwardLateCount;
+        const dirName = isOut ? "Outward" : "Inward";
+        const staleReason = (isOut ? outwardPlan?.staleReason : inwardPlan?.staleReason) || stalePlanInfo?.reason;
+
+        if (isLate) {
+            return `A student has submitted a late Coming response after the ${dirName} transportation plan was approved and allocated (${lateCount > 0 ? `${lateCount} student(s)` : "pending student reallocation"}). The plan requires a reset or re-generation so that all confirmed passengers can be accommodated.`;
+        }
+        if (staleReason) {
+            return staleReason;
+        }
+        if (planDemandCount !== null && currentDemandCount > 0 && planDemandCount !== currentDemandCount) {
+            return `Current Coming Users: ${currentDemandCount}. The previous plan was generated for ${planDemandCount} passengers and cannot be used as current operational data. Please reset the ${dirName} plan or regenerate to calculate a valid plan for all ${currentDemandCount} passengers.`;
+        }
+        return `The current ${dirName} plan state requires a reset to synchronize with updated passenger demand and allocations.`;
+    })();
 
     return (
         <div className="ai-page">
@@ -1480,7 +1608,7 @@ export default function AIAgent() {
                     <button
                         type="button"
                         className="ai-back-btn"
-                        onClick={() => navigate(-1)}
+                        onClick={() => navigate("/admin-dashboard")}
                         aria-label="Go back"
                         style={{ marginBottom: "14px" }}
                     >
@@ -1518,9 +1646,9 @@ export default function AIAgent() {
                             ? "generating"
                             : generationError
                             ? "error"
-                            : isPlanInvalidated
-                            ? "invalidated"
-                            : hasActivePlan
+                            : isCurrentResetRequired
+                            ? "invalidated reset-required"
+                            : hasCurrentActivePlan
                             ? "generated"
                             : "ready"
                     }`}>
@@ -1529,9 +1657,9 @@ export default function AIAgent() {
                             ? "Generating optimized route..."
                             : generationError
                             ? "Route generation failed"
-                            : isPlanInvalidated
-                            ? "Route requires regeneration"
-                            : hasActivePlan
+                            : isCurrentResetRequired
+                            ? "Reset Required"
+                            : hasCurrentActivePlan
                             ? "AI Route Generated"
                             : "AI Engine Ready"}
                     </div>
@@ -1542,10 +1670,12 @@ export default function AIAgent() {
                         onClick={() =>
                             setShowResetModal(true)
                         }
-                        title={`Reset ${planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Transportation Plan`}
+                        title={`Reset ${planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} AI Transportation Plan`}
                     >
-                        🔄 Reset {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan
+                        🔄 Reset {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} AI Plan
                     </button>
+
+
                 </div>
             </div>
 
@@ -1578,8 +1708,8 @@ export default function AIAgent() {
                 </div>
             )}
 
-            {/* State Invalidation Alert Banner */}
-            {isPlanInvalidated && (
+            {/* State Invalidation / Reset Required Alert Banner */}
+            {isCurrentResetRequired && (
                 <div style={{
                     display: "flex",
                     alignItems: "center",
@@ -1603,16 +1733,34 @@ export default function AIAgent() {
                                 borderRadius: "4px",
                                 letterSpacing: "0.5px"
                             }}>
-                                STALE PLAN — REGENERATION REQUIRED
+                                RESET REQUIRED
                             </span>
                             <strong style={{ fontSize: "14px", color: "#7f1d1d" }}>
-                                {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan Invalidated
+                                {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan Reset Required
                             </strong>
                         </div>
                         <p style={{ margin: 0, fontSize: "13.5px", color: "#991b1b", lineHeight: "1.5" }}>
-                            Current Coming Users: <b>{currentDemandCount}</b>. The previous plan was generated for <b>{planDemandCount || "different"}</b> passengers and cannot be used as current operational data or activated. Click <b>⚡ Generate AI Plan</b> below to calculate a new valid transportation plan for all {currentDemandCount} passengers.
+                            {resetReasonText}
                         </p>
                     </div>
+                    <button
+                        type="button"
+                        className="reset-ai-route-btn"
+                        onClick={() => setShowResetModal(true)}
+                        style={{
+                            background: "#dc2626",
+                            color: "#fff",
+                            border: "none",
+                            padding: "8px 14px",
+                            borderRadius: "6px",
+                            fontWeight: "700",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                            whiteSpace: "nowrap"
+                        }}
+                    >
+                        🔄 Reset {planDirectionTab === "OUTWARD" ? "Outward" : "Inward"} Plan
+                    </button>
                 </div>
             )}
 
@@ -1932,6 +2080,30 @@ export default function AIAgent() {
                             <div>
                                 <h3>Inward Bus Starting Places</h3>
                                 <p>Configure the starting hub / location for each inward bus. Each inward bus starts from its configured place.</p>
+                                {summary.confirmedUsers > 0 && inwardStartingPlaces.length > 0 && (
+                                    <div style={{
+                                        marginTop: "8px",
+                                        padding: "8px 12px",
+                                        background: inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70)
+                                            ? "rgba(16, 185, 129, 0.1)"
+                                            : "rgba(245, 158, 11, 0.1)",
+                                        border: `1px solid ${inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)"}`,
+                                        borderRadius: "6px",
+                                        color: inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "#065f46" : "#92400e",
+                                        fontSize: "13px",
+                                        fontWeight: "500",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "6px"
+                                    }}>
+                                        <span>{inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "✓" : "⚠️"}</span>
+                                        <span>
+                                            {inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70)
+                                                ? `${Math.ceil(summary.confirmedUsers / 70)} buses are required for ${summary.confirmedUsers} passengers. All selected inward buses have configured starting places. Ready to generate.`
+                                                : `${Math.ceil(summary.confirmedUsers / 70)} buses are required for ${summary.confirmedUsers} passengers. Starting locations configured for ${inwardStartingPlaces.filter((sp) => sp.active).length} buses.`}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                             <button
                                 type="button"
@@ -2222,6 +2394,7 @@ export default function AIAgent() {
                     {/* Ready to Generate State */}
                     {!aiPlan &&
                         !generating &&
+                        !loading &&
                         summary.confirmedUsers >
                         0 && (
                             <div className="empty-ai-box">
@@ -2306,12 +2479,14 @@ export default function AIAgent() {
                                     onClick={() => {
                                         setPlanData(inwardPlan || null);
                                         setPlanDirectionTab("INWARD");
+                                        planDirectionTabRef.current = "INWARD";
                                         setActiveEndpointField("destination");
                                         setTripMode("TO_DESTINATION");
                                         try {
                                             localStorage.setItem("active_plan_direction", "INWARD");
                                         } catch {}
                                         loadLastSelection("INWARD");
+                                        loadActivePlan(false, "INWARD");
                                     }}
                                     style={{
                                         padding: "8px 18px",
@@ -2321,12 +2496,12 @@ export default function AIAgent() {
                                         fontSize: "13px",
                                         cursor: "pointer",
                                         background: planDirectionTab === "INWARD" ? "#0284c7" : "transparent",
-                                        color: planDirectionTab === "INWARD" ? "#ffffff" : (inwardPlan ? "#334155" : "#64748b"),
+                                        color: planDirectionTab === "INWARD" ? "#ffffff" : (isInwardResetRequired ? "#b45309" : (hasInwardPlan ? "#334155" : "#64748b")),
                                         boxShadow: planDirectionTab === "INWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
                                         transition: "all 0.2s"
                                     }}
                                 >
-                                    Inward Plan {inwardPlan ? "✓" : (stalePlanInfo?.inward ? "⚠️ (Stale)" : "(Not Generated)")}
+                                    Inward Plan {isInwardResetRequired ? "⚠️ (Reset Required)" : (hasInwardPlan ? "✓" : "(Not Generated)")}
                                 </button>
                                 <button
                                     type="button"
@@ -2334,12 +2509,14 @@ export default function AIAgent() {
                                     onClick={() => {
                                         setPlanData(outwardPlan || null);
                                         setPlanDirectionTab("OUTWARD");
+                                        planDirectionTabRef.current = "OUTWARD";
                                         setActiveEndpointField("source");
                                         setTripMode("FROM_SOURCE");
                                         try {
                                             localStorage.setItem("active_plan_direction", "OUTWARD");
                                         } catch {}
                                         loadLastSelection("OUTWARD");
+                                        loadActivePlan(false, "OUTWARD");
                                     }}
                                     style={{
                                         padding: "8px 18px",
@@ -2349,12 +2526,12 @@ export default function AIAgent() {
                                         fontSize: "13px",
                                         cursor: "pointer",
                                         background: planDirectionTab === "OUTWARD" ? "#7c3aed" : "transparent",
-                                        color: planDirectionTab === "OUTWARD" ? "#ffffff" : (outwardPlan ? "#334155" : (stalePlanInfo?.outward ? "#b45309" : "#64748b")),
+                                        color: planDirectionTab === "OUTWARD" ? "#ffffff" : (isOutwardResetRequired ? "#b45309" : (hasOutwardPlan ? "#334155" : "#64748b")),
                                         boxShadow: planDirectionTab === "OUTWARD" ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
                                         transition: "all 0.2s"
                                     }}
                                 >
-                                    Outward Plan {outwardPlan ? "✓" : (stalePlanInfo?.outward ? "⚠️ (Stale)" : "(Not Generated)")}
+                                    Outward Plan {isOutwardResetRequired ? "⚠️ (Reset Required)" : (hasOutwardPlan ? "✓" : "(Not Generated)")}
                                 </button>
                             </div>
                         </div>
@@ -2563,13 +2740,22 @@ export default function AIAgent() {
                                                     <span
                                                         className={`status-pill ${bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected && bus.roadRouteStatus === "Continuous OSRM road progression verified"
                                                             ? "continuous"
-                                                            : "warning"
+                                                            : (bus.roadRouteStatus === "OSRM road connectivity verified" ? "info-pill" : "warning")
                                                             }`}
                                                     >
                                                         {bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected && bus.roadRouteStatus === "Continuous OSRM road progression verified"
                                                             ? "✓ Continuous OSRM road progression verified"
-                                                            : (bus.roadRouteStatus || "⚠ Continuous OSRM geometry unavailable")}
+                                                            : (bus.roadRouteStatus === "OSRM road connectivity verified"
+                                                                ? "ℹ OSRM road connectivity verified"
+                                                                : (bus.roadRouteStatus || "⚠ Continuous OSRM geometry unavailable"))}
                                                     </span>
+
+                                                    {bus.whySeparateRouteNeeded && (
+                                                        <div style={{ width: "100%", fontSize: "11px", color: "#374151", background: "#f8fafc", padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                            <span>ℹ️</span>
+                                                            <span><strong>Operational Rationale:</strong> {bus.whySeparateRouteNeeded}</span>
+                                                        </div>
+                                                    )}
 
                                                     {bus.isConsolidated && (
                                                         <span
@@ -2805,35 +2991,31 @@ export default function AIAgent() {
                                                                 </div>
 
                                                             </div>
-                                                        ) : (
-                                                            (() => {
+                                                        ) : (() => {
                                                                 const startHub = bus.inwardStartLocation || bus.startLocation;
                                                                 if (!startHub) return null;
                                                                 const firstStop = Array.isArray(bus.stops) && bus.stops[0];
-                                                                const sHubName = (startHub.name || "").toLowerCase().trim();
+                                                                const sHubName = (startHub.name || startHub.locationName || "").toLowerCase().trim();
                                                                 const fStopName = (firstStop?.name || "").toLowerCase().trim();
                                                                 const isSameFirstLocality = Boolean(
                                                                     firstStop && (sHubName === fStopName || sHubName.includes(fStopName) || fStopName.includes(sHubName))
                                                                 );
-                                                                if (isSameFirstLocality) {
-                                                                    return null;
-                                                                }
+
                                                                 return (
-                                                                    <div className="timeline-start source-terminal-hub" style={{ borderLeftColor: "#10b981" }}>
+                                                                    <div className="timeline-start source-terminal-hub" style={{ borderLeftColor: "#10b981", background: "rgba(16, 185, 129, 0.04)", padding: "8px 12px", borderRadius: "8px", marginBottom: "8px" }}>
                                                                         <span className="timeline-dot" style={{ background: "#10b981", boxShadow: "0 0 8px rgba(16, 185, 129, 0.5)" }}></span>
                                                                         <div>
-                                                                            <strong>
-                                                                                🚩{" "}
-                                                                                {startHub.name || "Inward Starting Place"}
+                                                                            <strong style={{ fontSize: "13px", color: "#065f46" }}>
+                                                                                🚩 Starting Hub: {startHub.name || startHub.locationName || "Inward Starting Place"}
                                                                             </strong>
-                                                                            <small style={{ color: "#34d399" }}>
-                                                                                Inward Starting Hub · Origin
+                                                                            <small style={{ color: "#059669", display: "block", fontWeight: "600" }}>
+                                                                                Vehicle Starting Hub · Depot Origin (Bus Departs Here)
                                                                             </small>
                                                                         </div>
                                                                     </div>
                                                                 );
                                                             })()
-                                                        )}
+                                                        }
 
                                                     {Array.isArray(
                                                         bus.stops
@@ -2855,7 +3037,7 @@ export default function AIAgent() {
                                                                     );
 
                                                                 const startHub = bus.inwardStartLocation || bus.startLocation;
-                                                                const sHubName = (startHub?.name || "").toLowerCase().trim();
+                                                                const sHubName = (startHub?.name || startHub?.locationName || "").toLowerCase().trim();
                                                                 const fStopName = (stop.name || "").toLowerCase().trim();
                                                                 const isFirstStopSameAsHub = Boolean(
                                                                     !isOutward && stopIndex === 0 && startHub && (sHubName === fStopName || sHubName.includes(fStopName) || fStopName.includes(sHubName))
@@ -2874,17 +3056,19 @@ export default function AIAgent() {
 
                                                                         <div className="timeline-stop-content">
 
-                                                                            <div className="stop-title-row">
+                                                                            <div className="stop-title-row" style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
 
                                                                                 <strong>
-                                                                                    {
-                                                                                        stop.name
-                                                                                    }
+                                                                                    👥 {stop.name}
                                                                                 </strong>
+
+                                                                                <span style={{ fontSize: "10px", fontWeight: "700", color: "#374151", background: "#f3f4f6", padding: "2px 6px", borderRadius: "10px", border: "1px solid #d1d5db" }}>
+                                                                                    {isOutward ? "Passenger Drop-off Stop" : "Passenger Pickup Stop"}
+                                                                                </span>
 
                                                                                 {isFirstStopSameAsHub && (
                                                                                     <span style={{ fontSize: "11px", fontWeight: "700", color: "#059669", background: "#d1fae5", padding: "2px 8px", borderRadius: "12px", border: "1px solid #a7f3d0" }}>
-                                                                                        🚩 Starting Hub &amp; Boarding Origin
+                                                                                        Boarding at Starting Hub
                                                                                     </span>
                                                                                 )}
 
@@ -3056,27 +3240,146 @@ export default function AIAgent() {
 
                             </div>
 
-                            <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
-                                <button
-                                    className="select-plan-btn selected"
-                                    onClick={async () => {
-                                        handleSelectAIPlan();
-                                        await handleSaveFinalPlan();
-                                    }}
-                                    disabled={savingSelection || isPlanInvalidated}
-                                    title={isPlanInvalidated ? "Plan is invalidated due to demand changes. Please regenerate." : ""}
-                                    style={{
-                                        flex: "1 1 auto",
-                                        opacity: isPlanInvalidated ? 0.5 : 1,
-                                        cursor: isPlanInvalidated ? "not-allowed" : "pointer"
-                                    }}
-                                >
-                                    {savingSelection
-                                        ? "⏳ Opening Final Confirmation..."
-                                        : isPlanInvalidated
-                                        ? "⚠️ Plan Stale — Regeneration Required"
-                                        : "✓ Select AI Plan (Go to Final Confirmation →)"}
-                                </button>
+                            <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap", alignItems: "center" }}>
+                                {(() => {
+                                    const isCurrentApproved = Boolean(planData?.isApproved === true || (planData?.status === "active" && planData?.approvedAt));
+                                    const isCurrentPending = Boolean(!isCurrentApproved && (planData?.isSubmitted === true || planData?.status === "pending_approval"));
+
+                                    if (isCurrentApproved) {
+                                        if (isCurrentResetRequired) {
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowResetModal(true)}
+                                                    style={{
+                                                        flex: "1 1 auto",
+                                                        padding: "10px 18px",
+                                                        borderRadius: "8px",
+                                                        background: "#fef3c7",
+                                                        color: "#92400e",
+                                                        border: "1.5px solid #fcd34d",
+                                                        fontWeight: "700",
+                                                        fontSize: "13px",
+                                                        cursor: "pointer"
+                                                    }}
+                                                >
+                                                    ⚠️ Reset Required (Demand / Late Response Changed)
+                                                </button>
+                                            );
+                                        }
+                                        return (
+                                            <button
+                                                type="button"
+                                                disabled
+                                                style={{
+                                                    flex: "1 1 auto",
+                                                    padding: "10px 18px",
+                                                    borderRadius: "8px",
+                                                    background: "#dcfce7",
+                                                    color: "#166534",
+                                                    border: "1.5px solid #86efac",
+                                                    fontWeight: "700",
+                                                    fontSize: "13px",
+                                                    cursor: "default"
+                                                }}
+                                            >
+                                                ✓ AI Plan Approved &amp; Active in Database (Students Allocated)
+                                            </button>
+                                        );
+                                    }
+
+                                    if (isCurrentPending) {
+                                        return (
+                                            <button
+                                                type="button"
+                                                className="select-plan-btn"
+                                                onClick={async () => {
+                                                    try {
+                                                        setSavingSelection(true);
+                                                        const planPayload = planData?.aiPlan || planData;
+                                                        const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+                                                        await approveAIPlan({
+                                                            planType: "AI",
+                                                            direction: currentDir,
+                                                            tripMode: tripMode,
+                                                            plan: planPayload,
+                                                            planId: planData?._id || planData?.planId,
+                                                            startingPoint: planData?.startingPoint || sourceLocation || destinationLocation || null
+                                                        });
+                                                        toast.success("✓ AI Plan approved & students allocated in database!");
+                                                        await loadActivePlan();
+                                                        await refreshPlanStatusAndLateResponses();
+                                                    } catch (err) {
+                                                        console.error("Approve AI plan error:", err);
+                                                        toast.error(err?.response?.data?.message || err?.message || "Failed to approve AI plan.");
+                                                    } finally {
+                                                        setSavingSelection(false);
+                                                    }
+                                                }}
+                                                disabled={savingSelection || isPlanInvalidated}
+                                                title={isPlanInvalidated ? "Plan is invalidated due to demand changes. Please regenerate." : ""}
+                                                style={{
+                                                    flex: "1 1 auto",
+                                                    padding: "10px 18px",
+                                                    borderRadius: "8px",
+                                                    background: "#16a34a",
+                                                    color: "#ffffff",
+                                                    border: "none",
+                                                    fontWeight: "700",
+                                                    fontSize: "13px",
+                                                    cursor: isPlanInvalidated ? "not-allowed" : "pointer"
+                                                }}
+                                            >
+                                                {savingSelection ? "⏳ Approving & Allocating..." : "✓ Approve & Activate AI Plan"}
+                                            </button>
+                                        );
+                                    }
+
+                                    // Default / Generated Preview: Confirm (Submit for Approval)
+                                    return (
+                                        <button
+                                            type="button"
+                                            className="select-plan-btn"
+                                            onClick={async () => {
+                                                try {
+                                                    setSavingSelection(true);
+                                                    const planPayload = planData?.aiPlan || planData;
+                                                    const currentDir = planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+                                                    await confirmAIPlan({
+                                                        planType: "AI",
+                                                        direction: currentDir,
+                                                        tripMode: tripMode,
+                                                        plan: planPayload,
+                                                        planId: planData?._id || planData?.planId,
+                                                        startingPoint: planData?.startingPoint || sourceLocation || destinationLocation || null
+                                                    });
+                                                    toast.success("✓ AI Plan confirmed & submitted for approval! Students are NOT allocated yet.");
+                                                    await loadActivePlan();
+                                                } catch (err) {
+                                                    console.error("Confirm AI plan error:", err);
+                                                    toast.error(err?.response?.data?.message || err?.message || "Failed to confirm AI plan.");
+                                                } finally {
+                                                    setSavingSelection(false);
+                                                }
+                                            }}
+                                            disabled={savingSelection || isPlanInvalidated}
+                                            title={isPlanInvalidated ? "Plan is invalidated due to demand changes. Please regenerate." : ""}
+                                            style={{
+                                                flex: "1 1 auto",
+                                                padding: "10px 18px",
+                                                borderRadius: "8px",
+                                                background: "#0284c7",
+                                                color: "#ffffff",
+                                                border: "none",
+                                                fontWeight: "700",
+                                                fontSize: "13px",
+                                                cursor: isPlanInvalidated ? "not-allowed" : "pointer"
+                                            }}
+                                        >
+                                            {savingSelection ? "⏳ Submitting..." : "✓ Confirm AI Plan (Submit for Approval)"}
+                                        </button>
+                                    );
+                                })()}
                                 <button
                                     type="button"
                                     onClick={() => navigate(`/admin/plan-confirmation?direction=${planDirectionTab || "INWARD"}&type=AI`)}
@@ -3122,6 +3425,8 @@ export default function AIAgent() {
                 isResetting={resetting}
                 direction={planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD")}
             />
+
+
 
             {/* Select Generated Route Modal */}
             <SelectGeneratedRouteModal

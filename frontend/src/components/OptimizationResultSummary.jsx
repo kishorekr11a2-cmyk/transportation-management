@@ -53,14 +53,31 @@ export default function OptimizationResultSummary({
         totalComing
     );
 
-    const busesAllocated = Array.isArray(aiPlan?.buses)
-        ? aiPlan.buses.length
-        : Number(aiPlan?.vehicleCount ?? 0);
+    const busesAllocated = Number(
+        aiPlan?.allocatedBusCount ??
+        aiPlan?.feasibleBusCount ??
+        (Array.isArray(aiPlan?.buses) ? aiPlan.buses.length : Number(aiPlan?.vehicleCount ?? 0))
+    );
 
     const availableVehiclesCount = Number(
+        aiPlan?.availableBusCount ??
         aiPlan?.availableVehicleCount ??
         summary?.availableVehicles ??
         summary?.availableVehicleCount ??
+        busesAllocated
+    );
+
+    const minimumCapacityBuses = Number(
+        aiPlan?.minimumCapacityBuses ??
+        summary?.minimumCapacityBuses ??
+        aiPlan?.fleetDecision?.minimumCapacityBuses ??
+        busesAllocated
+    );
+
+    const feasibleBusCount = Number(
+        aiPlan?.feasibleBusCount ??
+        summary?.feasibleBusCount ??
+        aiPlan?.fleetDecision?.feasibleBusCount ??
         busesAllocated
     );
 
@@ -108,6 +125,7 @@ export default function OptimizationResultSummary({
     const isCertified = aiPlan?.certification?.isCertified !== false && usersCovered >= totalComing && totalComing > 0;
     const capacityShortage = aiPlan?.capacityShortage || summary?.capacityShortage || (availableSeats < totalComing);
     const unallocatedUsers = Number(aiPlan?.unassignedUsers ?? summary?.unallocatedUsers ?? 0);
+    const fleetBalancing = aiPlan?.fleetBalancing || summary?.fleetBalancing || plan?.fleetBalancing || null;
 
     const rawTripMode = aiPlan?.tripMode || plan?.tripMode || "INWARD";
     const canonicalDirection = direction
@@ -115,6 +133,20 @@ export default function OptimizationResultSummary({
         : ((rawTripMode === "FROM_SOURCE" || rawTripMode === "OUTWARD" || aiPlan?.direction === "OUTWARD" || plan?.direction === "OUTWARD")
             ? "OUTWARD"
             : "INWARD");
+
+    const isApproved = Boolean(
+        aiPlan?.isApproved === true ||
+        plan?.isApproved === true ||
+        (aiPlan?.status === "active" && aiPlan?.approvedAt) ||
+        (plan?.status === "active" && plan?.approvedAt)
+    );
+    const isPendingApproval = Boolean(
+        !isApproved &&
+        (aiPlan?.isSubmitted === true ||
+         plan?.isSubmitted === true ||
+         aiPlan?.status === "pending_approval" ||
+         plan?.status === "pending_approval")
+    );
 
     // isRoadVerified: true only if ALL buses are OSRM-verified AND continuous (both set by the backend after full validation)
     const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
@@ -128,6 +160,9 @@ export default function OptimizationResultSummary({
         // All buses fully verified by backend
         if (buses.every((b) => b.roadRouteStatus === "Continuous OSRM road progression verified" && b.isRoadVerified === true && b.isContinuous === true)) {
             return "Continuous OSRM road progression verified";
+        }
+        if (buses.every((b) => (b.roadRouteStatus === "Continuous OSRM road progression verified" || b.roadRouteStatus === "OSRM road connectivity verified") && b.isRoadVerified === true)) {
+            return "OSRM road connectivity verified";
         }
         return "⚠ Continuous OSRM geometry unavailable";
     })();
@@ -160,6 +195,52 @@ export default function OptimizationResultSummary({
 
     return (
         <div className="optimization-result-summary-card">
+            {/* Section 13: Distinct AI Plan Lifecycle State Banner */}
+            <div style={{
+                background: isApproved ? "#f0fdf4" : isPendingApproval ? "#fffbeb" : "#f8fafc",
+                border: `1.5px solid ${isApproved ? "#86efac" : isPendingApproval ? "#fde68a" : "#cbd5e1"}`,
+                borderRadius: "10px",
+                padding: "12px 18px",
+                marginBottom: "16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "12px"
+            }}>
+                <div>
+                    <div style={{ fontSize: "11px", fontWeight: "800", letterSpacing: "0.06em", color: "#64748b", textTransform: "uppercase" }}>
+                        PLAN TYPE: <b>AI</b> &nbsp;|&nbsp; STATUS: <span style={{
+                            color: isApproved ? "#15803d" : isPendingApproval ? "#b45309" : "#475569",
+                            fontWeight: "800"
+                        }}>
+                            {isApproved ? "APPROVED / ACTIVE" : isPendingApproval ? "PENDING APPROVAL" : "GENERATED (PREVIEW)"}
+                        </span>
+                    </div>
+                    <div style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b", marginTop: "3px" }}>
+                        Direction: <strong style={{ color: canonicalDirection === "OUTWARD" ? "#7c3aed" : "#0284c7" }}>{canonicalDirection}</strong>
+                        &nbsp;•&nbsp; Users: <strong>{totalComing}</strong>
+                        &nbsp;•&nbsp; Allocation: <strong style={{ color: isApproved ? "#15803d" : isPendingApproval ? "#b45309" : "#64748b" }}>
+                            {isApproved ? `${usersCovered} / ${totalComing}` : (isPendingApproval ? "Pending Approval" : "Not Allocated (Preview Only)")}
+                        </strong>
+                    </div>
+                </div>
+                <div>
+                    <span style={{
+                        display: "inline-block",
+                        padding: "5px 12px",
+                        borderRadius: "9999px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                        background: isApproved ? "#dcfce7" : isPendingApproval ? "#fef3c7" : "#e2e8f0",
+                        color: isApproved ? "#166534" : isPendingApproval ? "#92400e" : "#475569",
+                        border: `1px solid ${isApproved ? "#bbf7d0" : isPendingApproval ? "#fde68a" : "#cbd5e1"}`
+                    }}>
+                        {isApproved ? "✓ APPROVED / ACTIVE" : isPendingApproval ? "⏳ PENDING APPROVAL" : "👁 GENERATED (PREVIEW)"}
+                    </span>
+                </div>
+            </div>
+
             {/* Header Banner */}
             <div className={`opt-result-top-banner ${isCertified ? "certified-banner" : "warning-banner"}`}>
                 <div className="opt-result-title-group">
@@ -184,9 +265,11 @@ export default function OptimizationResultSummary({
                             )}
                         </h2>
                         <p className="opt-result-subtext">
-                            {isCertified
-                                ? `The independent AI engine allocated continuous road routes for all ${usersCovered} confirmed passengers across ${busesAllocated} available vehicles (${allocatedSeats} total seats, ${unusedSeats} unused seats).`
-                                : `Demand of ${totalComing} confirmed passengers requires review (${unallocatedUsers > 0 ? `${unallocatedUsers} passengers unallocated due to vehicle capacity limits` : "Review constraints"}).`}
+                            {aiPlan?.validationMessage || (canonicalDirection === "INWARD" && isCertified
+                                ? `${busesAllocated} buses are required for ${usersCovered} passengers. All selected inward buses have configured starting places. Ready to generate.`
+                                : (isCertified
+                                    ? `The independent AI engine allocated continuous road routes for all ${usersCovered} confirmed passengers across ${busesAllocated} available vehicles (${allocatedSeats} total seats, ${unusedSeats} unused seats).`
+                                    : `Demand of ${totalComing} confirmed passengers requires review (${unallocatedUsers > 0 ? `${unallocatedUsers} passengers unallocated due to vehicle capacity limits` : "Review constraints"}).`))}
                         </p>
                     </div>
                 </div>
@@ -214,7 +297,9 @@ export default function OptimizationResultSummary({
                             <small className="metric-fraction"> / {totalComing.toLocaleString()}</small>
                         </strong>
                         <span className="metric-sub-label">
-                            {usersCovered === totalComing ? "Passengers Allocated (100%)" : `${unallocatedUsers} Shortfall`}
+                            {isApproved
+                                ? (usersCovered === totalComing ? "Passengers Allocated (100%)" : `${unallocatedUsers} Shortfall`)
+                                : (isPendingApproval ? "Allocation: Pending Approval" : "Planned Passengers (Not Allocated)")}
                         </span>
                     </div>
                 </div>
@@ -229,7 +314,9 @@ export default function OptimizationResultSummary({
                             <small className="metric-fraction"> / {availableVehiclesCount} avail.</small>
                         </strong>
                         <span className="metric-sub-label">
-                            Buses Allocated
+                            {feasibleBusCount > minimumCapacityBuses
+                                ? `Feasible Fleet (Min: ${minimumCapacityBuses})`
+                                : "Feasible Fleet (Optimal)"}
                         </span>
                     </div>
                 </div>
@@ -300,7 +387,9 @@ export default function OptimizationResultSummary({
                     </div>
                     <div>
                         <span style={{ color: "#64748b" }}>Allocated Passengers: </span>
-                        <strong style={{ color: "#16a34a" }}>{usersCovered}</strong>
+                        <strong style={{ color: isApproved ? "#16a34a" : isPendingApproval ? "#b45309" : "#64748b" }}>
+                            {isApproved ? `${usersCovered} / ${totalComing}` : (isPendingApproval ? "Pending Approval" : "0 (Preview Only)")}
+                        </strong>
                     </div>
                     <div>
                         <span style={{ color: "#64748b" }}>Unallocated: </span>
@@ -356,6 +445,48 @@ export default function OptimizationResultSummary({
                 </div>
             </div>
 
+            {/* Fleet Balancing & Shared Fleet Principle (Transportation Manager Optimization) */}
+            {fleetBalancing && (
+                <div style={{
+                    background: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#f0fdf4" : "#f8fafc",
+                    border: `1.5px solid ${fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#86efac" : "#cbd5e1"}`,
+                    borderRadius: "12px",
+                    padding: "16px 20px",
+                    margin: "18px 0"
+                }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                        <h4 style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span>⚖️ Transportation Manager Fleet Balancing</span>
+                            <span style={{
+                                fontSize: "11px",
+                                fontWeight: "800",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                                background: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#dcfce7" : "#f1f5f9",
+                                color: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#15803d" : "#475569",
+                                textTransform: "uppercase"
+                            }}>
+                                {fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "Balanced Fleet (Shared Operation)" : (fleetBalancing.symmetryStatus === "ASYMMETRIC_FLEET_JUSTIFIED" ? "Asymmetry Justified" : "Independent Direction")}
+                            </span>
+                        </h4>
+                        {fleetBalancing.vehicleReuseCount > 0 && (
+                            <span style={{ fontSize: "12px", fontWeight: "700", color: "#16a34a", background: "#dcfce7", padding: "3px 10px", borderRadius: "12px" }}>
+                                🔄 Vehicle Reuse: {fleetBalancing.vehicleReuseCount} buses ({fleetBalancing.vehicleReuseRate}%)
+                            </span>
+                        )}
+                    </div>
+                    <p style={{ margin: "0 0 8px 0", fontSize: "13px", color: "#334155", lineHeight: "1.5" }}>
+                        {fleetBalancing.decisionReason}
+                    </p>
+                    {fleetBalancing.reusedVehicleNames?.length > 0 && (
+                        <div style={{ fontSize: "12px", color: "#475569" }}>
+                            <strong>Reused Fleet Vehicles: </strong>
+                            {fleetBalancing.reusedVehicleNames.join(", ")}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Validation & Highlights Bar */}
             <div className="opt-validation-highlights">
                 <div className="highlight-pill">
@@ -387,7 +518,7 @@ export default function OptimizationResultSummary({
 
                 <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`}>
                     <span className="highlight-check">{isRoadVerified ? "✓" : "⚠️"}</span>
-                    <span>{isRoadVerified ? "Continuous OSRM road progression verified" : "⚠ Continuous OSRM geometry unavailable"}</span>
+                    <span>{roadValidationText}</span>
                 </div>
 
                 <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`} id="pill-road-validation">

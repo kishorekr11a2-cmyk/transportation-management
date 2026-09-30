@@ -1,20 +1,45 @@
 import React, { useState } from "react";
 import { FiX, FiMap, FiTruck, FiUsers, FiMapPin, FiNavigation } from "react-icons/fi";
 
+const getRouteKey = (route, idx = 0) => {
+    if (!route) return "";
+    return String(
+        route.routeId ||
+        route.routeCode ||
+        route.busNumber ||
+        route.vehicleName ||
+        route.vehicleNumber ||
+        route.busId ||
+        route.vehicleId ||
+        route._id ||
+        route.id ||
+        `R-${String(idx + 1).padStart(2, "0")}`
+    ).trim();
+};
+
 export default function SelectGeneratedRouteModal({
     isOpen,
     onClose,
     routes = [],
     onConfirmSelect
 }) {
-    const [selectedCode, setSelectedCode] = useState(
-        routes.length > 0 ? (routes[0].routeCode || routes[0].routeNumber || "") : ""
-    );
+    const [selectedCode, setSelectedCode] = useState(() => {
+        return routes.length > 0 ? getRouteKey(routes[0], 0) : "";
+    });
+
+    // Preserve selection when routes array updates; fallback only if selected route no longer exists
+    React.useEffect(() => {
+        if (!isOpen || routes.length === 0) return;
+        const stillExists = routes.some((r, i) => getRouteKey(r, i) === selectedCode);
+        if (!stillExists) {
+            setSelectedCode(getRouteKey(routes[0], 0));
+        }
+    }, [isOpen, routes, selectedCode]);
 
     if (!isOpen) return null;
 
     const activeRoute = routes.find(
-        (r) => (r.routeCode || r.routeNumber) === selectedCode
+        (r, i) => getRouteKey(r, i) === selectedCode
     );
 
     const handleConfirm = () => {
@@ -66,7 +91,8 @@ export default function SelectGeneratedRouteModal({
                     ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                             {routes.map((route, idx) => {
-                                const code = route.routeCode || `R-${String(idx + 1).padStart(2, "0")}`;
+                                const code = getRouteKey(route, idx);
+                                const displayCode = route.routeCode || route.busNumber || route.vehicleName || route.vehicleNumber || `R-${String(idx + 1).padStart(2, "0")}`;
                                 const isSelected = selectedCode === code;
                                 const isToDestination = route.tripMode === "TO_DESTINATION" || route.tripMode === "INWARD";
                                 
@@ -111,7 +137,7 @@ export default function SelectGeneratedRouteModal({
                                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
                                                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                                     <strong style={{ fontSize: "15px", color: isSelected ? "#1d4ed8" : "#0f172a" }}>
-                                                        {code}
+                                                        {displayCode}
                                                     </strong>
                                                     <span style={{
                                                         fontSize: "12px",

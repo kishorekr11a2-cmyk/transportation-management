@@ -1137,14 +1137,19 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
         { $set: { active: false, status: "superseded" } }
     );
 
+    // Determine effectivePlanType from prevPlan or draft summary
+    const isManualOriginal = prevPlan?.planType === "MANUAL" || prevPlan?.planType === "ADMIN" || draft?.currentPlanSummary?.planType === "MANUAL" || draft?.currentPlanSummary?.planType === "ADMIN";
+    const effectivePlanType = isManualOriginal ? (prevPlan?.planType || draft?.currentPlanSummary?.planType || "ADMIN") : "AI";
+
     // 4. Insert approved regenerated plan into ai_selected_plans
     const sanitizedPlan = sanitizeTransportationPlan(draft);
     const approvedDoc = {
         planVersion,
         approvalEventId,
-        planType: "AI_REGENERATED",
+        planType: isManualOriginal ? effectivePlanType : "AI_REGENERATED",
         direction: canonicalDirection,
         tripMode,
+        allocationMode: isManualOriginal ? "MANUAL" : "AI",
         plan: sanitizedPlan,
         startingPoint: draft.sourceHub || draft.startingPoint || null,
         active: true,
@@ -1262,10 +1267,6 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
 
     console.log(`[LATE RESPONSE APPROVAL] Direction: ${canonicalDirection} | Allocated: ${allocatedStudentInfoMap.size} | Standby: ${standbyUserIds.size}`);
 
-    // Determine effectivePlanType from prevPlan or draft summary
-    const isManualOriginal = prevPlan?.planType === "MANUAL" || prevPlan?.planType === "ADMIN" || draft?.currentPlanSummary?.planType === "MANUAL";
-    const effectivePlanType = isManualOriginal ? "MANUAL" : "AI";
-
     // 6. Persist allocations to student records FIRST — this is what actually writes
     //    bus/route/seat info to User documents. Must run BEFORE resolving late responses.
     await persistPlanToUsers(
@@ -1357,6 +1358,11 @@ export const approveLateResponseDraft = async ({ direction = "OUTWARD", draftId 
                     planVersion: Number(planVersion) || 1,
                     activePlanVersion: Number(planVersion) || 1
                 };
+                if (isManualOriginal) {
+                    userUpdate.manualRouteId = assignedRoute;
+                    userUpdate.manualBusId = assignedVehicle;
+                    userUpdate.approvedPlanType = effectivePlanType;
+                }
                 if (!alloc || !alloc.isAllocated) {
                     userUpdate.allocatedBus = {
                         isAllocated: true,

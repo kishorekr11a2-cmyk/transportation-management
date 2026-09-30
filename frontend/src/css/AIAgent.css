@@ -95,11 +95,13 @@
     background: #ef4444;
 }
 
+.ai-ready.reset-required,
 .ai-ready.invalidated {
     border-color: #fde68a;
     background: #fffbeb;
     color: #b45309;
 }
+.ai-ready.reset-required .ready-dot,
 .ai-ready.invalidated .ready-dot {
     background: #f59e0b;
 }

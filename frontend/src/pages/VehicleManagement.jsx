@@ -1,412 +1,1011 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-hot-toast";
-import { MdDirectionsBus, MdAdd, MdEdit, MdDelete, MdClose, MdRefresh } from "react-icons/md";
+import {
+  MdDirectionsBus,
+  MdAdd,
+  MdEdit,
+  MdDelete,
+  MdClose,
+  MdRefresh,
+  MdSearch
+} from "react-icons/md";
+import {
+  FiTruck,
+  FiCheckCircle,
+  FiXCircle,
+  FiLayers,
+  FiCheck,
+  FiX
+} from "react-icons/fi";
 import { HiArrowLeft } from "react-icons/hi2";
 
 import api from "../services/api";
-
 import "../css/VehicleManagement.css";
 
+const VehicleManagement = ({ initialTab = "vehicles" }) => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-const VehicleManagement = () => {
+  // Tab state: "vehicles" | "schedules"
+  const urlTab = searchParams.get("tab")?.toLowerCase();
+  const defaultTab = urlTab === "schedule" || urlTab === "schedules" ? "schedules" : initialTab;
+  const [activeTab, setActiveTab] = useState(defaultTab);
 
-    const navigate = useNavigate();
+  // Sync tab with URL
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
-    const [vehicles, setVehicles] = useState([]);
-    const [loading, setLoading]   = useState(true);
-    const [error, setError]       = useState(false);
-    const [showForm, setShowForm] = useState(false);
+  // Fleet & Schedule Data
+  const [vehicles, setVehicles] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-    const [vehicle, setVehicle] = useState({
-        vehicleName: "",
-        capacity: ""
+  // Search & Filter States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [vehicleFilter, setVehicleFilter] = useState("ALL");
+  const [scheduleFilter, setScheduleFilter] = useState("ALL");
+
+  // Schedule fast-toggle loading tracker
+  const [updatingScheduleId, setUpdatingScheduleId] = useState(null);
+
+  // Vehicle Add / Edit Modal State
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [editingVehicleId, setEditingVehicleId] = useState(null);
+  const [vehicleFormData, setVehicleFormData] = useState({
+    vehicleName: "",
+    capacity: ""
+  });
+  const [submittingVehicle, setSubmittingVehicle] = useState(false);
+
+  // Vehicle Delete Confirmation Modal State
+  const [vehicleToDelete, setVehicleToDelete] = useState(null);
+  const [deletingVehicle, setDeletingVehicle] = useState(false);
+
+  // ── Fetch Vehicles & Schedules ────────────────────────────
+  const loadData = useCallback(async (showSpinner = false) => {
+    try {
+      if (showSpinner) setLoading(true);
+      else setRefreshing(true);
+      setError(null);
+
+      const [vehicleRes, scheduleRes] = await Promise.all([
+        api.get("/vehicles"),
+        api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
+      ]);
+
+      const vehicleData = vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
+      const scheduleData = scheduleRes.data?.schedules || [];
+
+      setVehicles(vehicleData);
+      setSchedules(scheduleData);
+    } catch (err) {
+      console.error("Failed to load fleet and schedules:", err);
+      setError("Unable to connect to server to load fleet and schedule data.");
+      if (showSpinner) {
+        toast.error("Failed to load fleet and schedules");
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Lifecycle & Background Sync
+  useEffect(() => {
+    let isMounted = true;
+    loadData(true);
+
+    const handleSync = () => {
+      if (document.visibilityState === "visible" && isMounted && !showVehicleModal && !vehicleToDelete && !updatingScheduleId) {
+        loadData(false);
+      }
+    };
+
+    window.addEventListener("focus", handleSync);
+    document.addEventListener("visibilitychange", handleSync);
+
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === "visible" && isMounted && !showVehicleModal && !vehicleToDelete && !updatingScheduleId) {
+        loadData(false);
+      }
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("focus", handleSync);
+      document.removeEventListener("visibilitychange", handleSync);
+      clearInterval(pollInterval);
+    };
+  }, [loadData, showVehicleModal, vehicleToDelete, updatingScheduleId]);
+
+  // ── Unified Vehicle & Schedule List ───────────────────────
+  const vehicleScheduleList = useMemo(() => {
+    const scheduleMap = new Map();
+    schedules.forEach((s) => {
+      const vId = String(s.vehicle?._id || s.vehicle || "");
+      if (vId) scheduleMap.set(vId, s);
     });
 
-    const [editId, setEditId] = useState(null);
+    return vehicles.map((veh) => {
+      const sched = scheduleMap.get(String(veh._id));
+      const isAvailable = sched ? sched.availability === "Available" : true;
+      return {
+        ...veh,
+        scheduleId: sched?._id || null,
+        availability: isAvailable ? "Available" : "Not Available"
+      };
+    });
+  }, [vehicles, schedules]);
 
+  // ── Executive Metrics ─────────────────────────────────────
+  const metrics = useMemo(() => {
+    const total = vehicleScheduleList.length;
+    const available = vehicleScheduleList.filter((v) => v.availability === "Available").length;
+    const notAvailable = total - available;
+    const totalCapacity = vehicleScheduleList.reduce((sum, v) => sum + (Number(v.capacity) || 0), 0);
+    const availableCapacity = vehicleScheduleList
+      .filter((v) => v.availability === "Available")
+      .reduce((sum, v) => sum + (Number(v.capacity) || 0), 0);
 
-    // ── Get Vehicles ──────────────────────────────────────────
-    const getVehicles = async () => {
-        try {
-            setError(false);
-            const response = await api.get("/vehicles");
-            setVehicles(response.data.vehicles || []);
-        } catch (error) {
-            console.error("Failed to load vehicles:", error);
-            setError(true);
-        } finally {
-            setLoading(false);
-        }
+    return {
+      total,
+      available,
+      notAvailable,
+      totalCapacity,
+      availableCapacity
     };
+  }, [vehicleScheduleList]);
 
-    useEffect(() => {
-        getVehicles();
+  // ── Filtered Vehicles for Tab 1 (Vehicle Management) ──────
+  const filteredVehicles = useMemo(() => {
+    return vehicleScheduleList.filter((v) => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch = !q || v.vehicleName?.toLowerCase().includes(q) || String(v.capacity).includes(q);
+      if (!matchesSearch) return false;
 
-        const handleSync = () => {
-            if (document.visibilityState === "visible") {
-                getVehicles();
-            }
-        };
+      if (vehicleFilter === "AVAILABLE") return v.availability === "Available";
+      if (vehicleFilter === "NOT_AVAILABLE") return v.availability === "Not Available";
+      return true;
+    });
+  }, [vehicleScheduleList, searchQuery, vehicleFilter]);
 
-        window.addEventListener("focus", handleSync);
-        document.addEventListener("visibilitychange", handleSync);
+  // ── Filtered Schedules for Tab 2 (Schedule Management) ────
+  const filteredSchedules = useMemo(() => {
+    return vehicleScheduleList.filter((v) => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch = !q || v.vehicleName?.toLowerCase().includes(q) || String(v.capacity).includes(q);
+      if (!matchesSearch) return false;
 
-        const pollInterval = setInterval(() => {
-            if (document.visibilityState === "visible" && !showForm && !editId) {
-                getVehicles();
-            }
-        }, 15000);
+      if (scheduleFilter === "AVAILABLE") return v.availability === "Available";
+      if (scheduleFilter === "NOT_AVAILABLE") return v.availability === "Not Available";
+      return true;
+    });
+  }, [vehicleScheduleList, searchQuery, scheduleFilter]);
 
-        return () => {
-            window.removeEventListener("focus", handleSync);
-            document.removeEventListener("visibilitychange", handleSync);
-            clearInterval(pollInterval);
-        };
-    }, [showForm, editId]);
+  // ── Vehicle Form Handlers (Add / Edit) ─────────────────────
+  const openAddModal = () => {
+    setEditingVehicleId(null);
+    setVehicleFormData({ vehicleName: "", capacity: "" });
+    setShowVehicleModal(true);
+  };
 
+  const openEditModal = (bus) => {
+    setEditingVehicleId(bus._id);
+    setVehicleFormData({
+      vehicleName: bus.vehicleName,
+      capacity: String(bus.capacity)
+    });
+    setShowVehicleModal(true);
+  };
 
-    // ── Input Change ──────────────────────────────────────────
-    const handleChange = (e) => {
-        setVehicle({
-            ...vehicle,
-            [e.target.name]: e.target.value
+  const closeVehicleModal = () => {
+    setShowVehicleModal(false);
+    setEditingVehicleId(null);
+    setVehicleFormData({ vehicleName: "", capacity: "" });
+  };
+
+  const handleVehicleFormSubmit = async (e) => {
+    e.preventDefault();
+    const name = vehicleFormData.vehicleName.trim();
+    const cap = parseInt(vehicleFormData.capacity, 10);
+
+    if (!name || isNaN(cap) || cap <= 0) {
+      toast.error("Please enter a valid vehicle name and seat capacity");
+      return;
+    }
+
+    try {
+      setSubmittingVehicle(true);
+      if (editingVehicleId) {
+        const res = await api.put(`/vehicles/${editingVehicleId}`, {
+          vehicleName: name,
+          capacity: cap
         });
-    };
-
-
-    // ── Add / Update Vehicle ──────────────────────────────────
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (!vehicle.vehicleName || !vehicle.capacity) {
-            toast.error("Fill all fields");
-            return;
-        }
-
-        try {
-            if (editId) {
-                const response = await api.put(
-                    `/vehicles/${editId}`,
-                    vehicle
-                );
-                toast.success(response.data.message);
-                setEditId(null);
-            } else {
-                const response = await api.post(
-                    "/vehicles",
-                    vehicle
-                );
-                toast.success(response.data.message);
-            }
-
-            setVehicle({ vehicleName: "", capacity: "" });
-            setShowForm(false);
-            getVehicles();
-
-        } catch (error) {
-            toast.error(
-                error.response?.data?.message ||
-                "Operation failed"
-            );
-        }
-    };
-
-
-    // ── Edit Vehicle ──────────────────────────────────────────
-    const editVehicle = (bus) => {
-        setVehicle({
-            vehicleName: bus.vehicleName,
-            capacity: bus.capacity
+        toast.success(res.data?.message || "Vehicle updated successfully");
+      } else {
+        const res = await api.post("/vehicles", {
+          vehicleName: name,
+          capacity: cap
         });
-        setEditId(bus._id);
-        setShowForm(true);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-    };
+        toast.success(res.data?.message || "Vehicle registered successfully");
+      }
 
+      closeVehicleModal();
+      await loadData(false);
+    } catch (err) {
+      console.error("Vehicle save error:", err);
+      toast.error(err.response?.data?.message || "Failed to save vehicle");
+    } finally {
+      setSubmittingVehicle(false);
+    }
+  };
 
-    // ── Delete Vehicle ────────────────────────────────────────
-    const deleteVehicle = async (id) => {
-        try {
-            const response = await api.delete(`/vehicles/${id}`);
-            toast.success(response.data.message);
-            getVehicles();
-        } catch (error) {
-            toast.error(
-                error.response?.data?.message ||
-                "Delete failed"
-            );
+  // ── Vehicle Delete Handlers ────────────────────────────────
+  const confirmDelete = async () => {
+    if (!vehicleToDelete) return;
+
+    try {
+      setDeletingVehicle(true);
+      const res = await api.delete(`/vehicles/${vehicleToDelete._id}`);
+      toast.success(res.data?.message || `Vehicle ${vehicleToDelete.vehicleName} deleted`);
+      setVehicleToDelete(null);
+      await loadData(false);
+    } catch (err) {
+      console.error("Vehicle delete error:", err);
+      toast.error(err.response?.data?.message || "Failed to delete vehicle");
+    } finally {
+      setDeletingVehicle(false);
+    }
+  };
+
+  // ── Schedule Availability Toggle ───────────────────────────
+  const toggleScheduleAvailability = async (item) => {
+    const newStatus = item.availability === "Available" ? "Not Available" : "Available";
+
+    try {
+      setUpdatingScheduleId(item._id);
+
+      // Optimistic update of local schedules
+      setSchedules((prev) => {
+        const idx = prev.findIndex((s) => String(s.vehicle?._id || s.vehicle) === String(item._id));
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], availability: newStatus };
+          return updated;
         }
-    };
+        return [...prev, { vehicle: item, availability: newStatus }];
+      });
 
+      await api.post("/schedules", {
+        vehicle: item._id,
+        availability: newStatus
+      });
 
-    // ── Cancel form ───────────────────────────────────────────
-    const cancelForm = () => {
-        setVehicle({ vehicleName: "", capacity: "" });
-        setEditId(null);
-        setShowForm(false);
-    };
+      toast.success(`${item.vehicleName} marked as ${newStatus}`);
+      await loadData(false);
+    } catch (err) {
+      console.error("Toggle availability error:", err);
+      toast.error(err.response?.data?.message || "Failed to update availability");
+      await loadData(false);
+    } finally {
+      setUpdatingScheduleId(null);
+    }
+  };
 
+  // ── Bulk Set All Status ────────────────────────────────────
+  const setAllStatus = async (status) => {
+    try {
+      setRefreshing(true);
+      await Promise.all(
+        vehicles.map((v) =>
+          api.post("/schedules", {
+            vehicle: v._id,
+            availability: status
+          })
+        )
+      );
+      toast.success(`All vehicles marked as ${status}`);
+      await loadData(false);
+    } catch (err) {
+      console.error("Bulk update error:", err);
+      toast.error("Failed to update all vehicles");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
-    // ── Bay number formatter ──────────────────────────────────
-    const bayLabel = (index) =>
-        `BAY ${String(index + 1).padStart(2, "0")}`;
+  return (
+    <div className="vm-page-container">
+      {/* ── Top Navigation Bar ── */}
+      <div className="vm-top-nav">
+        <button
+          type="button"
+          className="vm-back-btn"
+          onClick={() => navigate("/admin-dashboard")}
+          aria-label="Back to Admin Dashboard"
+        >
+          <HiArrowLeft size={16} />
+          Back to Dashboard
+        </button>
 
-
-    // ── Render ────────────────────────────────────────────────
-    return (
-        <div className="depot-page">
-
-            {/* ── Page Header ── */}
-            <header className="depot-header">
-                <div className="depot-header__left">
-                    <button
-                        className="depot-back-btn"
-                        onClick={() => navigate(-1)}
-                        aria-label="Go back"
-                    >
-                        <HiArrowLeft size={16} />
-                        Back
-                    </button>
-
-                    <div className="depot-brand">
-                        <div className="depot-brand__icon" aria-hidden="true">
-                            <MdDirectionsBus size={22} />
-                        </div>
-                        <div>
-                            <p className="depot-brand__label">Fleet Depot</p>
-                            <h1 className="depot-brand__title">Vehicle Management</h1>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="depot-header__right">
-                    <p className="depot-header__subtitle">
-                        Manage and organize the registered transportation fleet
-                    </p>
-                    <button
-                        className="depot-add-btn"
-                        onClick={() => { cancelForm(); setShowForm(true); }}
-                        aria-label="Add new vehicle"
-                    >
-                        <MdAdd size={18} />
-                        Add Vehicle
-                    </button>
-                </div>
-            </header>
-
-
-            {/* ── Add / Edit Form Panel ── */}
-            {showForm && (
-                <div className="depot-form-overlay" role="dialog" aria-modal="true" aria-label={editId ? "Edit vehicle" : "Add vehicle"}>
-                    <div className="depot-form-panel">
-                        <div className="depot-form-panel__header">
-                            <h2 className="depot-form-panel__title">
-                                {editId ? "Edit Vehicle" : "Register New Vehicle"}
-                            </h2>
-                            <button
-                                className="depot-form-close"
-                                onClick={cancelForm}
-                                aria-label="Close form"
-                            >
-                                <MdClose size={20} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleSubmit} className="depot-form">
-                            <div className="depot-form__group">
-                                <label htmlFor="vehicleName" className="depot-form__label">
-                                    Vehicle Name
-                                </label>
-                                <input
-                                    id="vehicleName"
-                                    type="text"
-                                    name="vehicleName"
-                                    placeholder="e.g. J1, Q1, A2"
-                                    value={vehicle.vehicleName}
-                                    onChange={handleChange}
-                                    className="depot-form__input"
-                                    autoComplete="off"
-                                />
-                            </div>
-
-                            <div className="depot-form__group">
-                                <label htmlFor="capacity" className="depot-form__label">
-                                    Seat Capacity
-                                </label>
-                                <input
-                                    id="capacity"
-                                    type="number"
-                                    name="capacity"
-                                    placeholder="e.g. 70"
-                                    value={vehicle.capacity}
-                                    onChange={handleChange}
-                                    className="depot-form__input"
-                                    min="1"
-                                />
-                            </div>
-
-                            <div className="depot-form__actions">
-                                <button
-                                    type="button"
-                                    className="depot-form__cancel"
-                                    onClick={cancelForm}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="depot-form__submit"
-                                >
-                                    {editId ? "Update Vehicle" : "Register Vehicle"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-
-            {/* ── Depot Floor ── */}
-            <main className="depot-floor">
-                <div className="depot-floor__header">
-                    <div className="depot-floor__header-left">
-                        <h2 className="depot-floor__title">Depot Floor</h2>
-                        <p className="depot-floor__subtitle">Registered fleet vehicles</p>
-                    </div>
-                    <div className="depot-floor__header-right">
-                        {!loading && !error && (
-                            <span className="depot-vehicle-count">
-                                {vehicles.length === 0
-                                    ? "No vehicles registered"
-                                    : `${vehicles.length} registered vehicle${vehicles.length !== 1 ? "s" : ""}`
-                                }
-                            </span>
-                        )}
-                    </div>
-                </div>
-
-                <div className="depot-floor__divider" aria-hidden="true" />
-
-
-                {/* ── Loading State ── */}
-                {loading && (
-                    <div className="depot-bay-grid" aria-busy="true" aria-label="Loading vehicles">
-                        {[1, 2, 3, 4, 5, 6].map((n) => (
-                            <div className="depot-bay depot-bay--skeleton" key={n} aria-hidden="true">
-                                <div className="depot-bay__label-sk" />
-                                <div className="depot-bay__icon-sk" />
-                                <div className="depot-bay__name-sk" />
-                                <div className="depot-bay__capacity-sk" />
-                                <div className="depot-bay__actions-sk" />
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-
-                {/* ── Error State ── */}
-                {!loading && error && (
-                    <div className="depot-state depot-state--error" role="alert">
-                        <MdDirectionsBus size={48} className="depot-state__icon" aria-hidden="true" />
-                        <p className="depot-state__message">Unable to load fleet vehicles.</p>
-                        <button
-                            className="depot-retry-btn"
-                            onClick={getVehicles}
-                        >
-                            <MdRefresh size={16} />
-                            Retry
-                        </button>
-                    </div>
-                )}
-
-
-                {/* ── Empty State ── */}
-                {!loading && !error && vehicles.length === 0 && (
-                    <div className="depot-state depot-state--empty">
-                        <MdDirectionsBus size={56} className="depot-state__icon" aria-hidden="true" />
-                        <h3 className="depot-state__heading">Depot Is Empty</h3>
-                        <p className="depot-state__message">
-                            No vehicles have been registered yet.
-                        </p>
-                        <button
-                            className="depot-add-btn depot-add-btn--center"
-                            onClick={() => setShowForm(true)}
-                        >
-                            <MdAdd size={18} />
-                            Add Vehicle
-                        </button>
-                    </div>
-                )}
-
-
-                {/* ── Depot Bay Grid ── */}
-                {!loading && !error && vehicles.length > 0 && (
-                    <div className="depot-bay-grid">
-                        {vehicles.map((bus, index) => (
-                            <article
-                                className="depot-bay"
-                                key={bus._id}
-                                aria-label={`${bayLabel(index)}: ${bus.vehicleName}`}
-                            >
-                                {/* Bay label */}
-                                <div className="depot-bay__label" aria-hidden="true">
-                                    <span className="depot-bay__label-text">{bayLabel(index)}</span>
-                                    <span className="depot-bay__label-line" />
-                                </div>
-
-                                {/* Bus silhouette */}
-                                <div className="depot-bay__icon-wrap" aria-hidden="true">
-                                    <MdDirectionsBus size={52} className="depot-bay__bus-icon" />
-                                </div>
-
-                                {/* Vehicle identity */}
-                                <div className="depot-bay__identity">
-                                    <span className="depot-bay__name">{bus.vehicleName}</span>
-                                    <span className="depot-bay__type-label">Vehicle</span>
-                                </div>
-
-                                {/* Divider */}
-                                <div className="depot-bay__separator" aria-hidden="true" />
-
-                                {/* Seat capacity */}
-                                <div className="depot-bay__capacity">
-                                    <span className="depot-bay__capacity-label">Seat Capacity</span>
-                                    <span className="depot-bay__capacity-value">
-                                        {bus.capacity} <span className="depot-bay__seats-unit">seats</span>
-                                    </span>
-                                </div>
-
-                                {/* Actions */}
-                                <div className="depot-bay__actions">
-                                    <button
-                                        className="depot-bay__edit-btn"
-                                        onClick={() => editVehicle(bus)}
-                                        aria-label={`Edit ${bus.vehicleName}`}
-                                    >
-                                        <MdEdit size={14} />
-                                        Edit
-                                    </button>
-                                    <button
-                                        className="depot-bay__delete-btn"
-                                        onClick={() => deleteVehicle(bus._id)}
-                                        aria-label={`Delete ${bus.vehicleName}`}
-                                    >
-                                        <MdDelete size={14} />
-                                        Delete
-                                    </button>
-                                </div>
-                            </article>
-                        ))}
-                    </div>
-                )}
-
-            </main>
-
+        <div className="vm-nav-actions">
+          <button
+            type="button"
+            className="vm-btn-refresh"
+            onClick={() => loadData(false)}
+            disabled={refreshing || loading}
+            title="Refresh fleet data"
+          >
+            <MdRefresh size={16} className={refreshing ? "spin" : ""} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+          <button
+            type="button"
+            className="vm-btn-primary"
+            onClick={openAddModal}
+            title="Register a new fleet vehicle"
+          >
+            <MdAdd size={18} />
+            Add Vehicle
+          </button>
         </div>
-    );
+      </div>
 
+      {/* ── Main Page Header ── */}
+      <header className="vm-main-header">
+        <div>
+          <span className="vm-header-badge">FLEET &amp; DISPATCH CONTROL</span>
+          <h1 className="vm-header-title">Vehicle &amp; Schedule Management</h1>
+          <p className="vm-header-subtitle">
+            Manage transportation fleet assets, seat capacities, and daily operational availability.
+          </p>
+        </div>
+      </header>
+
+      {/* ── Executive Summary Metrics Bar ── */}
+      <section className="vm-metrics-grid" aria-label="Fleet Overview Metrics">
+        <div className="vm-metric-card">
+          <div className="vm-metric-icon fleet">
+            <FiTruck />
+          </div>
+          <div className="vm-metric-info">
+            <span className="vm-metric-label">Total Fleet</span>
+            <span className="vm-metric-value">{loading ? "..." : metrics.total}</span>
+            <span className="vm-metric-sub">Registered vehicles</span>
+          </div>
+        </div>
+
+        <div className="vm-metric-card">
+          <div className="vm-metric-icon available">
+            <FiCheckCircle />
+          </div>
+          <div className="vm-metric-info">
+            <span className="vm-metric-label">Available for Trips</span>
+            <span className="vm-metric-value text-success">{loading ? "..." : metrics.available}</span>
+            <span className="vm-metric-sub">Ready for AI &amp; manual routes</span>
+          </div>
+        </div>
+
+        <div className="vm-metric-card">
+          <div className="vm-metric-icon unavailable">
+            <FiXCircle />
+          </div>
+          <div className="vm-metric-info">
+            <span className="vm-metric-label">Not Available</span>
+            <span className="vm-metric-value text-danger">{loading ? "..." : metrics.notAvailable}</span>
+            <span className="vm-metric-sub">Withheld from allocation</span>
+          </div>
+        </div>
+
+        <div className="vm-metric-card">
+          <div className="vm-metric-icon capacity">
+            <FiLayers />
+          </div>
+          <div className="vm-metric-info">
+            <span className="vm-metric-label">Available Seats</span>
+            <span className="vm-metric-value">
+              {loading ? "..." : metrics.availableCapacity}
+              <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#64748b", marginLeft: "4px" }}>
+                / {metrics.totalCapacity}
+              </span>
+            </span>
+            <span className="vm-metric-sub">Seats in available vehicles</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Tab Switcher Bar ── */}
+      <nav className="vm-tabs-bar" aria-label="Management Sections">
+        <button
+          type="button"
+          className={`vm-tab-btn ${activeTab === "vehicles" ? "active" : ""}`}
+          onClick={() => handleTabChange("vehicles")}
+        >
+          <MdDirectionsBus size={18} />
+          <span>Vehicle Management</span>
+          <span className="vm-tab-pill-badge">{metrics.total}</span>
+        </button>
+
+        <button
+          type="button"
+          className={`vm-tab-btn ${activeTab === "schedules" ? "active" : ""}`}
+          onClick={() => handleTabChange("schedules")}
+        >
+          <FiCheckCircle size={17} />
+          <span>Schedule Management</span>
+          <span className="vm-tab-pill-badge">
+            {metrics.available} Available · {metrics.notAvailable} Unavailable
+          </span>
+        </button>
+      </nav>
+
+      {/* ── Main Content Card ── */}
+      <main className="vm-content-card">
+        {/* ========================================================
+            TAB 1: VEHICLE MANAGEMENT SECTION
+           ======================================================== */}
+        {activeTab === "vehicles" && (
+          <section aria-label="Vehicle Management Tab">
+            {/* Toolbar */}
+            <div className="vm-toolbar">
+              <div className="vm-toolbar-left">
+                <div className="vm-search-box">
+                  <MdSearch className="vm-search-icon" />
+                  <input
+                    type="text"
+                    className="vm-search-input"
+                    placeholder="Search by vehicle name or capacity..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="vm-clear-search"
+                      onClick={() => setSearchQuery("")}
+                      aria-label="Clear search"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div className="vm-filter-group">
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${vehicleFilter === "ALL" ? "active" : ""}`}
+                    onClick={() => setVehicleFilter("ALL")}
+                  >
+                    All ({metrics.total})
+                  </button>
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${vehicleFilter === "AVAILABLE" ? "active" : ""}`}
+                    onClick={() => setVehicleFilter("AVAILABLE")}
+                  >
+                    Available ({metrics.available})
+                  </button>
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${vehicleFilter === "NOT_AVAILABLE" ? "active" : ""}`}
+                    onClick={() => setVehicleFilter("NOT_AVAILABLE")}
+                  >
+                    Not Available ({metrics.notAvailable})
+                  </button>
+                </div>
+              </div>
+
+              <div className="vm-toolbar-right">
+                <button
+                  type="button"
+                  className="vm-btn-primary"
+                  onClick={openAddModal}
+                >
+                  <MdAdd size={16} />
+                  Register Vehicle
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-banner info */}
+            <div className="vm-section-banner">
+              <span>
+                Showing <strong>{filteredVehicles.length}</strong> of <strong>{metrics.total}</strong> registered fleet vehicle{metrics.total !== 1 ? "s" : ""}
+              </span>
+              <span>Click Edit or Delete to manage individual vehicles</span>
+            </div>
+
+            {/* Table or States */}
+            {loading ? (
+              <div className="vm-state-box">
+                <div className="vm-spinner" />
+                <h3 className="vm-state-heading">Loading fleet assets...</h3>
+                <p className="vm-state-message">Connecting to database and fetching fleet configuration.</p>
+              </div>
+            ) : error ? (
+              <div className="vm-state-box">
+                <div className="vm-state-icon">⚠️</div>
+                <h3 className="vm-state-heading">Connection Error</h3>
+                <p className="vm-state-message">{error}</p>
+                <button type="button" className="vm-btn-primary" onClick={() => loadData(true)}>
+                  <MdRefresh size={16} /> Retry Connection
+                </button>
+              </div>
+            ) : filteredVehicles.length === 0 ? (
+              <div className="vm-state-box">
+                <div className="vm-state-icon">🚌</div>
+                <h3 className="vm-state-heading">
+                  {vehicles.length === 0 ? "No Fleet Vehicles Registered" : "No Matching Vehicles"}
+                </h3>
+                <p className="vm-state-message">
+                  {vehicles.length === 0
+                    ? "Get started by adding your first college transport vehicle with its designated capacity."
+                    : "No vehicles match the active search term or status filter."}
+                </p>
+                {vehicles.length === 0 ? (
+                  <button type="button" className="vm-btn-primary" onClick={openAddModal}>
+                    <MdAdd size={16} /> Register First Vehicle
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="vm-btn-secondary"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setVehicleFilter("ALL");
+                    }}
+                  >
+                    Clear Filter
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="vm-table-responsive">
+                <table className="vm-table">
+                  <thead>
+                    <tr>
+                      <th>Vehicle Name</th>
+                      <th>Fleet Class</th>
+                      <th>Seating Capacity</th>
+                      <th>Schedule Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredVehicles.map((bus) => {
+                      const isAvail = bus.availability === "Available";
+                      return (
+                        <tr key={bus._id} className={!isAvail ? "row-unavailable" : ""}>
+                          <td>
+                            <div className="vm-vehicle-identity">
+                              <div className="vm-vehicle-icon-box">
+                                <MdDirectionsBus />
+                              </div>
+                              <div>
+                                <span className="vm-vehicle-name">{bus.vehicleName}</span>
+                                <div className="vm-vehicle-subid">
+                                  ID: {String(bus._id).slice(-6).toUpperCase()}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td>
+                            <span style={{ fontSize: "13px", fontWeight: "600", color: "#475569" }}>
+                              Standard Fleet Bus
+                            </span>
+                          </td>
+
+                          <td>
+                            <span className="vm-capacity-pill">
+                              <span className="vm-capacity-num">{bus.capacity}</span>
+                              <span className="vm-capacity-unit">seats</span>
+                            </span>
+                          </td>
+
+                          <td>
+                            <span className={`vm-status-badge ${isAvail ? "available" : "unavailable"}`}>
+                              <span className="vm-status-dot" />
+                              {isAvail ? "Available" : "Not Available"}
+                            </span>
+                          </td>
+
+                          <td>
+                            <div className="vm-actions-cell">
+                              <button
+                                type="button"
+                                className="vm-btn-action-edit"
+                                onClick={() => openEditModal(bus)}
+                                title={`Edit ${bus.vehicleName}`}
+                              >
+                                <MdEdit size={14} />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="vm-btn-action-delete"
+                                onClick={() => setVehicleToDelete(bus)}
+                                title={`Delete ${bus.vehicleName}`}
+                              >
+                                <MdDelete size={14} />
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ========================================================
+            TAB 2: SCHEDULE MANAGEMENT SECTION
+           ======================================================== */}
+        {activeTab === "schedules" && (
+          <section aria-label="Schedule Management Tab">
+            {/* Toolbar */}
+            <div className="vm-toolbar">
+              <div className="vm-toolbar-left">
+                <div className="vm-search-box">
+                  <MdSearch className="vm-search-icon" />
+                  <input
+                    type="text"
+                    className="vm-search-input"
+                    placeholder="Search by vehicle name or capacity..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="vm-clear-search"
+                      onClick={() => setSearchQuery("")}
+                      aria-label="Clear search"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div className="vm-filter-group">
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${scheduleFilter === "ALL" ? "active" : ""}`}
+                    onClick={() => setScheduleFilter("ALL")}
+                  >
+                    All ({metrics.total})
+                  </button>
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${scheduleFilter === "AVAILABLE" ? "active" : ""}`}
+                    onClick={() => setScheduleFilter("AVAILABLE")}
+                  >
+                    Available ({metrics.available})
+                  </button>
+                  <button
+                    type="button"
+                    className={`vm-filter-pill ${scheduleFilter === "NOT_AVAILABLE" ? "active" : ""}`}
+                    onClick={() => setScheduleFilter("NOT_AVAILABLE")}
+                  >
+                    Not Available ({metrics.notAvailable})
+                  </button>
+                </div>
+              </div>
+
+              <div className="vm-toolbar-right">
+                <button
+                  type="button"
+                  className="vm-btn-bulk-avail"
+                  onClick={() => setAllStatus("Available")}
+                  disabled={loading || refreshing || metrics.available === metrics.total}
+                  title="Mark all fleet vehicles as Available"
+                >
+                  <FiCheck size={14} />
+                  Mark All Available
+                </button>
+                <button
+                  type="button"
+                  className="vm-btn-bulk-unavail"
+                  onClick={() => setAllStatus("Not Available")}
+                  disabled={loading || refreshing || metrics.notAvailable === metrics.total}
+                  title="Mark all fleet vehicles as Not Available"
+                >
+                  <FiX size={14} />
+                  Mark All Unavailable
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-banner info */}
+            <div className="vm-section-banner">
+              <span>
+                Schedule availability determines which buses can be allocated in <strong>Route Management</strong> and <strong>AI Route Optimization</strong>.
+              </span>
+              <span>
+                Status: <strong>{metrics.available} Available</strong> · <strong>{metrics.notAvailable} Unavailable</strong>
+              </span>
+            </div>
+
+            {/* Table or States */}
+            {loading ? (
+              <div className="vm-state-box">
+                <div className="vm-spinner" />
+                <h3 className="vm-state-heading">Loading vehicle schedule availability...</h3>
+                <p className="vm-state-message">Fetching dispatch availability from MongoDB.</p>
+              </div>
+            ) : error ? (
+              <div className="vm-state-box">
+                <div className="vm-state-icon">⚠️</div>
+                <h3 className="vm-state-heading">Connection Error</h3>
+                <p className="vm-state-message">{error}</p>
+                <button type="button" className="vm-btn-primary" onClick={() => loadData(true)}>
+                  <MdRefresh size={16} /> Retry
+                </button>
+              </div>
+            ) : filteredSchedules.length === 0 ? (
+              <div className="vm-state-box">
+                <div className="vm-state-icon">📅</div>
+                <h3 className="vm-state-heading">No Vehicles Found</h3>
+                <p className="vm-state-message">
+                  {vehicles.length === 0
+                    ? "No vehicles registered in fleet depot yet. Add vehicles in the Vehicle Management tab first."
+                    : "No vehicles match the selected filter or search keyword."}
+                </p>
+                {vehicles.length === 0 && (
+                  <button
+                    type="button"
+                    className="vm-btn-primary"
+                    onClick={() => handleTabChange("vehicles")}
+                  >
+                    Go to Vehicle Management &rarr;
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="vm-table-responsive">
+                <table className="vm-table">
+                  <thead>
+                    <tr>
+                      <th>Vehicle Name &amp; ID</th>
+                      <th>Seat Capacity</th>
+                      <th>Current Availability</th>
+                      <th>Quick Status Control</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSchedules.map((item) => {
+                      const isAvail = item.availability === "Available";
+                      const isUpdating = updatingScheduleId === item._id;
+
+                      return (
+                        <tr key={item._id} className={!isAvail ? "row-unavailable" : ""}>
+                          <td>
+                            <div className="vm-vehicle-identity">
+                              <div className="vm-vehicle-icon-box">
+                                <MdDirectionsBus />
+                              </div>
+                              <div>
+                                <span className="vm-vehicle-name">{item.vehicleName}</span>
+                                <div className="vm-vehicle-subid">
+                                  ID: {String(item._id).slice(-6).toUpperCase()}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td>
+                            <span className="vm-capacity-pill">
+                              <span className="vm-capacity-num">{item.capacity}</span>
+                              <span className="vm-capacity-unit">seats</span>
+                            </span>
+                          </td>
+
+                          <td>
+                            <span className={`vm-status-badge ${isAvail ? "available" : "unavailable"}`}>
+                              <span className="vm-status-dot" />
+                              {isAvail ? "Available" : "Not Available"}
+                            </span>
+                          </td>
+
+                          <td>
+                            <div className="vm-toggle-control-group">
+                              <button
+                                type="button"
+                                className={`vm-toggle-btn avail ${isAvail ? "is-active-avail" : ""}`}
+                                onClick={() => !isAvail && toggleScheduleAvailability(item)}
+                                disabled={isUpdating || isAvail}
+                                title={isAvail ? "Currently Available" : "Click to mark Available"}
+                              >
+                                <FiCheckCircle size={14} />
+                                Available
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`vm-toggle-btn unavail ${!isAvail ? "is-active-unavail" : ""}`}
+                                onClick={() => isAvail && toggleScheduleAvailability(item)}
+                                disabled={isUpdating || !isAvail}
+                                title={!isAvail ? "Currently Not Available" : "Click to mark Not Available"}
+                              >
+                                <FiXCircle size={14} />
+                                Not Available
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+      </main>
+
+      {/* ========================================================
+          ADD / EDIT VEHICLE MODAL
+         ======================================================== */}
+      {showVehicleModal && (
+        <div
+          className="vm-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeVehicleModal}
+        >
+          <div className="vm-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vm-modal-header">
+              <h2 className="vm-modal-title">
+                {editingVehicleId ? "Edit Vehicle Details" : "Register New Vehicle"}
+              </h2>
+              <button
+                type="button"
+                className="vm-modal-close-btn"
+                onClick={closeVehicleModal}
+                aria-label="Close modal"
+              >
+                <MdClose />
+              </button>
+            </div>
+
+            <form onSubmit={handleVehicleFormSubmit}>
+              <div className="vm-modal-body">
+                <div className="vm-form-group">
+                  <label htmlFor="input-vehicle-name" className="vm-form-label">
+                    Vehicle Name / Number *
+                  </label>
+                  <input
+                    id="input-vehicle-name"
+                    type="text"
+                    className="vm-form-input"
+                    placeholder="e.g. J1, Q1, A2, BUS-05"
+                    value={vehicleFormData.vehicleName}
+                    onChange={(e) =>
+                      setVehicleFormData({ ...vehicleFormData, vehicleName: e.target.value })
+                    }
+                    autoFocus
+                    required
+                  />
+                  <span className="vm-form-hint">
+                    Enter the fleet designation code or license plate identifier.
+                  </span>
+                </div>
+
+                <div className="vm-form-group">
+                  <label htmlFor="input-vehicle-capacity" className="vm-form-label">
+                    Passenger Seat Capacity *
+                  </label>
+                  <input
+                    id="input-vehicle-capacity"
+                    type="number"
+                    min="1"
+                    max="150"
+                    className="vm-form-input"
+                    placeholder="e.g. 70"
+                    value={vehicleFormData.capacity}
+                    onChange={(e) =>
+                      setVehicleFormData({ ...vehicleFormData, capacity: e.target.value })
+                    }
+                    required
+                  />
+                  <span className="vm-form-hint">
+                    Total student seating capacity for seat optimization and safety limits.
+                  </span>
+                </div>
+              </div>
+
+              <div className="vm-modal-footer">
+                <button
+                  type="button"
+                  className="vm-btn-secondary"
+                  onClick={closeVehicleModal}
+                  disabled={submittingVehicle}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="vm-btn-primary"
+                  disabled={submittingVehicle}
+                >
+                  {submittingVehicle
+                    ? "Saving..."
+                    : editingVehicleId
+                    ? "Update Vehicle"
+                    : "Register Vehicle"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          DELETE CONFIRMATION MODAL
+         ======================================================== */}
+      {vehicleToDelete && (
+        <div
+          className="vm-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setVehicleToDelete(null)}
+        >
+          <div className="vm-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vm-modal-header">
+              <h2 className="vm-modal-title" style={{ color: "#b91c1c" }}>
+                Delete Vehicle
+              </h2>
+              <button
+                type="button"
+                className="vm-modal-close-btn"
+                onClick={() => setVehicleToDelete(null)}
+                aria-label="Close modal"
+              >
+                <MdClose />
+              </button>
+            </div>
+
+            <div className="vm-modal-body">
+              <p style={{ margin: "0 0 12px 0", fontSize: "14px", color: "#334155", lineHeight: "1.5" }}>
+                Are you sure you want to delete vehicle <strong>{vehicleToDelete.vehicleName}</strong>?
+              </p>
+              <p style={{ margin: "0", fontSize: "13px", color: "#64748b", lineHeight: "1.5" }}>
+                This vehicle has a capacity of <strong>{vehicleToDelete.capacity} seats</strong>. Removing it will delete its registered record from fleet inventory.
+              </p>
+            </div>
+
+            <div className="vm-modal-footer">
+              <button
+                type="button"
+                className="vm-btn-secondary"
+                onClick={() => setVehicleToDelete(null)}
+                disabled={deletingVehicle}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="vm-btn-danger"
+                onClick={confirmDelete}
+                disabled={deletingVehicle}
+              >
+                {deletingVehicle ? "Deleting..." : "Yes, Delete Vehicle"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
-
 
 export default VehicleManagement;

@@ -259,7 +259,46 @@ export const calculateDirectionTransportState = (userOrDoc, activePlans, directi
     // 3. User is "Coming": Check allocation in active plan
     let foundAlloc = null;
 
-    if (isPlanApproved && planDoc) {
+    // ─── DIRECTION-SPECIFIC USER DOC LOOKUP (PRIMARY SOURCE OF TRUTH) ───────────
+    // persistPlanToUsers writes allocatedBus with direction-keyed sub-objects:
+    //   allocatedBus.inward  → INWARD allocation (if approved)
+    //   allocatedBus.outward → OUTWARD allocation (if approved)
+    // Always check the direction-specific sub-key FIRST before falling back to
+    // the active plan scan, to guarantee direction isolation.
+    if (!foundAlloc && userOrDoc.allocatedBus) {
+        const dirKey = dir.toLowerCase(); // "inward" or "outward"
+        // 1. Direction-specific sub-key (preferred — most precise)
+        const dirSubAlloc = userOrDoc.allocatedBus[dirKey];
+        if (dirSubAlloc && dirSubAlloc.isAllocated && (dirSubAlloc.approved === true || dirSubAlloc.adminApprovalStatus === "Approved")) {
+            foundAlloc = {
+                ...dirSubAlloc,
+                direction: dir,
+                planVersion: dirSubAlloc.planVersion || planVersion,
+                planType: dirSubAlloc.planType || planType,
+                isAllocated: true,
+                approved: true,
+                source: "user_doc_direction_key"
+            };
+        }
+        // 2. Flat top-level allocatedBus — ONLY if its direction field explicitly matches
+        if (!foundAlloc && userOrDoc.allocatedBus.direction === dir && userOrDoc.allocatedBus.isAllocated &&
+                (userOrDoc.allocatedBus.approved === true || userOrDoc.allocatedBus.adminApprovalStatus === "Approved")) {
+            foundAlloc = {
+                ...userOrDoc.allocatedBus,
+                direction: dir,
+                planVersion: userOrDoc.allocatedBus.planVersion || planVersion,
+                planType: userOrDoc.allocatedBus.planType || planType,
+                isAllocated: true,
+                approved: true,
+                source: "user_doc"
+            };
+        }
+    }
+
+    // ─── ACTIVE PLAN DOCUMENT SCAN (SECONDARY / VERIFICATION) ───────────────────
+    // Only scan the live active plan if user doc did not already confirm allocation.
+    // Scans active plan bus lists for direction `dir` to find the student.
+    if (!foundAlloc && isPlanApproved && planDoc) {
         const planData = planDoc.plan || planDoc;
         const planAllocatedIds = planData?.allocatedUserIds || planDoc?.allocatedUserIds;
         if (planAllocatedIds) {
@@ -267,74 +306,16 @@ export const calculateDirectionTransportState = (userOrDoc, activePlans, directi
                 ? (planAllocatedIds.has(uId) || (userOrDoc?.userId && planAllocatedIds.has(userOrDoc.userId)) || (mongoId && planAllocatedIds.has(mongoId)))
                 : (Array.isArray(planAllocatedIds) && planAllocatedIds.some(id => normalizeId(id) === uId || (userOrDoc?.userId && normalizeId(id) === normalizeId(userOrDoc.userId))));
             if (hasUser) {
-                const vehicleName = userOrDoc.allocatedBus?.vehicleName || userOrDoc.assignedVehicle || "Assigned Bus";
-                const routeCode = userOrDoc.allocatedBus?.routeCode || userOrDoc.assignedRoute || "Assigned Route";
-                foundAlloc = {
-                    isAllocated: true,
-                    approved: true,
-                    vehicle: vehicleName,
-                    vehicleName,
-                    vehicleNumber: vehicleName,
-                    route: routeCode,
-                    routeCode,
-                    routeName: userOrDoc.allocatedBus?.routeName || routeCode,
-                    direction: dir,
-                    planVersion: planDoc.planVersion || planDoc.version || planVersion,
-                    planType,
-                    approvalEventId,
-                    boardingStop: uStop || "Assigned Stop",
-                    stopOrder: 1,
-                    totalStops: 1,
-                    seatNumber: userOrDoc.allocatedBus?.seatNumber || null,
-                    seatStatus: "Assigned",
-                    capacity: 70,
-                    assignedUsersCount: 1,
-                    remainingSeats: 0,
-                    allocationStatus: "Assigned",
-                    adminApprovalStatus: "Approved",
-                    source: "active_plan"
-                };
-            }
-        }
-
-        const buses = Array.isArray(planData?.buses) ? planData.buses : (Array.isArray(planData?.routes) ? planData.routes : []);
-
-        for (const bus of buses) {
-            const users = bus.users || bus.allocatedStudents || bus.passengers || bus.assignedUsers || [];
-            let isUserInBus = false;
-            let seatNumber = bus.seatNumber || null;
-
-            for (const u of users) {
-                const candId = typeof u === "string" ? normalizeId(u) : normalizeId(u.userId || u._id || u.id);
-                if ((uId && candId === uId) || (mongoId && candId === mongoId)) {
-                    isUserInBus = true;
-                    if (typeof u === "object" && u.seatNumber) seatNumber = u.seatNumber;
-                    break;
-                }
-            }
-
-            let matchedStop = null;
-            const stops = Array.isArray(bus.stops) ? bus.stops : [];
-            for (const st of stops) {
-                const stopUserIds = (st.userIds || []).map(normalizeId);
-                if ((uId && stopUserIds.includes(uId)) || (mongoId && stopUserIds.includes(mongoId))) {
-                    isUserInBus = true;
-                    matchedStop = st;
-                    break;
-                }
-            }
-
-            if (isUserInBus) {
-                const vehicleName = bus.vehicleName || bus.vehicleNumber || "Assigned Bus";
-                const routeCode = bus.routeCode || bus.routeName || `R-${String(bus.routeNumber || 1).padStart(2, "0")}`;
-                const routeName = bus.routeName || `${routeCode}: ${vehicleName}`;
-                const stopName = matchedStop?.name || matchedStop?.stopName || uStop || "Assigned Stop";
-                const stopOrder = matchedStop?.order || 1;
-                const totalStops = stops.length || 1;
-                const capacity = Number(bus.capacity) || 70;
-                const assignedUsersCount = Number(bus.assignedUsers || users.length || 0);
-                const remainingSeats = bus.remainingSeats ?? Math.max(0, capacity - assignedUsersCount);
-
+                // Derive allocation data from direction-specific sub-key in user doc
+                const dirKey = dir.toLowerCase();
+                const dirSubAlloc = userOrDoc.allocatedBus?.[dirKey];
+                const vehicleName = dirSubAlloc?.vehicleName ||
+                    (userOrDoc.allocatedBus?.direction === dir ? userOrDoc.allocatedBus?.vehicleName : null) ||
+                    userOrDoc.assignedVehicle || "Assigned Bus";
+                const routeCode = dirSubAlloc?.routeCode ||
+                    (userOrDoc.allocatedBus?.direction === dir ? userOrDoc.allocatedBus?.routeCode : null) ||
+                    userOrDoc.assignedRoute || "Assigned Route";
+                const routeName = dirSubAlloc?.routeName || routeCode;
                 foundAlloc = {
                     isAllocated: true,
                     approved: true,
@@ -348,48 +329,104 @@ export const calculateDirectionTransportState = (userOrDoc, activePlans, directi
                     planVersion: planDoc.planVersion || planDoc.version || planVersion,
                     planType,
                     approvalEventId,
-                    boardingStop: stopName,
-                    stopOrder,
-                    totalStops,
-                    seatNumber,
-                    seatStatus: seatNumber ? `#${seatNumber}` : "Assigned",
-                    capacity,
-                    assignedUsersCount,
-                    remainingSeats,
-                    sectorName: bus.sectorName || "Transit Line",
-                    routeStops: stops.map((s) => ({
-                        order: s.order,
-                        name: s.name,
-                        passengers: s.userCount || s.passengersDropped || s.passengersBoarded || 0,
-                        legDistanceKm: s.legDistanceKm ?? null,
-                        isUserStop: s.name?.toLowerCase().trim() === stopName.toLowerCase().trim()
-                    })),
-                    roadRouteStatus: bus.roadRouteStatus || (bus.isRoadVerified ? "OSRM Verified" : "Active Route"),
-                    isRoadVerified: Boolean(bus.isRoadVerified),
+                    boardingStop: dirSubAlloc?.boardingStop || dirSubAlloc?.stopName || uStop || "Assigned Stop",
+                    stopOrder: dirSubAlloc?.stopOrder || 1,
+                    totalStops: dirSubAlloc?.totalStops || 1,
+                    seatNumber: dirSubAlloc?.seatNumber || userOrDoc.allocatedBus?.seatNumber || null,
+                    seatStatus: "Assigned",
+                    capacity: dirSubAlloc?.capacity || 70,
+                    assignedUsersCount: dirSubAlloc?.assignedUsersCount || 1,
+                    remainingSeats: dirSubAlloc?.remainingSeats ?? 0,
                     allocationStatus: "Assigned",
                     adminApprovalStatus: "Approved",
-                    source: "active_plan"
+                    sectorName: dirSubAlloc?.sectorName || "Transit Line",
+                    routeStops: dirSubAlloc?.routeStops || [],
+                    source: "active_plan_id_set"
                 };
-                break;
             }
         }
-    }
 
-    // Direct check from user document (saved by persistPlanToUsers or admin allocation)
-    if (!foundAlloc && userOrDoc.allocatedBus) {
-        const dirKey = dir.toLowerCase();
-        const cand = userOrDoc.allocatedBus[dirKey] ||
-            (userOrDoc.allocatedBus.direction === dir ? userOrDoc.allocatedBus : null);
-        if (cand && cand.isAllocated && (cand.approved === true || cand.adminApprovalStatus === "Approved")) {
-            foundAlloc = {
-                ...cand,
-                direction: dir,
-                planVersion: cand.planVersion || planVersion,
-                planType: cand.planType || planType,
-                isAllocated: true,
-                approved: true,
-                source: "user_doc"
-            };
+        if (!foundAlloc) {
+            const buses = Array.isArray(planData?.buses) ? planData.buses : (Array.isArray(planData?.routes) ? planData.routes : []);
+
+            for (const bus of buses) {
+                // Direction guard: if the bus has an explicit direction field and it doesn't match `dir`,
+                // skip this bus — it belongs to the opposite direction plan.
+                if (bus.direction && String(bus.direction).toUpperCase().trim() !== dir) continue;
+
+                const users = bus.users || bus.allocatedStudents || bus.passengers || bus.assignedUsers || [];
+                let isUserInBus = false;
+                let seatNumber = bus.seatNumber || null;
+
+                for (const u of users) {
+                    const candId = typeof u === "string" ? normalizeId(u) : normalizeId(u.userId || u._id || u.id);
+                    if ((uId && candId === uId) || (mongoId && candId === mongoId)) {
+                        isUserInBus = true;
+                        if (typeof u === "object" && u.seatNumber) seatNumber = u.seatNumber;
+                        break;
+                    }
+                }
+
+                let matchedStop = null;
+                const stops = Array.isArray(bus.stops) ? bus.stops : [];
+                for (const st of stops) {
+                    const stopUserIds = (st.userIds || []).map(normalizeId);
+                    if ((uId && stopUserIds.includes(uId)) || (mongoId && stopUserIds.includes(mongoId))) {
+                        isUserInBus = true;
+                        matchedStop = st;
+                        break;
+                    }
+                }
+
+                if (isUserInBus) {
+                    const vehicleName = bus.vehicleName || bus.vehicleNumber || "Assigned Bus";
+                    const routeCode = bus.routeCode || bus.routeName || `R-${String(bus.routeNumber || 1).padStart(2, "0")}`;
+                    const routeName = bus.routeName || `${routeCode}: ${vehicleName}`;
+                    const stopName = matchedStop?.name || matchedStop?.stopName || uStop || "Assigned Stop";
+                    const stopOrder = matchedStop?.order || 1;
+                    const totalStops = stops.length || 1;
+                    const capacity = Number(bus.capacity) || 70;
+                    const assignedUsersCount = Number(bus.assignedUsers || users.length || 0);
+                    const remainingSeats = bus.remainingSeats ?? Math.max(0, capacity - assignedUsersCount);
+
+                    foundAlloc = {
+                        isAllocated: true,
+                        approved: true,
+                        vehicle: vehicleName,
+                        vehicleName,
+                        vehicleNumber: vehicleName,
+                        route: routeCode,
+                        routeCode,
+                        routeName,
+                        direction: dir,
+                        planVersion: planDoc.planVersion || planDoc.version || planVersion,
+                        planType,
+                        approvalEventId,
+                        boardingStop: stopName,
+                        stopOrder,
+                        totalStops,
+                        seatNumber,
+                        seatStatus: seatNumber ? `#${seatNumber}` : "Assigned",
+                        capacity,
+                        assignedUsersCount,
+                        remainingSeats,
+                        sectorName: bus.sectorName || "Transit Line",
+                        routeStops: stops.map((s) => ({
+                            order: s.order,
+                            name: s.name,
+                            passengers: s.userCount || s.passengersDropped || s.passengersBoarded || 0,
+                            legDistanceKm: s.legDistanceKm ?? null,
+                            isUserStop: s.name?.toLowerCase().trim() === stopName.toLowerCase().trim()
+                        })),
+                        roadRouteStatus: bus.roadRouteStatus || (bus.isRoadVerified ? "OSRM Verified" : "Active Route"),
+                        isRoadVerified: Boolean(bus.isRoadVerified),
+                        allocationStatus: "Assigned",
+                        adminApprovalStatus: "Approved",
+                        source: "active_plan"
+                    };
+                    break;
+                }
+            }
         }
     }
 
@@ -701,6 +738,15 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
     const activePlans = options.activePlans || await getActiveApprovedPlans({ direction: options.direction });
     const currentTravelStatus = userDoc.travelStatus || "Pending";
 
+    const activePlanSummary = activePlans?.primaryPlan ? {
+        planId: activePlans.primaryPlan.planId || activePlans.primaryPlan._id || null,
+        planVersion: activePlans.primaryPlan.planVersion || 1,
+        planType: activePlans.primaryPlan.planType || "AI",
+        direction: activePlans.primaryPlan.direction || null,
+        status: activePlans.primaryPlan.status || (activePlans.primaryPlan.isApproved ? "active" : null),
+        isApproved: Boolean(activePlans.primaryPlan.isApproved)
+    } : null;
+
     // 1. Pending State
     if (currentTravelStatus === "Pending") {
         const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
@@ -732,7 +778,7 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null,
+            activePlan: activePlanSummary,
             outward: { direction: "OUTWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
             inward: { direction: "INWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
@@ -769,7 +815,7 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null,
+            activePlan: activePlanSummary,
             outward: { direction: "OUTWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
             inward: { direction: "INWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
@@ -863,7 +909,7 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
         },
         planVersion: activePlanVersion,
         planId: primaryDir.approvalEventId || activePlans?.primaryPlan?.planId || null,
-        activePlan: activePlans?.primaryPlan || null,
+        activePlan: activePlanSummary,
         outward,
         inward,
         ...(isPendingReallocation ? {
@@ -928,6 +974,15 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
 
     const currentTravelStatus = userDoc.travelStatus || "Pending";
 
+    const activePlanSummary = activePlans?.primaryPlan ? {
+        planId: activePlans.primaryPlan.planId || activePlans.primaryPlan._id || null,
+        planVersion: activePlans.primaryPlan.planVersion || 1,
+        planType: activePlans.primaryPlan.planType || "AI",
+        direction: activePlans.primaryPlan.direction || null,
+        status: activePlans.primaryPlan.status || (activePlans.primaryPlan.isApproved ? "active" : null),
+        isApproved: Boolean(activePlans.primaryPlan.isApproved)
+    } : null;
+
     // 1. Pending State
     if (currentTravelStatus === "Pending") {
         const activePlanVersion = activePlans?.primaryPlan?.planVersion || 1;
@@ -936,6 +991,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
             ...userDoc,
             userId: userDoc.userId,
             name: userDoc.name,
+            phoneNumber: userDoc.phoneNumber || null,
             travelStatus: "Pending",
             allocationStatus: "Unallocated",
             isAllocated: false,
@@ -959,7 +1015,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null,
+            activePlan: activePlanSummary,
             outward: { direction: "OUTWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
             inward: { direction: "INWARD", travelStatus: "Pending", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
@@ -973,6 +1029,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
             ...userDoc,
             userId: userDoc.userId,
             name: userDoc.name,
+            phoneNumber: userDoc.phoneNumber || null,
             travelStatus: "Not Coming",
             allocationStatus: "Unallocated",
             isAllocated: false,
@@ -996,7 +1053,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
             route: null,
             planVersion: activePlanVersion,
             planId: activePlans?.primaryPlan?.planId || null,
-            activePlan: activePlans?.primaryPlan || null,
+            activePlan: activePlanSummary,
             outward: { direction: "OUTWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.OUTWARD?.planVersion || activePlanVersion },
             inward: { direction: "INWARD", travelStatus: "Not Coming", isAllocated: false, allocationStatus: "Unallocated", isPendingReallocation: false, planVersion: activePlans?.INWARD?.planVersion || activePlanVersion }
         };
@@ -1029,6 +1086,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
         ...userDoc,
         userId: userDoc.userId,
         name: userDoc.name,
+        phoneNumber: userDoc.phoneNumber || null,
         travelStatus: userDoc.travelStatus || "Coming",
         allocationStatus: isAllocated
             ? (userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned")
@@ -1059,7 +1117,7 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
         },
         planVersion: activePlanVersion,
         planId: primaryDir.approvalEventId || activePlans?.primaryPlan?.planId || null,
-        activePlan: activePlans?.primaryPlan || null,
+        activePlan: activePlanSummary,
         outward,
         inward,
         ...(isPendingReallocation ? {

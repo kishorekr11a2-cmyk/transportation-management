@@ -1,3 +1,7 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import xlsx from "xlsx";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -7,6 +11,9 @@ import LateResponseEvent from "../models/LateResponseEvent.js";
 import Route from "../models/Route.js";
 import { isDbConnected } from "../config/db.js";
 import { getUserAllocatedBus } from "../services/aiAgentService.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import {
     generateLateResponseEventKey as lifecycleGenerateEventKey,
     getCurrentApprovedPlan,
@@ -230,6 +237,7 @@ export const getUsers = async (req, res) => {
                 district: 1,
                 state: 1,
                 country: 1,
+                phoneNumber: 1,
                 travelStatus: 1,
                 assignedVehicle: 1,
                 assignedRoute: 1,
@@ -253,8 +261,6 @@ export const getUsers = async (req, res) => {
                 isAllocated: 1,
                 isUnallocated: 1,
                 approvalStatus: 1,
-                manualAllocation: 1,
-                aiAllocation: 1,
                 createdAt: 1,
                 "allocatedBus.isAllocated": 1,
                 "allocatedBus.vehicleName": 1,
@@ -754,85 +760,104 @@ export const updateTravelStatus = async (req, res) => {
         user.travelResponseSubmittedAt = responseSubmittedAt;
         user.lastTravelResponseAt = responseSubmittedAt;
 
-        const hasApprovedPlan = Boolean(approvedPlans.INWARD.isApproved || approvedPlans.OUTWARD.isApproved);
-        const latestApprovalTime = Math.max(
-            approvedPlans.INWARD?.approvedAt ? new Date(approvedPlans.INWARD.approvedAt).getTime() : 0,
-            approvedPlans.OUTWARD?.approvedAt ? new Date(approvedPlans.OUTWARD.approvedAt).getTime() : 0
-        );
+        const hasApprovedPlan = Boolean(approvedPlans.INWARD?.isApproved || approvedPlans.OUTWARD?.isApproved);
 
-        // Sub-case A: No plan has been approved yet (normal student, not late)
-        if (!hasApprovedPlan) {
+        // Determine requested direction if explicitly passed (e.g. OUTWARD or INWARD)
+        const rawReqDir = req.body?.direction || req.query?.direction;
+        const requestedDir = rawReqDir
+            ? (String(rawReqDir).toUpperCase().trim() === "OUTWARD" ? "OUTWARD" : (String(rawReqDir).toUpperCase().trim() === "INWARD" ? "INWARD" : null))
+            : null;
+
+        const candidateDirections = requestedDir ? [requestedDir] : ["INWARD", "OUTWARD"];
+        const lateDirections = [];
+        const lateLifecycleResults = [];
+
+        // Evaluate Late Response strictly per direction according to critical business rule:
+        // A user becomes a Late Response ONLY when:
+        // 1. An Admin has already approved/confirmed/assigned an active transportation plan for that direction.
+        // 2. The user's response was not included in that assigned plan.
+        // 3. After the plan was already approved/assigned, the user submits Coming (responseSubmittedAt > planApprovalTime).
+        for (const dir of candidateDirections) {
+            const planForDir = approvedPlans[dir];
+            if (!planForDir || !planForDir.isApproved) {
+                // No approved plan exists for this direction -> cannot be late for this direction
+                continue;
+            }
+
+            const planApprovedAt = planForDir.approvedAt ? new Date(planForDir.approvedAt) : null;
+            const planApprovalTime = planApprovedAt ? planApprovedAt.getTime() : 0;
+            const isSubmittedAfterPlanApproval = planApprovalTime > 0 && (responseSubmittedAt.getTime() > planApprovalTime);
+
+            // Check if student was already part of the approved plan by matching unique userId or MongoDB _id
+            const wasInApprovedPlan = Boolean(
+                (planForDir.allocatedUserIds && (planForDir.allocatedUserIds.has(sId) || planForDir.allocatedUserIds.has(sMongoId))) ||
+                (user.allocatedBus?.[dir.toLowerCase()]?.isAllocated && (user.allocatedBus[dir.toLowerCase()].approved === true || user.allocatedBus[dir.toLowerCase()].adminApprovalStatus === "Approved"))
+            );
+
+            if (isSubmittedAfterPlanApproval && !wasInApprovedPlan) {
+                lateDirections.push(dir);
+                const lateLifecycleRes = await createOrGetLateResponseEvent({
+                    userId: user.userId,
+                    user,
+                    direction: dir,
+                    planType: planForDir.planType || "AI",
+                    approvedPlan: planForDir,
+                    responseEventId,
+                    responseSubmittedAt,
+                    previousTravelStatus
+                });
+                lateLifecycleResults.push(lateLifecycleRes);
+            }
+        }
+
+        // =====================================================
+        // SUB-CASE 1: GENUINE LATE RESPONSE DETECTED
+        // =====================================================
+        if (lateDirections.length > 0) {
             user.travelStatus = "Coming";
-            user.allocationStatus = "Unallocated";
+            user.allocationStatus = "Pending Reallocation";
+            user.isAllocated = false;
+            user.isUnallocated = true;
             user.assignedVehicle = null;
             user.assignedRoute = null;
             user.allocatedBus = null;
-            user.lateResponse = false;
-            user.isLateResponse = false;
-            user.lateResponseDetected = false;
-            user.lateResponseAt = null;
-            user.requiresReallocation = false;
-            user.affectedDirections = [];
-            user.submittedPlanVersion = 0;
-            user.submittedApprovalEventId = null;
+            user.lateResponseDetected = true;
+            user.lateResponse = true;
+            user.isLateResponse = true;
+            user.lateResponseAt = responseSubmittedAt;
+            user.requiresReallocation = true;
+            user.affectedDirections = lateDirections;
             await user.save();
 
-            clearActiveApprovedPlansCache();
+            // Mark plans for affected directions as requiring review if event was newly created
+            for (const lateRes of lateLifecycleResults) {
+                if (lateRes?.isNew) {
+                    const planReviewUpdate = {
+                        $set: {
+                            requiresReview: true,
+                            hasLateResponses: true,
+                            pendingReallocation: true,
+                            lastLateResponseAt: responseSubmittedAt
+                        }
+                    };
+                    const affectedDir = lateRes.event?.direction || null;
+                    const dirFilter = affectedDir ? {
+                        $or: [
+                            { direction: affectedDir },
+                            { tripMode: affectedDir },
+                            { tripMode: affectedDir === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+                        ]
+                    } : {};
 
-            return res.status(200).json({
-                success: true,
-                message: "Travel response submitted. Awaiting transportation plan generation and approval.",
-                travelStatus: user.travelStatus,
-                allocationStatus: user.allocationStatus,
-                lateResponse: false,
-                isLateResponse: false,
-                user: buildSanitizedUser(user)
-            });
-        }
-
-        // Sub-case B: A transportation plan is approved!
-        // Check if student was genuine part of the approved plan by matching unique userId or MongoDB _id
-        const wasInApprovedPlan = previousTravelStatus !== "Pending" && Boolean(
-            approvedPlans.INWARD?.allocatedUserIds?.has(sId) ||
-            approvedPlans.INWARD?.allocatedUserIds?.has(sMongoId) ||
-            approvedPlans.OUTWARD?.allocatedUserIds?.has(sId) ||
-            approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId)
-        );
-
-        const isSubmittedAfterPlanApproval = latestApprovalTime > 0 && (responseSubmittedAt.getTime() > latestApprovalTime);
-        const isLateComing = (previousTravelStatus === "Pending" && hasApprovedPlan) || (isSubmittedAfterPlanApproval && !wasInApprovedPlan);
-
-        // If student submits Coming after approved plan:
-        // Mark student as LATE RESPONSE: Unallocated, no vehicle/bus assigned
-        if (isLateComing) {
-            const lateLifecycleRes = await createOrGetLateResponseEvent({
-                userId: user.userId,
-                user,
-                direction: activeApprovedPlan?.direction || null,
-                planType: activeApprovedPlan?.planType || "AI",
-                approvedPlan: activeApprovedPlan,
-                responseEventId,
-                responseSubmittedAt,
-                previousTravelStatus
-            });
-
-            // Mark plan as requiring review if event was newly created
-            if (lateLifecycleRes.isNew) {
-                const planReviewUpdate = {
-                    $set: {
-                        requiresReview: true,
-                        hasLateResponses: true,
-                        pendingReallocation: true,
-                        lastLateResponseAt: responseSubmittedAt
+                    try {
+                        await AiPlan.updateMany({ active: true, isApproved: true, ...dirFilter }, planReviewUpdate);
+                        if (mongoose.connection?.db) {
+                            await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true, ...dirFilter }, planReviewUpdate);
+                            await mongoose.connection.db.collection("manual_plan_submissions").updateMany({ isSubmitted: true, ...dirFilter }, planReviewUpdate);
+                        }
+                    } catch (planErr) {
+                        console.warn("Plan review update warning:", planErr.message);
                     }
-                };
-                try {
-                    await AiPlan.updateMany({ active: true, isApproved: true }, planReviewUpdate);
-                    if (mongoose.connection?.db) {
-                        await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true }, planReviewUpdate);
-                    }
-                } catch (planErr) {
-                    console.warn("Plan review update warning:", planErr.message);
                 }
             }
 
@@ -843,23 +868,32 @@ export const updateTravelStatus = async (req, res) => {
 
             return res.status(200).json({
                 success: true,
-                message: "Travel response recorded as Coming. Transportation allocation is pending administrator manual route assignment.",
+                message: `Travel response recorded as Coming. Transportation allocation is pending administrator review for ${lateDirections.join(", ")}.`,
                 travelStatus: refreshedUser.travelStatus,
                 allocationStatus: refreshedUser.allocationStatus,
                 isAllocated: false,
                 isUnallocated: true,
-                lateResponse: lateLifecycleRes.status !== "RESOLVED",
-                isLateResponse: lateLifecycleRes.status !== "RESOLVED",
-                lateResponseDetected: lateLifecycleRes.status !== "RESOLVED",
+                lateResponse: true,
+                isLateResponse: true,
+                lateResponseDetected: true,
+                affectedDirections: lateDirections,
                 planVersion: currentPlanVersion,
                 approvalEventId: currentApprovalEventId,
                 responseSubmittedAt,
-                lateResponseEventKey: lateLifecycleRes.event?.eventKey || lateLifecycleRes.eventKey,
+                lateResponseEventKey: lateLifecycleResults[0]?.event?.eventKey || lateLifecycleResults[0]?.eventKey,
                 user: buildSanitizedUser(refreshedUser)
             });
         }
 
-        // Student was already included in the approved plan or submitted before approval
+        // =====================================================
+        // SUB-CASE 2: NORMAL COMING RESPONSE
+        // (No plan approved yet, submitted before approval, or already included in approved plan)
+        // =====================================================
+        const isAllocatedInAnyApprovedPlan = Boolean(
+            (approvedPlans.INWARD?.isApproved && (approvedPlans.INWARD?.allocatedUserIds?.has(sId) || approvedPlans.INWARD?.allocatedUserIds?.has(sMongoId))) ||
+            (approvedPlans.OUTWARD?.isApproved && (approvedPlans.OUTWARD?.allocatedUserIds?.has(sId) || approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId)))
+        );
+
         user.travelStatus = "Coming";
         user.lateResponse = false;
         user.lateResponseDetected = false;
@@ -867,22 +901,35 @@ export const updateTravelStatus = async (req, res) => {
         user.lateResponseAt = null;
         user.requiresReallocation = false;
         user.affectedDirections = [];
-        user.submittedPlanVersion = currentPlanVersion;
-        user.submittedApprovalEventId = currentApprovalEventId;
-        user.allocationStatus = isAllocatedInApprovedPlan ? "Assigned" : "Unallocated";
-        user.isAllocated = isAllocatedInApprovedPlan;
-        user.isUnallocated = !isAllocatedInApprovedPlan;
-        await user.save();
+        user.submittedPlanVersion = currentPlanVersion || 0;
+        user.submittedApprovalEventId = currentApprovalEventId || null;
 
+        if (isAllocatedInAnyApprovedPlan) {
+            user.allocationStatus = "Assigned";
+            user.isAllocated = true;
+            user.isUnallocated = false;
+        } else {
+            user.allocationStatus = "Unallocated";
+            user.isAllocated = false;
+            user.isUnallocated = true;
+            user.assignedVehicle = null;
+            user.assignedRoute = null;
+            user.allocatedBus = null;
+        }
+
+        await user.save();
         clearActiveApprovedPlansCache();
 
         return res.status(200).json({
             success: true,
-            message: "Travel status updated successfully.",
+            message: hasApprovedPlan
+                ? "Travel response submitted. Awaiting transportation plan allocation."
+                : "Travel response submitted. Awaiting transportation plan generation and approval.",
             travelStatus: user.travelStatus,
             allocationStatus: user.allocationStatus,
             lateResponse: false,
             isLateResponse: false,
+            lateResponseDetected: false,
             isAllocated: user.isAllocated,
             isUnallocated: user.isUnallocated,
             user: buildSanitizedUser(user)
@@ -1366,6 +1413,227 @@ export const resetUserTravelStatus = async (req, res) => {
 
 
 // =====================================================
+// EXCEL SYNCHRONIZATION HELPER
+// =====================================================
+
+/**
+ * Synchronizes a manually added or updated student with existing Excel files.
+ * Identifies the established Excel dataset file(s) in the project (such as
+ * backend/test_users_400.xlsx and the most recent file in backend/uploads, if present).
+ * If the student already exists (matched by userId), updates the existing row in place
+ * instead of creating duplicates.
+ * Preserves all existing columns, additional sheets, formatting, and other student data.
+ */
+export const syncStudentToExcel = (student) => {
+    if (!student || !student.userId) {
+        return;
+    }
+
+    const FIELD_ALIASES = {
+        userId: ["userid", "user_id", "id", "user id"],
+        name: ["name", "studentname", "username", "student name", "user name"],
+        stoppings: ["stoppings", "stopping", "stop", "stoppingarea", "stopping area", "stopings"],
+        city: ["city"],
+        district: ["district"],
+        state: ["state"],
+        country: ["country"],
+        phoneNumber: ["phonenumber", "phone_number", "phone", "phoneno", "mobile", "mobilenumber", "contact", "contactnumber", "phone number", "mobile number"],
+        travelStatus: ["travelstatus", "travel_status", "status", "travel status"]
+    };
+
+    // Locate established existing Excel files
+    const targetFiles = new Set();
+    const backendDir = path.resolve(__dirname, "..");
+
+    // 1. Scan backend directory for established Excel files (e.g. test_users_400.xlsx)
+    try {
+        if (fs.existsSync(backendDir)) {
+            const files = fs.readdirSync(backendDir)
+                .filter((f) => (f.endsWith(".xlsx") || f.endsWith(".xls")) && !f.startsWith("~$"))
+                .map((f) => path.join(backendDir, f));
+            for (const f of files) {
+                targetFiles.add(path.resolve(f));
+            }
+        }
+    } catch (err) {
+        console.warn("[ExcelSync] Could not scan backend directory for Excel files:", err.message);
+    }
+
+    // Explicit candidates check
+    const explicitCandidates = [
+        path.resolve(backendDir, "test_users_400.xlsx"),
+        path.resolve(process.cwd(), "test_users_400.xlsx"),
+        path.resolve(process.cwd(), "backend/test_users_400.xlsx")
+    ];
+    for (const cand of explicitCandidates) {
+        if (fs.existsSync(cand)) {
+            targetFiles.add(path.resolve(cand));
+        }
+    }
+
+    // 2. Scan backend/uploads directory for the most recently active uploaded Excel dataset
+    const uploadsDir = path.resolve(backendDir, "uploads");
+    try {
+        if (fs.existsSync(uploadsDir)) {
+            const uploadFiles = fs.readdirSync(uploadsDir)
+                .filter((f) => (f.endsWith(".xlsx") || f.endsWith(".xls")) && !f.startsWith("~$"))
+                .map((f) => path.join(uploadsDir, f));
+
+            if (uploadFiles.length > 0) {
+                uploadFiles.sort((a, b) => {
+                    try {
+                        return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+                    } catch {
+                        return 0;
+                    }
+                });
+                targetFiles.add(path.resolve(uploadFiles[0]));
+            }
+        }
+    } catch (err) {
+        console.warn("[ExcelSync] Could not inspect uploads directory:", err.message);
+    }
+
+    const targetList = Array.from(targetFiles);
+    if (targetList.length === 0) {
+        console.warn("[ExcelSync] No existing Excel file found to synchronize with.");
+        return;
+    }
+
+    // Normalized student field values
+    const stoppingsVal = typeof student.stoppings === "string"
+        ? student.stoppings
+        : (Array.isArray(student.stoppings)
+            ? student.stoppings.map((s) => (typeof s === "string" ? s : s?.name || "")).filter(Boolean).join(", ")
+            : "");
+
+    const studentValues = {
+        userId: String(student.userId || "").trim(),
+        name: String(student.name || student.studentName || student.userName || "").trim(),
+        stoppings: stoppingsVal.trim(),
+        city: String(student.city || "").trim(),
+        district: String(student.district || "").trim(),
+        state: String(student.state || "").trim(),
+        country: String(student.country || "India").trim(),
+        phoneNumber: String(student.phoneNumber || student.phone || student.mobile || student.contact || "").trim(),
+        travelStatus: String(student.travelStatus || student.travel_status || student.status || "Coming").trim()
+    };
+
+    for (const filePath of targetList) {
+        try {
+            if (!fs.existsSync(filePath)) continue;
+
+            const workbook = xlsx.readFile(filePath, {
+                cellStyles: true,
+                cellNF: true,
+                cellDates: true
+            });
+
+            if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+                continue;
+            }
+
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            if (!sheet) continue;
+
+            const range = xlsx.utils.decode_range(sheet["!ref"] || "A1:A1");
+
+            // Map columns by matching header cells against known aliases
+            const colIndexToField = {};
+            let userIdCol = -1;
+
+            for (let c = range.s.c; c <= range.e.c; c++) {
+                const headerCell = sheet[xlsx.utils.encode_cell({ r: range.s.r, c })];
+                if (!headerCell || headerCell.v === undefined || headerCell.v === null) continue;
+
+                const normHeader = String(headerCell.v).trim().toLowerCase().replace(/[\s_-]/g, "");
+
+                for (const [fieldKey, aliases] of Object.entries(FIELD_ALIASES)) {
+                    const normKey = fieldKey.toLowerCase().replace(/[\s_-]/g, "");
+                    if (normHeader === normKey || aliases.some((a) => a.toLowerCase().replace(/[\s_-]/g, "") === normHeader)) {
+                        colIndexToField[c] = fieldKey;
+                        if (fieldKey === "userId") {
+                            userIdCol = c;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Fallback: If no column matched userId alias, check if any column header contains "id" or default to first col
+            if (userIdCol === -1) {
+                for (let c = range.s.c; c <= range.e.c; c++) {
+                    const headerCell = sheet[xlsx.utils.encode_cell({ r: range.s.r, c })];
+                    const normHeader = headerCell && headerCell.v !== undefined
+                        ? String(headerCell.v).trim().toLowerCase()
+                        : "";
+                    if (normHeader.includes("id")) {
+                        userIdCol = c;
+                        colIndexToField[c] = "userId";
+                        break;
+                    }
+                }
+                if (userIdCol === -1) {
+                    userIdCol = range.s.c;
+                    colIndexToField[range.s.c] = "userId";
+                }
+            }
+
+            // Search for existing student row (case-insensitive userId match)
+            const targetUserId = studentValues.userId.toLowerCase();
+            let targetRow = -1;
+
+            for (let r = range.s.r + 1; r <= range.e.r; r++) {
+                const idCell = sheet[xlsx.utils.encode_cell({ r, c: userIdCol })];
+                if (idCell && idCell.v !== undefined && idCell.v !== null) {
+                    if (String(idCell.v).trim().toLowerCase() === targetUserId) {
+                        targetRow = r;
+                        break;
+                    }
+                }
+            }
+
+            const isExistingRow = targetRow !== -1;
+            if (!isExistingRow) {
+                targetRow = range.e.r + 1;
+                range.e.r = targetRow;
+                sheet["!ref"] = xlsx.utils.encode_range(range);
+            }
+
+            // Populate only existing columns in the sheet to preserve original columns and formatting
+            for (let c = range.s.c; c <= range.e.c; c++) {
+                const field = colIndexToField[c];
+                const cellAddr = xlsx.utils.encode_cell({ r: targetRow, c });
+                const existingCell = sheet[cellAddr];
+
+                let val = field ? studentValues[field] : undefined;
+                if ((val === undefined || val === null || val === "") && isExistingRow) {
+                    // Preserve existing user data in the cell if new student data does not specify it
+                    continue;
+                }
+
+                if (val !== undefined && val !== null && String(val).trim() !== "") {
+                    const strVal = String(val).trim();
+                    if (existingCell) {
+                        existingCell.v = strVal;
+                        existingCell.t = "s";
+                        delete existingCell.w;
+                    } else {
+                        sheet[cellAddr] = { t: "s", v: strVal };
+                    }
+                }
+            }
+
+            xlsx.writeFile(workbook, filePath);
+            console.log(`[ExcelSync] Successfully synchronized student ${studentValues.userId} (${isExistingRow ? "updated existing row" : "appended new row"}) in: ${filePath}`);
+        } catch (fileErr) {
+            console.error(`[ExcelSync] Failed to sync student with file ${filePath}:`, fileErr.message);
+        }
+    }
+};
+
+// =====================================================
 // ADD USER
 // =====================================================
 
@@ -1379,6 +1647,17 @@ export const addUser = async (req, res) => {
         await user.save();
 
         clearActiveApprovedPlansCache();
+
+        // Synchronize manually added student with existing Excel file(s)
+        try {
+            const studentPayload = {
+                ...req.body,
+                ...(user.toObject ? user.toObject() : user)
+            };
+            syncStudentToExcel(studentPayload);
+        } catch (excelErr) {
+            console.error("Excel synchronization error:", excelErr.message);
+        }
 
         res.status(201).json({
             success: true,

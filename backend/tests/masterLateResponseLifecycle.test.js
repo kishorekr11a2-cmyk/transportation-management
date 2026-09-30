@@ -55,6 +55,11 @@ describe("Master Late Response Lifecycle Test Suite (14 Core Tests)", () => {
             } catch {
                 // Ignore cleanup error
             }
+            try {
+                await mongoose.disconnect();
+            } catch {
+                // Ignore disconnect error
+            }
         }
     });
 

@@ -50,6 +50,12 @@ const userSchema = new mongoose.Schema(
             trim: true
         },
 
+        phoneNumber: {
+            type: String,
+            default: null,
+            trim: true
+        },
+
         travelStatus: {
             type: String,
             enum: [

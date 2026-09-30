@@ -30,20 +30,16 @@ function Sidebar() {
                 Inward Starting Places
             </Link>
 
-            <Link to="/admin/manual-plan">
-                Admin Manual Plan
-            </Link>
-
-            <Link to="/schedule">
-                Schedule Management
-            </Link>
-
             <Link to="/ai-agent">
                 AI Agent
             </Link>
 
             <Link to="/admin/plan-confirmation">
                 Plan Confirmation
+            </Link>
+
+            <Link to="/admin/automation">
+                Automation
             </Link>
 
         </div>

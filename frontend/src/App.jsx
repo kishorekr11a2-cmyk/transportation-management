@@ -17,6 +17,7 @@ const AIAgent          = lazy(() => import("./pages/AIAgent"));
 const AdminManualPlan  = lazy(() => import("./pages/AdminManualPlan"));
 const PlanConfirmation = lazy(() => import("./pages/PlanConfirmation"));
 const InwardStartingPlaces = lazy(() => import("./pages/InwardStartingPlaces"));
+const Automation       = lazy(() => import("./pages/Automation"));
 
 /* Minimal inline fallback — keeps the screen stable while the chunk loads */
 const PageLoader = () => (
@@ -56,6 +57,8 @@ function App() {
           <Route path="/plan-confirmation" element={<PlanConfirmation />} />
           <Route path="/admin/inward-starting-places" element={<InwardStartingPlaces />} />
           <Route path="/inward-starting-places" element={<InwardStartingPlaces />} />
+          <Route path="/admin/automation" element={<Automation />} />
+          <Route path="/automation"      element={<Automation />} />
         </Routes>
       </Suspense>
 

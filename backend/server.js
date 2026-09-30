@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-
+import { startWhatsApp } from "./whatsapp/whatsappService.js";
 import connectDB, { isDbConnected, getDbStatus } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
@@ -17,6 +17,7 @@ import mapLocationRoutes from "./routes/mapLocationRoutes.js";
 import aiAgentRoutes from "./routes/aiAgentRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import inwardStartingPlaceRoutes from "./routes/inwardStartingPlaceRoutes.js";
+import whatsappRoutes from "./routes/whatsappRoutes.js";
 
 import { getAIMetrics } from "./services/aiAgentService.js";
 import { seedHistoricalRoutesIfEmpty } from "./services/historicalRouteService.js";
@@ -59,19 +60,27 @@ app.use((req, res, next) => {
 
     if (isTargetEndpoint) {
         const start = Date.now();
+
         res.on("finish", () => {
-            console.log(`[PERFORMANCE] ${req.method} ${req.originalUrl}: ${Date.now() - start} ms`);
+            console.log(
+                `[PERFORMANCE] ${req.method} ${req.originalUrl}: ${Date.now() - start} ms`
+            );
         });
     }
+
     next();
 });
 
-// Disable HTTP caching on all API endpoints so fresh DB state is always returned
+// Disable HTTP caching on all API endpoints
 app.use("/api", (req, res, next) => {
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate"
+    );
     res.set("Pragma", "no-cache");
     res.set("Expires", "0");
     res.set("Surrogate-Control", "no-store");
+
     next();
 });
 
@@ -80,16 +89,20 @@ app.use(
     express.static(path.join(__dirname, "uploads"))
 );
 
+// Database connection
 connectDB().then(() => {
     seedHistoricalRoutesIfEmpty().catch(() => {});
 });
 
+// Dashboard metrics
 app.get("/api/admin/dashboard/metrics", async (req, res) => {
     try {
         const metrics = await getAIMetrics();
+
         res.json(metrics);
     } catch (error) {
         console.error("Dashboard metrics error:", error);
+
         res.status(500).json({
             success: false,
             message: "Unable to load dashboard metrics."
@@ -97,6 +110,7 @@ app.get("/api/admin/dashboard/metrics", async (req, res) => {
     }
 });
 
+// Existing API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/vehicles", vehicleRoutes);
@@ -110,16 +124,22 @@ app.use("/api/location", locationRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/inward-starting-places", inwardStartingPlaceRoutes);
 
+// WhatsApp and Automation API
+app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/automation", whatsappRoutes);
+
+// Root
 app.get("/", (req, res) => {
     res.json({
         success: true,
-        message:
-            "AI Transportation Management System API is running"
+        message: "AI Transportation Management System API is running"
     });
 });
 
+// General health check
 app.get("/api/health", (req, res) => {
     const dbConnected = isDbConnected();
+
     res.status(dbConnected ? 200 : 503).json({
         success: dbConnected,
         app: "ok",
@@ -128,8 +148,10 @@ app.get("/api/health", (req, res) => {
     });
 });
 
+// Database health check
 app.get("/api/health/db", (req, res) => {
     const dbStatus = getDbStatus();
+
     res.status(dbStatus.connected ? 200 : 503).json({
         success: dbStatus.connected,
         database: dbStatus.connected ? "ok" : "unavailable",
@@ -142,14 +164,15 @@ app.get("/api/health/db", (req, res) => {
     });
 });
 
+// 404 handler
 app.use((req, res) => {
     res.status(404).json({
         success: false,
-        message:
-            `Route not found: ${req.method} ${req.originalUrl}`
+        message: `Route not found: ${req.method} ${req.originalUrl}`
     });
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
     console.error("Server Error:", err);
 
@@ -165,9 +188,14 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
-    console.log(
-        `🚀 Server running on port ${PORT}`
-    );
+    console.log(`🚀 Server running on port ${PORT}`);
+
+    try {
+        await startWhatsApp();
+        console.log("📱 WhatsApp service started");
+    } catch (error) {
+        console.error("❌ WhatsApp startup failed:", error);
+    }
 });

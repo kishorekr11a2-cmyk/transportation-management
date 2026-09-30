@@ -9,6 +9,7 @@ import {
     isValidCoordinate,
     getRouteFromGoogle
 } from "../services/googleMapsService";
+import { calculateDistanceKm, searchPlaces } from "../services/locationSearchService";
 import {
     DEFAULT_LAT,
     DEFAULT_LNG,
@@ -65,10 +66,94 @@ export default function RouteManagement() {
     const [successMessage, setSuccessMessage] = useState("");
     const [fullscreen, setFullscreen] = useState(false);
 
-    // AI Generated Route Inspection State (Read-only viewer)
-    const [aiViewingRoute, setAiViewingRoute] = useState(null);
+    // Helper to get a stable, unique identifier for any AI-generated route/bus
+    const getStableRouteId = useCallback((route) => {
+        if (!route) return "";
+        return String(
+            route.routeId ||
+            route.routeCode ||
+            route.busNumber ||
+            route.vehicleName ||
+            route.vehicleNumber ||
+            route.busId ||
+            route.vehicleId ||
+            route._id ||
+            route.id ||
+            ""
+        ).trim();
+    }, []);
 
-    // Manual Plan Submission State (Submits configured routes to separate Admin Manual Plan page)
+    // Helper to check if a route matches a given identifier
+    const matchesRouteId = useCallback((route, targetId) => {
+        if (!route || !targetId) return false;
+        const target = String(targetId).trim().toLowerCase();
+        const candidateIds = [
+            route.routeId,
+            route.routeCode,
+            route.busNumber,
+            route.vehicleName,
+            route.vehicleNumber,
+            route.busId,
+            route.vehicleId,
+            route.assignedVehicle?.vehicleName,
+            route.assignedVehicle?.vehicleNumber,
+            route.assignedVehicle?._id,
+            route._id,
+            route.id
+        ].filter(Boolean).map((v) => String(v).trim().toLowerCase());
+        return candidateIds.includes(target);
+    }, []);
+
+    // AI Generated Route Inspection State (Single canonical source of truth: selectedAiRouteId)
+    const [selectedAiRouteId, setSelectedAiRouteId] = useState(() => {
+        const fromNav = location.state?.selectedAiRoute;
+        if (fromNav) {
+            return String(
+                fromNav.routeId ||
+                fromNav.routeCode ||
+                fromNav.busNumber ||
+                fromNav.vehicleName ||
+                fromNav.vehicleNumber ||
+                fromNav.busId ||
+                fromNav.vehicleId ||
+                fromNav._id ||
+                fromNav.id ||
+                ""
+            ).trim() || null;
+        }
+        try {
+            const storedId = sessionStorage.getItem("activeAiViewRouteId");
+            if (storedId) return storedId;
+            const stored = sessionStorage.getItem("activeAiViewRoute");
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                const pId = String(
+                    parsed.routeId ||
+                    parsed.routeCode ||
+                    parsed.busNumber ||
+                    parsed.vehicleName ||
+                    parsed.vehicleNumber ||
+                    parsed.busId ||
+                    parsed.vehicleId ||
+                    parsed._id ||
+                    parsed.id ||
+                    ""
+                ).trim();
+                return pId || null;
+            }
+        } catch {}
+        return null;
+    });
+
+    const selectedRouteIdRef = useRef(selectedAiRouteId);
+    const activeRouteRequestIdRef = useRef(0);
+    const lastDrawnRouteIdRef = useRef(null);
+
+    useEffect(() => {
+        selectedRouteIdRef.current = selectedAiRouteId;
+    }, [selectedAiRouteId]);
+
+    // Manual Plan Submission State (Submits configured routes directly to Final Confirmation page)
     const [planActionLoading, setPlanActionLoading] = useState(false);
     const [activePlanDirection, setActivePlanDirection] = useState("OUTWARD");
 
@@ -218,25 +303,66 @@ export default function RouteManagement() {
 
     // Ordered stops helper [1. Source -> 2. Stop -> ... -> Destination]
     const getRouteOrderedStops = (route) => {
+        if (!route) return ["Origin Hub", "Corridor Stops", "Destination Hub"];
+
+        const isToDestination =
+            route.direction === "INWARD" ||
+            route.tripMode === "TO_DESTINATION" ||
+            route.tripMode === "INWARD";
+
         const stopsList = [];
-        if (route.source?.name) {
-            stopsList.push(route.source.name);
-        } else if (typeof route.source === "string" && route.source) {
-            stopsList.push(route.source);
-        }
-        if (Array.isArray(route.stops)) {
-            route.stops.forEach((st) => {
-                const name = typeof st === "string" ? st : (st.name || st.stopName);
+
+        if (isToDestination) {
+            const inStart =
+                route.inwardStartLocation ||
+                route.startLocation ||
+                route.startingHub ||
+                route.source ||
+                route.sourceHub;
+            const rawStops = Array.isArray(route.stops) ? route.stops : [];
+            const hubName = (inStart?.locationName || inStart?.name || (typeof inStart === "string" ? inStart : "")).trim();
+            const firstStopName = (rawStops[0]?.locationName || rawStops[0]?.name || (typeof rawStops[0] === "string" ? rawStops[0] : "")).trim();
+            const firstIsHub = Boolean(
+                hubName && firstStopName && hubName.toLowerCase() === firstStopName.toLowerCase()
+            );
+
+            if (hubName) {
+                stopsList.push(hubName);
+            }
+            const remaining = firstIsHub ? rawStops.slice(1) : rawStops;
+            remaining.forEach((st) => {
+                const name = typeof st === "string" ? st : (st.name || st.locationName || st.stopName);
                 if (name && !stopsList.includes(name)) {
                     stopsList.push(name);
                 }
             });
+            const dst = route.destination || route.destinationHub;
+            const dstName = (dst?.name || dst?.displayName || (typeof dst === "string" ? dst : "")).trim();
+            if (dstName && !stopsList.includes(dstName)) {
+                stopsList.push(dstName);
+            }
+        } else {
+            // OUTWARD: Keep exact existing logic untouched
+            if (route.source?.name) {
+                stopsList.push(route.source.name);
+            } else if (typeof route.source === "string" && route.source) {
+                stopsList.push(route.source);
+            }
+            if (Array.isArray(route.stops)) {
+                route.stops.forEach((st) => {
+                    const name = typeof st === "string" ? st : (st.name || st.stopName);
+                    if (name && !stopsList.includes(name)) {
+                        stopsList.push(name);
+                    }
+                });
+            }
+            if (route.destination?.name && !stopsList.includes(route.destination.name)) {
+                stopsList.push(route.destination.name);
+            } else if (typeof route.destination === "string" && route.destination && !stopsList.includes(route.destination)) {
+                stopsList.push(route.destination);
+            }
         }
-        if (route.destination?.name && !stopsList.includes(route.destination.name)) {
-            stopsList.push(route.destination.name);
-        } else if (typeof route.destination === "string" && route.destination && !stopsList.includes(route.destination)) {
-            stopsList.push(route.destination);
-        }
+
         if (stopsList.length === 0) {
             return ["Origin Hub", "Corridor Stops", "Destination Hub"];
         }
@@ -244,6 +370,72 @@ export default function RouteManagement() {
     };
 
     const handleSelectStopCandidateRef = useRef(null);
+
+    const outwardAiBuses = useMemo(() => {
+        return Array.isArray(outwardPlan?.buses)
+            ? outwardPlan.buses
+            : (Array.isArray(outwardPlan?.aiPlan?.buses) ? outwardPlan.aiPlan.buses : []);
+    }, [outwardPlan]);
+
+    const inwardAiBuses = useMemo(() => {
+        return Array.isArray(inwardPlan?.buses)
+            ? inwardPlan.buses
+            : (Array.isArray(inwardPlan?.aiPlan?.buses) ? inwardPlan.aiPlan.buses : []);
+    }, [inwardPlan]);
+
+    const allAiBuses = useMemo(() => {
+        return [...outwardAiBuses, ...inwardAiBuses];
+    }, [outwardAiBuses, inwardAiBuses]);
+
+    // Canonical derived selected route object: always pulled from the latest plan data
+    const selectedAiRoute = useMemo(() => {
+        if (!selectedAiRouteId) return null;
+        const found = allAiBuses.find((b) => matchesRouteId(b, selectedAiRouteId));
+        if (found) return found;
+
+        // Fallback to location state route or cached route while initial API requests are in flight
+        if (location.state?.selectedAiRoute && matchesRouteId(location.state.selectedAiRoute, selectedAiRouteId)) {
+            return location.state.selectedAiRoute;
+        }
+        try {
+            const stored = sessionStorage.getItem("activeAiViewRoute");
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (matchesRouteId(parsed, selectedAiRouteId)) {
+                    return parsed;
+                }
+            }
+        } catch {}
+
+        return null;
+    }, [allAiBuses, selectedAiRouteId, location.state, matchesRouteId]);
+
+    // Section 5: Preserve the current user selection when route data updates.
+    // NEVER automatically change or reset the selection if the route still exists.
+    useEffect(() => {
+        if (allAiBuses.length === 0) return;
+        if (selectedAiRouteId) {
+            const stillExists = allAiBuses.some((b) => matchesRouteId(b, selectedAiRouteId));
+            if (stillExists) {
+                // Route still exists in updated backend data: KEEP IT SELECTED!
+                return;
+            }
+            // ONLY if the route genuinely no longer exists (e.g. plan reset) clear it
+            setSelectedAiRouteId(null);
+            selectedRouteIdRef.current = null;
+            lastDrawnRouteIdRef.current = null;
+            try {
+                sessionStorage.removeItem("activeAiViewRouteId");
+                sessionStorage.removeItem("activeAiViewRoute");
+            } catch {}
+            if (lineRef.current) {
+                lineRef.current.remove();
+                lineRef.current = null;
+            }
+            markersRef.current.forEach((m) => m.remove());
+            markersRef.current = [];
+        }
+    }, [allAiBuses, selectedAiRouteId, matchesRouteId]);
 
     // ==================================================
     // 2. LEAFLET INTERACTIVE MAP INITIALIZATION
@@ -270,7 +462,7 @@ export default function RouteManagement() {
 
         // Click on map to add stop directly to route stops
         map.on("click", async (event) => {
-            if (aiViewingRoute) return;
+            if (selectedRouteIdRef.current) return;
 
             const lat = event.latlng.lat;
             const lng = event.latlng.lng;
@@ -312,22 +504,27 @@ export default function RouteManagement() {
         loadData();
 
         // Check if an AI route was passed to view
-        let aiRouteToView = location.state?.selectedAiRoute;
-        if (!aiRouteToView) {
+        let initialAiRoute = location.state?.selectedAiRoute;
+        if (!initialAiRoute) {
             try {
                 const stored = sessionStorage.getItem("activeAiViewRoute");
                 if (stored) {
-                    aiRouteToView = JSON.parse(stored);
+                    initialAiRoute = JSON.parse(stored);
                 }
             } catch {
                 // Ignore parsing error
             }
         }
 
-        if (aiRouteToView && Array.isArray(aiRouteToView.stops) && aiRouteToView.stops.length > 0) {
-            setAiViewingRoute(aiRouteToView);
+        if (initialAiRoute && Array.isArray(initialAiRoute.stops) && initialAiRoute.stops.length > 0) {
+            const rId = getStableRouteId(initialAiRoute);
+            setSelectedAiRouteId(rId);
+            selectedRouteIdRef.current = rId;
+            lastDrawnRouteIdRef.current = rId;
             setTimeout(() => {
-                redrawAiRoadRoute(aiRouteToView);
+                if (mapRef.current) {
+                    redrawAiRoadRoute(initialAiRoute);
+                }
             }, 350);
         }
 
@@ -376,8 +573,12 @@ export default function RouteManagement() {
             setSchedules(scheduleRes.data?.schedules || []);
 
             if (activePlanRes?.success) {
-                setOutwardPlan(activePlanRes.outwardPlan || null);
-                setInwardPlan(activePlanRes.inwardPlan || null);
+                const outP = activePlanRes.outwardPlan || null;
+                const inP = activePlanRes.inwardPlan || null;
+                setOutwardPlan(outP);
+                setInwardPlan(inP);
+                // Selection is preserved through canonical selectedAiRouteId and derived selectedAiRoute.
+                // Never overwrite the user's selected route with buses[0]!
             } else {
                 setOutwardPlan(null);
                 setInwardPlan(null);
@@ -574,9 +775,14 @@ export default function RouteManagement() {
         }
     }, []);
 
-    const redrawAiRoadRoute = async (aiRoute) => {
+    // Section 9: Asynchronous road routing with stale response discard protection
+    const redrawAiRoadRoute = useCallback(async (aiRoute) => {
         if (!mapRef.current || !aiRoute) return;
 
+        const routeId = getStableRouteId(aiRoute);
+        const thisRequestId = ++activeRouteRequestIdRef.current;
+
+        // Clear existing line before redrawing
         if (lineRef.current) {
             lineRef.current.remove();
             lineRef.current = null;
@@ -607,21 +813,121 @@ export default function RouteManagement() {
                 }
             }
         } else {
+            // CANONICAL INWARD MAP ARRAY (Single Source of Truth)
             const inStart =
-                aiRoute.source ||
+                aiRoute.inwardStartLocation ||
                 aiRoute.startLocation ||
-                aiRoute.inwardStartLocation;
-            if (inStart && isValidCoordinate(inStart)) {
-                locations.push(inStart);
+                aiRoute.startingHub ||
+                aiRoute.source ||
+                aiRoute.sourceHub;
+
+            const orderedInwardStops = [];
+            const hasStart = inStart && isValidCoordinate(inStart);
+            const hubName = (inStart?.locationName || inStart?.name || "").trim().toLowerCase();
+            const firstStopName = (stops[0]?.locationName || stops[0]?.name || "").trim().toLowerCase();
+
+            // Detect if stops[0] already represents the starting hub (avoid duplicate marker #1 & #2 on same spot)
+            const firstIsHub = Boolean(
+                hasStart && stops.length > 0 && (
+                    (hubName && firstStopName && hubName === firstStopName) ||
+                    (isValidCoordinate(stops[0]) &&
+                     calculateDistanceKm(inStart.latitude, inStart.longitude, stops[0].latitude, stops[0].longitude) < 0.5)
+                )
+            );
+
+            // 1. Starting Hub is explicitly #1 in canonical inward map array
+            if (hasStart) {
+                orderedInwardStops.push({
+                    ...inStart,
+                    name: inStart.locationName || inStart.name || "Starting Hub",
+                    isStartingHub: true,
+                    order: 1
+                });
             }
-            locations.push(...stops);
+
+            // 2. Ordered Passenger Stops (skipping stops[0] if already included as starting hub)
+            const passengerStops = firstIsHub ? stops.slice(1) : stops;
+            passengerStops.forEach((st) => {
+                if (isValidCoordinate(st)) {
+                    orderedInwardStops.push({
+                        ...st,
+                        name: st.name || st.locationName || "Stop",
+                        isStartingHub: false
+                    });
+                }
+            });
+
+            // 3. Final Destination Hub (if configured and distinct from last stop)
             const dst = aiRoute.destination || aiRoute.destinationHub;
             if (dst && isValidCoordinate(dst)) {
-                locations.push(dst);
+                const lastStop = orderedInwardStops[orderedInwardStops.length - 1];
+                const isDuplicateLast =
+                    lastStop &&
+                    Math.abs(Number(lastStop.latitude) - Number(dst.latitude)) < 0.0001 &&
+                    Math.abs(Number(lastStop.longitude) - Number(dst.longitude)) < 0.0001;
+                if (!isDuplicateLast) {
+                    orderedInwardStops.push({
+                        ...dst,
+                        name: dst.name || dst.displayName || "Destination Hub",
+                        isDestination: true
+                    });
+                }
+            }
+
+            locations = orderedInwardStops;
+        }
+
+        // Common Coordinate Validation & Suspicious Distance Check for Both OUTWARD and INWARD Map Rendering
+        const validStops = locations.filter((s) => isValidCoordinate(s));
+        if (validStops.length >= 2) {
+            const routeCity = (aiRoute.stops || []).find((s) => s.city)?.city || aiRoute.city || (isToDestination ? aiRoute.destination?.city : aiRoute.source?.city) || "Madurai";
+            const routeState = (aiRoute.stops || []).find((s) => s.state)?.state || aiRoute.state || (isToDestination ? aiRoute.destination?.state : aiRoute.source?.state) || "Tamil Nadu";
+            const routeCountry = "India";
+
+            const refPoints = locations.filter((s) => !s.isStartingHub && isValidCoordinate(s));
+            const centroidLat = refPoints.length > 0
+                ? refPoints.reduce((sum, p) => sum + Number(p.latitude), 0) / refPoints.length
+                : (isValidCoordinate(validStops[0]) ? Number(validStops[0].latitude) : 0);
+            const centroidLon = refPoints.length > 0
+                ? refPoints.reduce((sum, p) => sum + Number(p.longitude), 0) / refPoints.length
+                : (isValidCoordinate(validStops[0]) ? Number(validStops[0].longitude) : 0);
+
+            for (let i = 0; i < locations.length; i++) {
+                const st = locations[i];
+                if (!isValidCoordinate(st)) continue;
+
+                // If distance to the route centroid is suspiciously far (> 45 km, e.g. Trichy vs Madurai)
+                const distToCentroid = calculateDistanceKm(centroidLat, centroidLon, Number(st.latitude), Number(st.longitude));
+                if (distToCentroid > 45 && refPoints.length > 0 && (st.city || routeCity || routeState)) {
+                    const targetCity = st.city || routeCity;
+                    const targetState = st.state || routeState;
+                    const stopName = st.locationName || st.name || "";
+                    const fullQuery = `${stopName}, ${targetCity}, ${targetState}, ${routeCountry}`;
+
+                    try {
+                        const results = await searchPlaces(fullQuery, { latitude: centroidLat, longitude: centroidLon });
+                        if (Array.isArray(results) && results.length > 0 && isValidCoordinate(results[0])) {
+                            const newDist = calculateDistanceKm(centroidLat, centroidLon, Number(results[0].latitude), Number(results[0].longitude));
+                            if (newDist < distToCentroid) {
+                                st.latitude = Number(results[0].latitude);
+                                st.longitude = Number(results[0].longitude);
+                                if (results[0].displayName) st.address = results[0].displayName;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("Coordinate calibration warning:", e);
+                    }
+                }
             }
         }
 
         const validLocations = locations.filter((loc) => isValidCoordinate(loc));
+
+        // Section 9: Race Condition Guard — Discard if superseded before marker rendering
+        if (thisRequestId !== activeRouteRequestIdRef.current || (selectedRouteIdRef.current && !matchesRouteId(aiRoute, selectedRouteIdRef.current))) {
+            return;
+        }
+
         drawRouteMarkers(validLocations);
 
         if (validLocations.length < 2) return;
@@ -632,6 +938,12 @@ export default function RouteManagement() {
 
             if (pathCoords.length < 2) {
                 const route = await getRouteFromGoogle(validLocations);
+
+                // Section 9: Race Condition Guard — Discard if another route was selected while awaiting async response
+                if (thisRequestId !== activeRouteRequestIdRef.current || (selectedRouteIdRef.current && !matchesRouteId(aiRoute, selectedRouteIdRef.current))) {
+                    return;
+                }
+
                 if (route && Array.isArray(route.geometry?.coordinates)) {
                     pathCoords = route.geometry.coordinates.map(([lng, lat]) => [
                         Number(lat),
@@ -645,7 +957,17 @@ export default function RouteManagement() {
                 }
             }
 
-            if (pathCoords.length >= 2) {
+            // Section 9: Final Race Condition Guard — Discard before updating Leaflet polyline
+            if (thisRequestId !== activeRouteRequestIdRef.current || (selectedRouteIdRef.current && !matchesRouteId(aiRoute, selectedRouteIdRef.current))) {
+                return;
+            }
+
+            if (mapRef.current && pathCoords.length >= 2) {
+                if (lineRef.current) {
+                    lineRef.current.remove();
+                    lineRef.current = null;
+                }
+
                 lineRef.current = L.polyline(pathCoords, {
                     color: isToDestination ? "#059669" : "#2563eb",
                     weight: 6,
@@ -661,9 +983,37 @@ export default function RouteManagement() {
         } catch (err) {
             console.error("AI Road Route Error:", err);
         } finally {
-            setRoutingLoading(false);
+            if (thisRequestId === activeRouteRequestIdRef.current) {
+                setRoutingLoading(false);
+            }
         }
-    };
+    }, [getStableRouteId, matchesRouteId]);
+
+    // Section 13: Explicit user selection handler for AI generated routes
+    const handleSelectAiRoute = useCallback((route) => {
+        if (!route) return;
+        const routeId = getStableRouteId(route);
+        setSelectedAiRouteId(routeId);
+        selectedRouteIdRef.current = routeId;
+        lastDrawnRouteIdRef.current = routeId;
+        try {
+            sessionStorage.setItem("activeAiViewRouteId", routeId);
+            sessionStorage.setItem("activeAiViewRoute", JSON.stringify(route));
+        } catch {}
+        redrawAiRoadRoute(route);
+    }, [getStableRouteId, redrawAiRoadRoute]);
+
+    // Section 7 & 10: Map reacts to selectedAiRoute changes and displays the route
+    useEffect(() => {
+        if (!mapRef.current) return;
+        if (selectedAiRoute) {
+            const routeId = getStableRouteId(selectedAiRoute);
+            if (lastDrawnRouteIdRef.current !== routeId || !lineRef.current) {
+                lastDrawnRouteIdRef.current = routeId;
+                redrawAiRoadRoute(selectedAiRoute);
+            }
+        }
+    }, [selectedAiRoute, getStableRouteId, redrawAiRoadRoute]);
 
     // ==================================================
     // 5. UNIFIED SINGLE ROUTE BUILDER ACTIONS
@@ -881,6 +1231,13 @@ export default function RouteManagement() {
     };
 
     const editRoute = (route) => {
+        setSelectedAiRouteId(null);
+        selectedRouteIdRef.current = null;
+        lastDrawnRouteIdRef.current = null;
+        try {
+            sessionStorage.removeItem("activeAiViewRouteId");
+            sessionStorage.removeItem("activeAiViewRoute");
+        } catch {}
         setEditingRoute(route);
         setRouteName(route.routeName || "");
         // Preserve the actual stored direction — including "BOTH"
@@ -971,6 +1328,13 @@ export default function RouteManagement() {
     };
 
     const newRoute = () => {
+        setSelectedAiRouteId(null);
+        selectedRouteIdRef.current = null;
+        lastDrawnRouteIdRef.current = null;
+        try {
+            sessionStorage.removeItem("activeAiViewRouteId");
+            sessionStorage.removeItem("activeAiViewRoute");
+        } catch {}
         clearRoute();
         setSuccessMessage("");
     };
@@ -1001,7 +1365,7 @@ export default function RouteManagement() {
                     <button
                         type="button"
                         className="route-back-btn"
-                        onClick={() => navigate(-1)}
+                        onClick={() => navigate("/admin-dashboard")}
                         aria-label="Go back"
                     >
                         <HiArrowLeft size={16} />
@@ -1051,7 +1415,7 @@ export default function RouteManagement() {
                 {/* ROUTE CONTROL PANEL */}
                 {!fullscreen && (
                     <div className="route-panel">
-                        {aiViewingRoute ? (
+                        {selectedAiRoute ? (
                             <section className="route-card" style={{ border: "2px solid #3b82f6", background: "#f8fafc" }}>
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
                                     <span style={{
@@ -1079,10 +1443,10 @@ export default function RouteManagement() {
                                 </div>
 
                                 <h3 style={{ margin: "0 0 4px", fontSize: "18px", color: "#0f172a" }}>
-                                    {aiViewingRoute.routeCode || "AI Route"}: {aiViewingRoute.sectorName || "Transit"} Corridor
+                                    {selectedAiRoute.routeCode || selectedAiRoute.busNumber || selectedAiRoute.vehicleName || "AI Route"}: {selectedAiRoute.sectorName || "Transit"} Corridor
                                 </h3>
                                 <p style={{ margin: "0 0 14px", fontSize: "12px", color: "#64748b" }}>
-                                    {aiViewingRoute.tripMode === "TO_DESTINATION" || aiViewingRoute.tripMode === "INWARD"
+                                    {selectedAiRoute.tripMode === "TO_DESTINATION" || selectedAiRoute.tripMode === "INWARD" || selectedAiRoute.direction === "INWARD"
                                         ? "Inward Route (Residential Network → Destination)"
                                         : "Outward Route (Source → Residential Network)"}
                                 </p>
@@ -1118,8 +1482,13 @@ export default function RouteManagement() {
                                             fontSize: "12px"
                                         }}
                                         onClick={() => {
-                                            setAiViewingRoute(null);
-                                            sessionStorage.removeItem("activeAiViewRoute");
+                                            setSelectedAiRouteId(null);
+                                            selectedRouteIdRef.current = null;
+                                            lastDrawnRouteIdRef.current = null;
+                                            try {
+                                                sessionStorage.removeItem("activeAiViewRouteId");
+                                                sessionStorage.removeItem("activeAiViewRoute");
+                                            } catch {}
                                             clearRoute();
                                         }}
                                     >
@@ -1504,6 +1873,99 @@ export default function RouteManagement() {
                                             );
                                         };
 
+                                        // Render persistent AI plan card if an AI plan exists in MongoDB
+                                        const renderAiPlanCard = (plan, dir) => {
+                                            if (!plan) return null;
+                                            const buses = Array.isArray(plan.buses) ? plan.buses : (Array.isArray(plan.aiPlan?.buses) ? plan.aiPlan.buses : []);
+                                            if (buses.length === 0) return null;
+
+                                            const isApproved = Boolean(plan.isApproved || plan.approved || (plan.status === "active" && plan.approvedAt));
+                                            const isPending = !isApproved && Boolean(plan.isSubmitted || plan.status === "pending_approval" || plan.status === "submitted");
+                                            const statusLabel = isApproved ? "Approved & Assigned" : (isPending ? "Pending Approval" : "AI Generated");
+                                            const statusClass = isApproved ? "approved" : (isPending ? "pending" : "generated");
+
+                                            const totalCapacity = buses.reduce((acc, b) => acc + (Number(b.capacity || b.totalCapacity || b.assignedVehicle?.capacity) || 0), 0);
+                                            const allocatedSeats = Number(
+                                                plan.assignedUsers ??
+                                                plan.allocatedUsers ??
+                                                plan.summary?.allocatedSeats ??
+                                                buses.reduce((acc, b) => acc + (Number(b.allocatedCount || b.studentCount || b.assignedStudents?.length || b.students?.length) || 0), 0)
+                                            );
+
+                                            return (
+                                                <div className={`ai-plan-persistent-card ${dir.toLowerCase()}`} key={`ai-plan-${dir}`}>
+                                                    <div className="ai-plan-header">
+                                                        <div className="ai-plan-badge-group">
+                                                            <span style={{ fontSize: "14px", fontWeight: "700", color: "#1e293b" }}>
+                                                                🤖 AI Generated Route Plan ({dir})
+                                                            </span>
+                                                            <span className={`ai-plan-status-tag ${statusClass}`}>
+                                                                {statusLabel}
+                                                            </span>
+                                                            <span style={{ fontSize: "12px", color: "#64748b" }}>
+                                                                ({buses.length} vehicles · {allocatedSeats} / {totalCapacity} seats allocated)
+                                                            </span>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => navigate(`/plan-confirmation?direction=${dir}&type=AI`)}
+                                                            style={{
+                                                                padding: "5px 12px",
+                                                                fontSize: "12px",
+                                                                fontWeight: "600",
+                                                                background: "#eff6ff",
+                                                                color: "#1d4ed8",
+                                                                border: "1px solid #bfdbfe",
+                                                                borderRadius: "6px",
+                                                                cursor: "pointer"
+                                                            }}
+                                                        >
+                                                            📋 Open in Plan Confirmation →
+                                                        </button>
+                                                    </div>
+                                                    <div className="ai-plan-bus-list">
+                                                        {buses.map((bus, idx) => {
+                                                            const bNum = bus.routeCode || bus.busNumber || bus.vehicleName || bus.vehicleNumber || bus.assignedVehicle?.vehicleName || `Bus ${idx + 1}`;
+                                                            const vName = bus.assignedVehicle?.vehicleName || bus.vehicleName || bus.vehicleNumber || "Vehicle";
+                                                            const passCount = bus.totalAssigned || bus.assignedUsers || bus.studentCount || bus.assignedStudents?.length || (Array.isArray(bus.students) ? bus.students.length : 0);
+                                                            const bCap = bus.capacity || bus.assignedVehicle?.capacity || 0;
+                                                            const isCurrentlyViewing = Boolean(
+                                                                selectedAiRouteId && matchesRouteId(bus, selectedAiRouteId)
+                                                            );
+
+                                                            return (
+                                                                <div className="ai-plan-bus-item" key={getStableRouteId(bus) || idx}>
+                                                                    <div>
+                                                                        <strong style={{ color: "#1e293b" }}>🚌 {bNum}</strong>
+                                                                        <span style={{ color: "#64748b", marginLeft: "6px", fontSize: "13px" }}>({vName})</span>
+                                                                        <span style={{ marginLeft: "12px", fontSize: "12px", color: "#0f766e", fontWeight: "600" }}>
+                                                                            {passCount} passengers ({bCap} seats)
+                                                                        </span>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleSelectAiRoute(bus)}
+                                                                        style={{
+                                                                            padding: "4px 10px",
+                                                                            fontSize: "11px",
+                                                                            fontWeight: "600",
+                                                                            background: isCurrentlyViewing ? "#dcfce7" : "#f1f5f9",
+                                                                            color: isCurrentlyViewing ? "#15803d" : "#334155",
+                                                                            border: `1px solid ${isCurrentlyViewing ? "#86efac" : "#cbd5e1"}`,
+                                                                            borderRadius: "5px",
+                                                                            cursor: "pointer"
+                                                                        }}
+                                                                    >
+                                                                        {isCurrentlyViewing ? "📍 Viewing on Map" : "🗺️ View on Map"}
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            );
+                                        };
+
                                         // Render saved route list based on selected direction tab
                                         if (directionFilter === "OUTWARD") {
                                             return (
@@ -1527,10 +1989,12 @@ export default function RouteManagement() {
                                                         </button>
                                                     </div>
 
-                                                    {outwardRoutes.length === 0 ? (
+                                                    {renderAiPlanCard(outwardPlan, "OUTWARD")}
+
+                                                    {outwardRoutes.length === 0 && !outwardPlan ? (
                                                         <div className="no-plan-card">
                                                             <span className="no-plan-badge">No Plan Available</span>
-                                                            <p>No Outward plan or routes available. Configure an Outward route above.</p>
+                                                            <p>No Outward plan or routes available. Configure an Outward route above or generate via AI.</p>
                                                         </div>
                                                     ) : (
                                                         <div className="saved-routes">
@@ -1563,10 +2027,12 @@ export default function RouteManagement() {
                                                     </button>
                                                 </div>
 
-                                                {inwardRoutes.length === 0 ? (
+                                                {renderAiPlanCard(inwardPlan, "INWARD")}
+
+                                                {inwardRoutes.length === 0 && !inwardPlan ? (
                                                     <div className="no-plan-card">
                                                         <span className="no-plan-badge">No Plan Available</span>
-                                                        <p>No Inward plan or routes available. Configure an Inward route above.</p>
+                                                        <p>No Inward plan or routes available. Configure an Inward route above or generate via AI.</p>
                                                     </div>
                                                 ) : (
                                                     <div className="saved-routes">

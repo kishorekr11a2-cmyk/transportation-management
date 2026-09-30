@@ -10,9 +10,20 @@ const aiPlanSchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ["active", "reset", "superseded", "stale"],
-            default: "active",
+            enum: ["active", "pending_approval", "generated", "reset", "superseded", "stale"],
+            default: "generated",
             index: true
+        },
+
+        isSubmitted: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        submittedAt: {
+            type: Date,
+            default: null
         },
 
         planType: {
@@ -146,6 +157,8 @@ const aiPlanSchema = new mongoose.Schema(
     }
 );
 
+aiPlanSchema.index({ active: 1, direction: 1, createdAt: -1 });
+aiPlanSchema.index({ active: 1, direction: 1, status: 1, createdAt: -1 });
 aiPlanSchema.index({ active: 1, status: 1, direction: 1, createdAt: -1 });
 aiPlanSchema.index({ active: 1, status: 1, isApproved: 1, direction: 1 });
 aiPlanSchema.index({ active: 1, status: 1, isApproved: -1, createdAt: -1 });

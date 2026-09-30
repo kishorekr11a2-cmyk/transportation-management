@@ -8,10 +8,13 @@ import {
     searchPlaces,
     resolveLocation,
     generateAgentRecommendations,
+    submitSelectedPlan,
     saveSelectedPlan,
+    approveAIPlan,
     confirmAndAllocatePlan,
     getSelectedPlan,
     getActiveAIPlan,
+    getPlanStatus,
     resetGeneratedAIRoute,
     resetAIPlanAndStudents
 } from "../services/aiAgentService.js";
@@ -316,6 +319,99 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+/*
+|--------------------------------------------------------------------------
+| CONFIRM / SUBMIT SELECTED PLAN (STAGING / PENDING APPROVAL)
+| Saves plan to database with status: "pending_approval", isApproved: false
+| CRITICAL: DOES NOT ALLOCATE USERS. User.allocatedBus is left untouched.
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    ["/confirm-plan", "/submit-plan"],
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const {
+                planType,
+                plan,
+                startingPoint,
+                direction,
+                tripMode,
+                planId
+            } = req.body;
+
+            const result = await submitSelectedPlan({
+                planType: planType || "AI",
+                plan,
+                startingPoint,
+                direction: direction || plan?.direction || tripMode || plan?.tripMode,
+                tripMode: tripMode || plan?.tripMode,
+                planId: planId || plan?._id || plan?.id
+            });
+
+            if (result && result.success === false) {
+                return res.status(400).json(result);
+            }
+
+            res.json(result);
+        } catch (error) {
+            console.error("Confirm AI plan error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Unable to confirm transportation plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| APPROVE SELECTED PLAN (ADMIN APPROVAL & USER ALLOCATION)
+| Approves the pending plan and persists allocations to student documents
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+    "/approve-plan",
+    authMiddleware,
+    adminMiddleware,
+    async (req, res) => {
+        try {
+            const {
+                planType,
+                plan,
+                startingPoint,
+                direction,
+                tripMode,
+                planId
+            } = req.body;
+
+            const result = await approveAIPlan({
+                planType: planType || "AI",
+                plan,
+                startingPoint,
+                direction: direction || plan?.direction || tripMode || plan?.tripMode,
+                tripMode: tripMode || plan?.tripMode,
+                planId: planId || plan?._id || plan?.id
+            });
+
+            if (result && result.success === false) {
+                return res.status(400).json(result);
+            }
+
+            res.json(result);
+        } catch (error) {
+            console.error("Approve AI plan error:", error);
+            res.status(500).json({
+                success: false,
+                message: error?.message || "Unable to approve transportation plan."
+            });
+        }
+    }
+);
+
 router.post(
     "/select-plan",
     async (
@@ -328,8 +424,21 @@ router.post(
                 plan,
                 startingPoint,
                 direction,
-                tripMode
+                tripMode,
+                submitOnly,
+                status
             } = req.body;
+
+            if (submitOnly === true || status === "pending_approval") {
+                const submitRes = await submitSelectedPlan({
+                    planType: planType || "AI",
+                    plan,
+                    startingPoint,
+                    direction: direction || plan?.direction || tripMode || plan?.tripMode,
+                    tripMode: tripMode || plan?.tripMode
+                });
+                return res.json(submitRes);
+            }
 
             if (
                 !planType ||
@@ -533,6 +642,37 @@ router.get(
 
                 message:
                     "Unable to load active AI plan."
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| GET PLAN PERSISTENT STATUS (Source of Truth for INWARD & OUTWARD)
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+    "/status",
+    async (
+        req,
+        res
+    ) => {
+        try {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+
+            const result = await getPlanStatus(req.query);
+            res.json(result);
+        } catch (error) {
+            console.error("Get plan status error:", error);
+            res.status(500).json({
+                success: false,
+                outward: { exists: false, planType: null, status: "NO_PLAN", assigned: false },
+                inward: { exists: false, planType: null, status: "NO_PLAN", assigned: false },
+                message: error?.message || "Unable to load transportation plan status."
             });
         }
     }

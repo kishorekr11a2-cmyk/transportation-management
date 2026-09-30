@@ -1833,4 +1833,79 @@
 .ai-modal-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* Persistent AI Plan Card */
+.ai-plan-persistent-card {
+    background: #f8fafc;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+}
+
+.ai-plan-persistent-card.outward {
+    border-left: 5px solid #2563eb;
+}
+
+.ai-plan-persistent-card.inward {
+    border-left: 5px solid #059669;
+}
+
+.ai-plan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ai-plan-badge-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ai-plan-status-tag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+}
+
+.ai-plan-status-tag.approved {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.ai-plan-status-tag.pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.ai-plan-status-tag.generated {
+    background: #e0f2fe;
+    color: #0369a1;
+}
+
+.ai-plan-bus-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ai-plan-bus-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
 }

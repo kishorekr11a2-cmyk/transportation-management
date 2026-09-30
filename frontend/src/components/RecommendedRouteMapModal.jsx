@@ -34,14 +34,24 @@ export default function RecommendedRouteMapModal({
             maxZoom: 19
         }).addTo(map);
 
+        const isInward = direction === "INWARD" || recommendation?.tripMode === "TO_DESTINATION" || recommendation?.direction === "INWARD";
+
         let routePoints = recommendation.recommendedRoute;
         if (!Array.isArray(routePoints) || routePoints.length === 0) {
-            const src = recommendation.sourceHub || recommendation.source;
+            const src = recommendation.sourceHub || recommendation.source || recommendation.startLocation || recommendation.inwardStartLocation;
             const stops = Array.isArray(recommendation.stops) ? recommendation.stops : [];
             routePoints = [
-                ...(src && typeof src === "object" ? [{ ...src, isHub: true, name: src.name || "Institutional Source" }] : []),
+                ...(src && typeof src === "object" ? [{ ...src, isHub: true, name: src.name || (isInward ? "Starting Hub" : "Institutional Source") }] : []),
                 ...stops
             ];
+        }
+
+        if (isInward && Array.isArray(routePoints) && routePoints.length > 1) {
+            const first = routePoints[0];
+            const second = routePoints[1];
+            if (first?.name && second?.name && first.name.trim().toLowerCase() === second.name.trim().toLowerCase()) {
+                routePoints = [first, ...routePoints.slice(2)];
+            }
         }
         const bounds = L.latLngBounds([]);
 
@@ -53,12 +63,13 @@ export default function RecommendedRouteMapModal({
             if (Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) {
                 bounds.extend([lat, lng]);
 
-                const isHub = Boolean(point.isHub || point.routePointType === "hub" || point.name?.toLowerCase().includes("college"));
+                const isHub = Boolean(point.isHub || point.routePointType === "hub" || (!isInward && point.name?.toLowerCase().includes("college")));
                 const isNew = Boolean(point.isNewStop);
+                const markerLabel = isInward ? String(idx + 1) : (isHub ? "🏛️" : (isNew ? "✨" : String(idx + 1)));
 
                 const markerHtml = `
                     <div style="
-                        background: ${isHub ? "#059669" : (isNew ? "#7c3aed" : "#2563eb")};
+                        background: ${isInward ? (idx === 0 ? "#059669" : "#2563eb") : (isHub ? "#059669" : (isNew ? "#7c3aed" : "#2563eb"))};
                         color: #ffffff;
                         font-weight: 800;
                         font-size: 11px;
@@ -71,7 +82,7 @@ export default function RecommendedRouteMapModal({
                         border: 2px solid #ffffff;
                         box-shadow: 0 2px 8px rgba(0,0,0,0.35);
                     ">
-                        ${isHub ? "🏛️" : (isNew ? "✨" : (idx + 1))}
+                        ${markerLabel}
                     </div>
                 `;
 
@@ -89,8 +100,8 @@ export default function RecommendedRouteMapModal({
                         <strong style="display: block; font-size: 13px; color: #0f172a; margin-bottom: 2px;">
                             ${point.name}
                         </strong>
-                        <div style="color: ${isHub ? "#059669" : (isNew ? "#7c3aed" : "#2563eb")}; font-weight: 700; font-size: 11px; text-transform: uppercase;">
-                            ${isHub ? "🏛️ Institutional Hub" : (isNew ? "✨ Proposed New Stop" : `Stop #${point.order || idx + 1}`)}
+                        <div style="color: ${isInward ? (idx === 0 ? "#059669" : "#2563eb") : (isHub ? "#059669" : (isNew ? "#7c3aed" : "#2563eb"))}; font-weight: 700; font-size: 11px; text-transform: uppercase;">
+                            ${isInward ? (idx === 0 ? "🚩 Starting Hub (#1)" : `Stop #${idx + 1}`) : (isHub ? "🏛️ Institutional Hub" : (isNew ? "✨ Proposed New Stop" : `Stop #${point.order || idx + 1}`))}
                         </div>
                         ${point.userCount > 0 ? `<div style="color: #1e40af; margin-top: 3px;">👥 <b>${point.userCount}</b> students boarding</div>` : ""}
                         <div style="color: #64748b; font-size: 10px; margin-top: 2px;">GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
@@ -146,8 +157,24 @@ export default function RecommendedRouteMapModal({
 
     const roadVal = recommendation.roadValidation || {};
     const capAnalysis = recommendation.capacityAnalysis || {};
-    const bus = recommendation.bus || {};
-    const stops = recommendation.recommendedRoute || [];
+    const isInwardModal = direction === "INWARD" || recommendation?.tripMode === "TO_DESTINATION" || recommendation?.direction === "INWARD";
+    let stops = recommendation.recommendedRoute;
+    if (!Array.isArray(stops) || stops.length === 0) {
+        const src = recommendation.sourceHub || recommendation.source || recommendation.startLocation || recommendation.inwardStartLocation;
+        const recStops = Array.isArray(recommendation.stops) ? recommendation.stops : [];
+        stops = [
+            ...(src && typeof src === "object" ? [{ ...src, isHub: true, name: src.name || (isInwardModal ? "Starting Hub" : "Institutional Source") }] : []),
+            ...recStops
+        ];
+    }
+    if (isInwardModal && Array.isArray(stops) && stops.length > 1) {
+        const first = stops[0];
+        const second = stops[1];
+        if (first?.name && second?.name && first.name.trim().toLowerCase() === second.name.trim().toLowerCase()) {
+            stops = [first, ...stops.slice(2)];
+        }
+    }
+    stops = stops || [];
 
     return (
         <div className="ai-modal-overlay" onClick={onClose} style={{ zIndex: 9999 }}>
@@ -296,8 +323,9 @@ export default function RecommendedRouteMapModal({
                     </span>
                     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px" }}>
                         {stops.map((stop, sIdx) => {
-                            const isHub = Boolean(stop.isHub || stop.routePointType === "hub" || stop.name?.toLowerCase().includes("college"));
+                            const isHub = Boolean(stop.isHub || stop.routePointType === "hub" || (!isInwardModal && stop.name?.toLowerCase().includes("college")));
                             const isNew = Boolean(stop.isNewStop);
+                            const stopBadge = isInwardModal ? `#${sIdx + 1}` : (isHub ? "🏛️" : (isNew ? "✨" : `#${sIdx + 1}`));
                             return (
                                 <React.Fragment key={`${stop.name}-${sIdx}`}>
                                     <span style={{
@@ -305,14 +333,14 @@ export default function RecommendedRouteMapModal({
                                         borderRadius: "6px",
                                         fontSize: "12px",
                                         fontWeight: "700",
-                                        background: isHub ? "#ecfdf5" : (isNew ? "#f3e8ff" : "#f1f5f9"),
-                                        color: isHub ? "#047857" : (isNew ? "#7e22ce" : "#334155"),
-                                        border: `1px solid ${isHub ? "#a7f3d0" : (isNew ? "#d8b4fe" : "#cbd5e1")}`,
+                                        background: isInwardModal ? (sIdx === 0 ? "#ecfdf5" : "#f1f5f9") : (isHub ? "#ecfdf5" : (isNew ? "#f3e8ff" : "#f1f5f9")),
+                                        color: isInwardModal ? (sIdx === 0 ? "#047857" : "#334155") : (isHub ? "#047857" : (isNew ? "#7e22ce" : "#334155")),
+                                        border: `1px solid ${isInwardModal ? (sIdx === 0 ? "#a7f3d0" : "#cbd5e1") : (isHub ? "#a7f3d0" : (isNew ? "#d8b4fe" : "#cbd5e1"))}`,
                                         display: "inline-flex",
                                         alignItems: "center",
                                         gap: "4px"
                                     }}>
-                                        {isHub ? "🏛️" : (isNew ? "✨" : `#${sIdx + 1}`)} {stop.name}
+                                        {stopBadge} {stop.name}
                                         {stop.userCount > 0 && <span style={{ color: "#2563eb", fontWeight: "800" }}>({stop.userCount})</span>}
                                     </span>
                                     {sIdx < stops.length - 1 && (

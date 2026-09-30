@@ -290,4 +290,166 @@ test("Inward Starting Places Feature Comprehensive Test Suite", async (t) => {
         assert.notEqual(result.code, "NO_INWARD_STARTING_PLACES");
         assert.notEqual(result.code, "INWARD_STARTING_PLACES_INCOMPLETE");
     });
+
+    // ── 8. User Scenario: 6 buses required (397 Coming Users) with 6 configured buses (A2, AS@, D1, J1, V1, k1) and unconfigured buses (w1 with 60 seats) ──
+    await t.test("8. Inward Route Generation: AI selects all 6 configured buses and does NOT arbitrarily pick unconfigured w1", async () => {
+        // 397 students across 6 stopping areas
+        const stopDemands = [68, 67, 66, 65, 66, 65]; // sum = 397
+        const stopCoords = [
+            { name: "KK Nagar Stop", latitude: 9.9180, longitude: 78.1470 },
+            { name: "Vandiyur Stop", latitude: 9.9120, longitude: 78.1650 },
+            { name: "Thiruppalai Stop", latitude: 9.9800, longitude: 78.1400 },
+            { name: "B B Kulam Stop", latitude: 9.9450, longitude: 78.1320 },
+            { name: "Othakadai Stop", latitude: 9.9678, longitude: 78.1925 },
+            { name: "Walk-King Stop", latitude: 9.9200, longitude: 78.1500 }
+        ];
+
+        let userCounter = 0;
+        const resolvedStops = stopCoords.map((sc, idx) => {
+            const count = stopDemands[idx];
+            const ids = Array.from({ length: count }, () => `u_in_${++userCounter}`);
+            return {
+                name: sc.name,
+                latitude: sc.latitude,
+                longitude: sc.longitude,
+                userCount: count,
+                userIds: ids
+            };
+        });
+
+        // 6 Configured Buses (70 seats each = 420 seats)
+        const configuredBuses = [
+            { _id: "veh_A2", vehicleName: "A2", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_AS", vehicleName: "AS@", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_D1", vehicleName: "D1", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_J1", vehicleName: "J1", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_V1", vehicleName: "V1", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_k1", vehicleName: "k1", capacity: 70, seatCapacity: 70 }
+        ];
+
+        // Unconfigured Buses in schedule (e.g. w1 with 60 seats)
+        const unconfiguredBuses = [
+            { _id: "veh_w1", vehicleName: "w1", capacity: 60, seatCapacity: 60 },
+            { _id: "veh_w2", vehicleName: "w2", capacity: 60, seatCapacity: 60 },
+            { _id: "veh_q1", vehicleName: "Q1", capacity: 50, seatCapacity: 50 }
+        ];
+
+        const availableVehicles = [...configuredBuses, ...unconfiguredBuses];
+
+        const configuredPlaces = [
+            { busId: "veh_A2", busName: "A2", locationName: "KK Nagar", latitude: 9.9180, longitude: 78.1470, active: true },
+            { busId: "veh_AS", busName: "AS@", locationName: "Vandiyur", latitude: 9.9120, longitude: 78.1650, active: true },
+            { busId: "veh_D1", busName: "D1", locationName: "Thiruppalai", latitude: 9.9800, longitude: 78.1400, active: true },
+            { busId: "veh_J1", busName: "J1", locationName: "B B Kulam", latitude: 9.9450, longitude: 78.1320, active: true },
+            { busId: "veh_V1", busName: "V1", locationName: "Othakadai", latitude: 9.9678, longitude: 78.1925, active: true },
+            { busId: "veh_k1", busName: "k1", locationName: "Walk-King Shoe Company - KK Nagar", latitude: 9.9210, longitude: 78.1490, active: true }
+        ];
+
+        const confirmedUsers = resolvedStops.flatMap(s => s.userIds.map(id => ({ _id: id, userId: id })));
+
+        const plan = await buildAIPlan({
+            destinationHub: mockDestinationCollege,
+            tripMode: "TO_DESTINATION",
+            resolvedStops,
+            availableVehicles,
+            rawVehicles: availableVehicles,
+            totalComingUsers: 397,
+            allUsersCount: 397,
+            totalAvailableCapacity: 590,
+            physicalFleetCapacity: 590,
+            confirmedUsers,
+            activeInwardStartingPlaces: configuredPlaces
+        });
+
+        assert.ok(plan, "Inward plan should generate successfully");
+        assert.equal(plan.buses.length, 6, "Must select exactly 6 buses");
+
+        const selectedNames = plan.buses.map(b => b.vehicleName);
+        assert.ok(!selectedNames.includes("w1"), "Unconfigured vehicle w1 must NOT be selected when 6 configured vehicles can satisfy demand");
+
+        // Every selected vehicle MUST have a configured starting location
+        for (const bus of plan.buses) {
+            assert.ok(bus.startLocation, `Bus ${bus.vehicleName} must have a startLocation`);
+            assert.ok(bus.inwardStartLocation, `Bus ${bus.vehicleName} must have an inwardStartLocation`);
+            assert.ok(bus.startLocation.locationName, `Bus ${bus.vehicleName} starting location name must exist`);
+        }
+
+        const totalAssigned = plan.buses.reduce((sum, b) => sum + (b.assignedUsers || 0), 0);
+        assert.equal(totalAssigned, 397, "All 397 Coming Users must be assigned to routes");
+    });
+
+    // ── 9. Insufficient Configured Buses: Legitimate Error when only 5 buses configured for 6-bus demand ──
+    await t.test("9. When only 5 buses are configured but 6 are needed, optimizer selects 5 configured + 1 unconfigured and fails with clear message", async () => {
+        const stopDemands = [68, 67, 66, 65, 66, 65]; // sum = 397
+        const stopCoords = [
+            { name: "KK Nagar Stop", latitude: 9.9180, longitude: 78.1470 },
+            { name: "Vandiyur Stop", latitude: 9.9120, longitude: 78.1650 },
+            { name: "Thiruppalai Stop", latitude: 9.9800, longitude: 78.1400 },
+            { name: "B B Kulam Stop", latitude: 9.9450, longitude: 78.1320 },
+            { name: "Othakadai Stop", latitude: 9.9678, longitude: 78.1925 },
+            { name: "Walk-King Stop", latitude: 9.9200, longitude: 78.1500 }
+        ];
+
+        let userCounter = 0;
+        const resolvedStops = stopCoords.map((sc, idx) => {
+            const count = stopDemands[idx];
+            const ids = Array.from({ length: count }, () => `u_in9_${++userCounter}`);
+            return {
+                name: sc.name,
+                latitude: sc.latitude,
+                longitude: sc.longitude,
+                userCount: count,
+                userIds: ids
+            };
+        });
+
+        // Only 5 configured buses (A2, AS@, D1, J1, V1) - k1 is NOT configured
+        const configuredBuses = [
+            { _id: "veh_A2", vehicleName: "A2", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_AS", vehicleName: "AS@", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_D1", vehicleName: "D1", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_J1", vehicleName: "J1", capacity: 70, seatCapacity: 70 },
+            { _id: "veh_V1", vehicleName: "V1", capacity: 70, seatCapacity: 70 }
+        ];
+        const unconfiguredBuses = [
+            { _id: "veh_w1", vehicleName: "w1", capacity: 60, seatCapacity: 60 }
+        ];
+
+        const availableVehicles = [...configuredBuses, ...unconfiguredBuses];
+
+        const only5Places = [
+            { busId: "veh_A2", busName: "A2", locationName: "KK Nagar", latitude: 9.9180, longitude: 78.1470, active: true },
+            { busId: "veh_AS", busName: "AS@", locationName: "Vandiyur", latitude: 9.9120, longitude: 78.1650, active: true },
+            { busId: "veh_D1", busName: "D1", locationName: "Thiruppalai", latitude: 9.9800, longitude: 78.1400, active: true },
+            { busId: "veh_J1", busName: "J1", locationName: "B B Kulam", latitude: 9.9450, longitude: 78.1320, active: true },
+            { busId: "veh_V1", busName: "V1", locationName: "Othakadai", latitude: 9.9678, longitude: 78.1925, active: true }
+        ];
+
+        const confirmedUsers = resolvedStops.flatMap(s => s.userIds.map(id => ({ _id: id, userId: id })));
+
+        await assert.rejects(
+            async () => {
+                await buildAIPlan({
+                    destinationHub: mockDestinationCollege,
+                    tripMode: "TO_DESTINATION",
+                    resolvedStops,
+                    availableVehicles,
+                    rawVehicles: availableVehicles,
+                    totalComingUsers: 397,
+                    allUsersCount: 397,
+                    totalAvailableCapacity: 410,
+                    physicalFleetCapacity: 410,
+                    confirmedUsers,
+                    activeInwardStartingPlaces: only5Places
+                });
+            },
+            (err) => {
+                assert.equal(err.code, "INWARD_STARTING_PLACES_INCOMPLETE");
+                assert.ok(err.missingBuses.includes("w1"), "Must identify w1 as missing starting location");
+                assert.equal(err.requiredCount, 6, "Must show 6 buses required");
+                assert.equal(err.configuredCount, 5, "Must show 5 buses configured");
+                return true;
+            }
+        );
+    });
 });

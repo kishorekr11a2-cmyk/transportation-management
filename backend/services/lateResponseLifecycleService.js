@@ -145,6 +145,14 @@ export const getCurrentApprovedPlan = async (direction = null) => {
                     const uId = typeof u === "string" ? u : (u.userId || u._id || u.id);
                     if (uId) allocatedUserIds.add(String(uId).toLowerCase().trim());
                 }
+                const stops = bus.stops || [];
+                for (const st of stops) {
+                    const stUsers = st.userIds || st.users || st.students || [];
+                    for (const su of stUsers) {
+                        const suId = typeof su === "string" ? su : (su.userId || su._id || su.id);
+                        if (suId) allocatedUserIds.add(String(suId).toLowerCase().trim());
+                    }
+                }
             }
 
             return {
@@ -189,6 +197,14 @@ export const getCurrentApprovedPlan = async (direction = null) => {
                     const uId = typeof u === "string" ? u : (u.userId || u._id || u.id);
                     if (uId) allocatedUserIds.add(String(uId).toLowerCase().trim());
                 }
+                const stops = bus.stops || [];
+                for (const st of stops) {
+                    const stUsers = st.userIds || st.users || st.students || [];
+                    for (const su of stUsers) {
+                        const suId = typeof su === "string" ? su : (su.userId || su._id || su.id);
+                        if (suId) allocatedUserIds.add(String(suId).toLowerCase().trim());
+                    }
+                }
             }
 
             return {
@@ -205,12 +221,20 @@ export const getCurrentApprovedPlan = async (direction = null) => {
         }
 
         // 3. Check manual_plan_submissions
-        const manualQuery = { isSubmitted: true };
+        const manualQuery = {
+            isSubmitted: true,
+            status: { $ne: "reset" },
+            resetAt: { $exists: false },
+            active: { $ne: false },
+            $or: [
+                { isApproved: true },
+                { approved: true },
+                { confirmedAt: { $exists: true } },
+                { approvedAt: { $exists: true } }
+            ]
+        };
         if (canonicalDirection) {
-            manualQuery.$or = [
-                { direction: canonicalDirection },
-                { direction: canonicalDirection.toLowerCase() }
-            ];
+            manualQuery.direction = { $in: [canonicalDirection, canonicalDirection.toLowerCase()] };
         }
         const manualDoc = await mongoose.connection.db.collection("manual_plan_submissions").findOne(
             manualQuery,
@@ -218,9 +242,27 @@ export const getCurrentApprovedPlan = async (direction = null) => {
         );
 
         if (manualDoc && (manualDoc.submittedAt || manualDoc.confirmedAt || manualDoc.createdAt)) {
-            const approvalTime = manualDoc.submittedAt || manualDoc.confirmedAt || manualDoc.createdAt;
+            const approvalTime = manualDoc.confirmedAt || manualDoc.submittedAt || manualDoc.createdAt;
             const approvalEventId = manualDoc.approvalEventId || (manualDoc._id ? String(manualDoc._id) : null);
             const planVersion = Number(manualDoc.planVersion) || 1;
+
+            const allocatedUserIds = new Set();
+            const buses = manualDoc.plan?.buses || manualDoc.plan?.routes || manualDoc.buses || manualDoc.routes || [];
+            for (const bus of buses) {
+                const users = bus.users || bus.allocatedStudents || bus.passengers || [];
+                for (const u of users) {
+                    const uId = typeof u === "string" ? u : (u.userId || u._id || u.id);
+                    if (uId) allocatedUserIds.add(String(uId).toLowerCase().trim());
+                }
+                const stops = bus.stops || [];
+                for (const st of stops) {
+                    const stUsers = st.userIds || st.users || st.students || [];
+                    for (const su of stUsers) {
+                        const suId = typeof su === "string" ? su : (su.userId || su._id || su.id);
+                        if (suId) allocatedUserIds.add(String(suId).toLowerCase().trim());
+                    }
+                }
+            }
 
             return {
                 isApproved: true,
@@ -229,7 +271,7 @@ export const getCurrentApprovedPlan = async (direction = null) => {
                 planVersion,
                 approvalEventId,
                 approvedAt: new Date(approvalTime),
-                allocatedUserIds: new Set(),
+                allocatedUserIds,
                 sourceCollection: "manual_plan_submissions",
                 plan: manualDoc.plan || manualDoc
             };
@@ -378,7 +420,8 @@ export const createOrGetLateResponseEvent = async ({
         ? "OUTWARD"
         : ((direction && String(direction).toUpperCase().trim() === "INWARD") ? "INWARD" : null);
 
-    const canonicalPlanType = (planType && String(planType).toUpperCase().trim() === "MANUAL") ? "MANUAL" : "AI";
+    const rawPlanTypeUpper = planType ? String(planType).toUpperCase().trim() : "";
+    const canonicalPlanType = (rawPlanTypeUpper === "MANUAL" || rawPlanTypeUpper === "ADMIN") ? "MANUAL" : "AI";
 
     const respTime = responseSubmittedAt instanceof Date ? responseSubmittedAt : new Date(responseSubmittedAt);
     const respTimestamp = respTime.getTime();
@@ -405,6 +448,7 @@ export const createOrGetLateResponseEvent = async ({
     };
     if (canonicalDirection) {
         lookupQuery.$or.push({ direction: canonicalDirection, responseEventId: effectiveResponseEventId });
+        lookupQuery.$or.push({ direction: canonicalDirection, status: { $in: ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] } });
     }
 
     const existingEvent = await LateResponseEvent.findOne(lookupQuery).lean();
@@ -588,7 +632,8 @@ export const resolveLateResponsesForPlan = async ({
     resolvedPlanId = null,
     newPlanVersion = null,
     newApprovalEventId = null,
-    resolutionReason = "Admin approved plan including student"
+    resolutionReason = "Admin approved plan including student",
+    allocationsMap = null
 } = {}) => {
     if (!isDbConnected() || !mongoose.connection?.db) {
         return { success: false, resolvedCount: 0 };
@@ -605,6 +650,35 @@ export const resolveLateResponsesForPlan = async ({
 
     try {
         const normalizedIds = userIdsList.map((id) => String(id).toLowerCase().trim()).filter(Boolean);
+        const validObjectIds = normalizedIds.filter((id) => mongoose.Types.ObjectId.isValid(id)).map((id) => new mongoose.Types.ObjectId(id));
+
+        // Lookup matching students to map both MongoDB _id <-> student human userId
+        const studentDocs = await User.find({
+            role: "student",
+            $or: [
+                { userId: { $in: normalizedIds } },
+                { userId: { $in: userIdsList } },
+                ...(validObjectIds.length > 0 ? [{ _id: { $in: validObjectIds } }] : [])
+            ]
+        }).select("userId _id").lean();
+
+        const allCandidateUserIds = new Set();
+        for (const s of studentDocs) {
+            if (s.userId) {
+                allCandidateUserIds.add(String(s.userId).trim());
+                allCandidateUserIds.add(String(s.userId).toLowerCase().trim());
+            }
+            if (s._id) {
+                allCandidateUserIds.add(String(s._id).trim());
+                allCandidateUserIds.add(String(s._id).toLowerCase().trim());
+            }
+        }
+        for (const id of userIdsList) {
+            allCandidateUserIds.add(String(id).trim());
+            allCandidateUserIds.add(String(id).toLowerCase().trim());
+        }
+        const expandedIds = Array.from(allCandidateUserIds);
+
         const canonicalDirection = (direction && String(direction).toUpperCase().trim() === "OUTWARD")
             ? "OUTWARD"
             : ((direction && String(direction).toUpperCase().trim() === "INWARD") ? "INWARD" : null);
@@ -614,10 +688,7 @@ export const resolveLateResponsesForPlan = async ({
         // Query OPEN events for allocated users
         const eventFilter = {
             status: { $in: openStatuses },
-            $or: [
-                { userId: { $in: normalizedIds } },
-                { userId: { $in: userIdsList } }
-            ]
+            userId: { $in: expandedIds }
         };
 
         // Direction isolation: an outward plan resolves outward or unassigned events, not inward
@@ -639,52 +710,59 @@ export const resolveLateResponsesForPlan = async ({
         // Find matching events before updating to log each resolved transition
         const eventsToResolve = await LateResponseEvent.find(eventFilter).select("userId direction responseEventId").lean();
 
-        const lreResult = await LateResponseEvent.updateMany(
-            eventFilter,
-            {
-                $set: {
-                    status: "RESOLVED",
-                    resolvedAt: now,
-                    resolvedPlanId: planIdentifier,
-                    resolutionReason,
-                    updatedAt: now
-                }
-            }
-        );
-
         for (const ev of (eventsToResolve || [])) {
+            const evUid = String(ev.userId || "").toLowerCase().trim();
+            const allocInfo = (allocationsMap && (allocationsMap.get(evUid) || allocationsMap.get(ev.userId))) || null;
+            const updateDoc = {
+                status: "RESOLVED",
+                resolvedAt: now,
+                resolvedPlanId: planIdentifier,
+                resolutionReason,
+                updatedAt: now
+            };
+            if (allocInfo) {
+                if (allocInfo.vehicleName) updateDoc.allocatedBus = allocInfo.vehicleName;
+                if (allocInfo.routeCode) updateDoc.allocatedRoute = allocInfo.routeCode;
+                if (allocInfo.seatNumber) updateDoc.allocatedSeat = allocInfo.seatNumber;
+            }
+            await LateResponseEvent.updateOne({ _id: ev._id }, { $set: updateDoc });
             console.log(`[LATE-RESPONSE] user=${ev.userId} direction=${ev.direction || canonicalDirection || "GLOBAL"} responseEvent=${ev.responseEventId} status=RESOLVED resolvedPlan=${planIdentifier}`);
         }
 
-        // Clear late flags on the allocated users in the User collection
-        const userResult = await User.updateMany(
-            {
-                role: "student",
-                $or: [
-                    { userId: { $in: normalizedIds } },
-                    { userId: { $in: userIdsList } },
-                    { _id: { $in: normalizedIds.filter((id) => mongoose.Types.ObjectId.isValid(id)) } }
-                ]
-            },
-            {
-                $set: {
-                    lateResponse: false,
-                    isLateResponse: false,
-                    lateResponseDetected: false,
-                    requiresReallocation: false,
-                    lateResponseAt: null,
-                    lateResponseResolvedAt: now,
-                    affectedDirections: []
-                }
-            }
-        );
+        // Clear late flags on the allocated users in the User collection with strict direction isolation
+        let updatedCount = 0;
+        if (studentDocs && studentDocs.length > 0) {
+            for (const s of studentDocs) {
+                const existingAffected = Array.isArray(s.affectedDirections)
+                    ? s.affectedDirections.map(d => String(d).toUpperCase().trim())
+                    : [];
+                const nextAffected = canonicalDirection
+                    ? existingAffected.filter(d => d !== canonicalDirection)
+                    : [];
+                const isFullyResolved = nextAffected.length === 0;
 
-        console.log(`[LIFECYCLE] Resolved ${lreResult.modifiedCount} LateResponseEvent(s) and cleared late flags for ${userResult.modifiedCount} user(s) (Plan: ${planIdentifier})`);
+                const uSet = {
+                    affectedDirections: nextAffected,
+                    requiresReallocation: !isFullyResolved,
+                    lateResponseDetected: !isFullyResolved,
+                    lateResponse: !isFullyResolved,
+                    isLateResponse: !isFullyResolved,
+                    lateResponseResolvedAt: now
+                };
+                if (isFullyResolved) {
+                    uSet.lateResponseAt = null;
+                }
+                await User.updateOne({ _id: s._id }, { $set: uSet });
+                updatedCount++;
+            }
+        }
+
+        console.log(`[LIFECYCLE] Resolved ${eventsToResolve.length} LateResponseEvent(s) and cleared late flags for ${updatedCount} user(s) (Plan: ${planIdentifier})`);
 
         return {
             success: true,
-            resolvedEventsCount: lreResult.modifiedCount,
-            updatedUsersCount: userResult.modifiedCount
+            resolvedEventsCount: eventsToResolve.length,
+            updatedUsersCount: updatedCount
         };
     } catch (err) {
         console.error("[LIFECYCLE] Error resolving late responses for plan:", err.message);
@@ -697,6 +775,309 @@ export const resolveLateResponsesForPlan = async ({
  */
 export const resolveLateResponsesForPreviousPlan = async (params) => {
     return resolveLateResponsesForPlan(params);
+};
+
+/**
+ * UNIFIED COMMON LATE RESPONSE RESOLUTION SERVICE
+ * 
+ * Completely plan-type- and direction-independent.
+ * Supports:
+ *   1. AI + OUTWARD
+ *   2. AI + INWARD
+ *   3. MANUAL + OUTWARD
+ *   4. MANUAL + INWARD
+ *
+ * Reuses existing allocation rules:
+ * - Identifies the active approved plan for the direction
+ * - Allocates late user to an existing compatible route/bus with available capacity
+ * - Respects route continuity, stop compatibility, and inward starting hubs
+ * - Updates User.allocatedBus preserving both inward and outward structures
+ * - Marks LateResponseEvent as RESOLVED
+ * - Student dashboard immediately reflects allocation
+ */
+export const resolveLateResponse = async ({
+    userId = null,
+    user = null,
+    direction = null,
+    activePlan = null,
+    planType = null
+} = {}) => {
+    if (!isDbConnected() || !mongoose.connection?.db) {
+        return { success: false, code: "DATABASE_UNAVAILABLE", message: "Database is currently unavailable." };
+    }
+
+    const canonicalDirection = (direction && String(direction).toUpperCase().trim() === "OUTWARD")
+        ? "OUTWARD"
+        : ((direction && String(direction).toUpperCase().trim() === "INWARD") ? "INWARD" : null);
+
+    if (!canonicalDirection) {
+        return { success: false, code: "MISSING_DIRECTION", message: "Direction (INWARD or OUTWARD) is required." };
+    }
+
+    // 1. Identify Active Plan (direction + active plan, independent of AI or Manual)
+    const activeRecord = activePlan || await getCurrentApprovedPlan(canonicalDirection);
+    if (!activeRecord || !activeRecord.isApproved || !activeRecord.plan) {
+        return {
+            success: false,
+            code: "NO_ACTIVE_APPROVED_PLAN",
+            message: `No active approved transportation plan found for ${canonicalDirection}.`
+        };
+    }
+
+    const rawPlan = activeRecord.plan;
+    const planVersion = activeRecord.planVersion || 1;
+    const approvalEventId = activeRecord.approvalEventId || (activeRecord.planId ? String(activeRecord.planId) : `plan_v${planVersion}`);
+    const rawType = (planType || activeRecord.planType || "AI").toUpperCase().trim();
+    const effectivePlanType = (rawType === "MANUAL" || rawType === "ADMIN") ? "MANUAL" : "AI";
+
+    // 2. Fetch the target student(s) to resolve
+    const targetUserId = userId || user?.userId || user?._id;
+    let studentsToResolve = [];
+    if (targetUserId) {
+        const sDoc = await User.findOne({
+            $or: [
+                { userId: String(targetUserId) },
+                { userId: String(targetUserId).toLowerCase() },
+                { userId: String(targetUserId).toUpperCase() },
+                ...(mongoose.Types.ObjectId.isValid(targetUserId) ? [{ _id: targetUserId }] : [])
+            ]
+        });
+        if (sDoc) studentsToResolve = [sDoc];
+    } else {
+        // Resolve all students with open late response events for this direction
+        const openEvents = await LateResponseEvent.find({
+            direction: canonicalDirection,
+            status: { $in: ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] }
+        }).select("userId").lean();
+        const openUids = Array.from(new Set(openEvents.map(e => String(e.userId || "").trim()).filter(Boolean)));
+        if (openUids.length > 0) {
+            studentsToResolve = await User.find({
+                $or: [
+                    { userId: { $in: openUids } },
+                    { userId: { $in: openUids.map(u => u.toLowerCase()) } },
+                    { userId: { $in: openUids.map(u => u.toUpperCase()) } }
+                ]
+            });
+        }
+    }
+
+    if (studentsToResolve.length === 0) {
+        return {
+            success: true,
+            resolvedCount: 0,
+            message: `No open late responses found to resolve for ${canonicalDirection}.`
+        };
+    }
+
+    const buses = Array.isArray(rawPlan.buses) ? rawPlan.buses : (Array.isArray(rawPlan.routes) ? rawPlan.routes : []);
+    const resolvedResults = [];
+    const now = new Date();
+
+    for (const student of studentsToResolve) {
+        const uId = String(student.userId || "").toLowerCase().trim();
+        const dirKey = canonicalDirection.toLowerCase();
+
+        // Check if student is already allocated in this direction
+        const existingAlloc = (student.allocatedBus && typeof student.allocatedBus === "object") ? student.allocatedBus : {};
+        const dirSubAlloc = existingAlloc[dirKey];
+        if (dirSubAlloc && dirSubAlloc.isAllocated && (dirSubAlloc.approved === true || dirSubAlloc.adminApprovalStatus === "Approved")) {
+            // Already allocated: idempotently mark LateResponseEvent as resolved
+            await LateResponseEvent.updateMany(
+                {
+                    userId: { $in: [student.userId, String(student._id), uId, uId.toUpperCase()] },
+                    direction: canonicalDirection,
+                    status: { $ne: "RESOLVED" }
+                },
+                {
+                    $set: {
+                        status: "RESOLVED",
+                        resolvedAt: now,
+                        resolvedPlanId: approvalEventId,
+                        resolutionReason: "Already allocated in active plan",
+                        allocatedBus: dirSubAlloc.vehicleName,
+                        allocatedRoute: dirSubAlloc.routeCode,
+                        allocatedSeat: dirSubAlloc.seatNumber,
+                        updatedAt: now
+                    }
+                }
+            );
+            resolvedResults.push({
+                userId: student.userId,
+                allocated: true,
+                vehicleName: dirSubAlloc.vehicleName,
+                routeCode: dirSubAlloc.routeCode,
+                seatNumber: dirSubAlloc.seatNumber,
+                alreadyAllocated: true
+            });
+            continue;
+        }
+
+        // Apply route/bus allocation logic: find compatible bus with capacity
+        const studentStop = String(student.stoppings || "").trim();
+        let matchedBus = null;
+        let matchedStop = null;
+
+        for (const bus of buses) {
+            const capacity = Number(bus.capacity) || 70;
+            const assignedCount = (bus.users?.length || bus.allocatedStudents?.length || bus.assignedUsers || 0);
+            const remainingSeats = Math.max(0, capacity - assignedCount);
+            if (remainingSeats <= 0) continue;
+
+            const stops = Array.isArray(bus.stops) ? bus.stops : [];
+            for (let sIdx = 0; sIdx < stops.length; sIdx++) {
+                const s = stops[sIdx];
+                const sName = String(s.name || "").trim().toLowerCase();
+                const uStopName = studentStop.toLowerCase();
+                if (sName === uStopName || sName.includes(uStopName) || uStopName.includes(sName)) {
+                    matchedBus = bus;
+                    matchedStop = s;
+                    break;
+                }
+            }
+            if (matchedBus) break;
+        }
+
+        // Fallback: choose first available bus with remaining seats in this plan
+        if (!matchedBus && buses.length > 0) {
+            matchedBus = buses.find(b => {
+                const cap = Number(b.capacity) || 70;
+                const cnt = (b.users?.length || b.allocatedStudents?.length || b.assignedUsers || 0);
+                return (cap - cnt) > 0;
+            });
+            if (matchedBus && Array.isArray(matchedBus.stops) && matchedBus.stops.length > 0) {
+                matchedStop = matchedBus.stops[0];
+            }
+        }
+
+        if (matchedBus) {
+            const currentBusUsers = matchedBus.users || [];
+            const seatNumber = currentBusUsers.length + 1;
+            const vehicleName = matchedBus.vehicleName || matchedBus.vehicleNumber || "Assigned Bus";
+            const routeCode = matchedBus.routeCode || matchedBus.routeName || "R-01";
+            const routeName = matchedBus.routeName || `${routeCode}: ${vehicleName}`;
+            const stopName = matchedStop?.name || studentStop || "Assigned Stop";
+
+            // Add student to the bus users list
+            if (!matchedBus.users) matchedBus.users = [];
+            matchedBus.users.push(student.userId);
+            if (Array.isArray(matchedBus.allocatedStudents)) {
+                matchedBus.allocatedStudents.push({ userId: student.userId, name: student.name || "", seatNumber });
+            }
+
+            // Build direction allocation object
+            const dirAllocObj = {
+                isAllocated: true,
+                approved: true,
+                allocationStatus: "Assigned",
+                adminApprovalStatus: "Approved",
+                vehicleName,
+                vehicleNumber: vehicleName,
+                routeCode,
+                routeName,
+                boardingStop: stopName,
+                stopName,
+                seatNumber,
+                direction: canonicalDirection,
+                tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION",
+                planVersion,
+                planType: effectivePlanType,
+                approvedAt: now
+            };
+
+            const currentAffected = (Array.isArray(student.affectedDirections) ? student.affectedDirections : [])
+                .map(d => String(d).toUpperCase().trim());
+            const nextAffected = currentAffected.filter(d => d !== canonicalDirection);
+            const isFullyAllocated = nextAffected.length === 0;
+
+            const existingOpposite = canonicalDirection === "OUTWARD" ? existingAlloc.inward : existingAlloc.outward;
+            const updatedAllocatedBus = {
+                ...dirAllocObj,
+                isAllocated: true,
+                inward: canonicalDirection === "INWARD" ? dirAllocObj : (existingOpposite || null),
+                outward: canonicalDirection === "OUTWARD" ? dirAllocObj : (existingOpposite || null)
+            };
+
+            student.allocatedBus = updatedAllocatedBus;
+            student.assignedVehicle = vehicleName;
+            student.assignedRoute = routeCode;
+            student.allocationStatus = "Assigned";
+            student.isAllocated = true;
+            student.isUnallocated = false;
+            student.travelStatus = "Coming";
+            student.affectedDirections = nextAffected;
+            student.requiresReallocation = !isFullyAllocated;
+            student.lateResponseDetected = !isFullyAllocated;
+            student.lateResponse = !isFullyAllocated;
+            student.isLateResponse = !isFullyAllocated;
+            student.lateResponseResolvedAt = now;
+            if (isFullyAllocated) {
+                student.lateResponseAt = null;
+            }
+            if (effectivePlanType === "MANUAL") {
+                student.manualBusId = vehicleName;
+                student.manualRouteId = routeCode;
+                student.approvedPlanType = "MANUAL";
+            }
+
+            await student.save();
+
+            // Mark LateResponseEvent as RESOLVED
+            await LateResponseEvent.updateMany(
+                {
+                    userId: { $in: [student.userId, String(student._id), uId, uId.toUpperCase()] },
+                    direction: canonicalDirection,
+                    status: { $ne: "RESOLVED" }
+                },
+                {
+                    $set: {
+                        status: "RESOLVED",
+                        resolvedAt: now,
+                        resolvedPlanId: approvalEventId,
+                        resolutionReason: `Allocated to ${vehicleName} (${routeCode}) for ${canonicalDirection}`,
+                        allocatedBus: vehicleName,
+                        allocatedRoute: routeCode,
+                        allocatedSeat: seatNumber,
+                        updatedAt: now
+                    }
+                }
+            );
+
+            resolvedResults.push({
+                userId: student.userId,
+                allocated: true,
+                vehicleName,
+                routeCode,
+                seatNumber
+            });
+        } else {
+            // No bus capacity available -> remains standby/unallocated, event stays ACTIVE
+            resolvedResults.push({
+                userId: student.userId,
+                allocated: false,
+                reason: "CAPACITY_EXCEEDED"
+            });
+        }
+    }
+
+    // Persist updated plan buses to active database records
+    if (activeRecord.sourceCollection === "ai_selected_plans" && mongoose.connection.db) {
+        try {
+            await mongoose.connection.db.collection("ai_selected_plans").updateOne(
+                { _id: new mongoose.Types.ObjectId(activeRecord.planId) },
+                { $set: { "plan.buses": buses, updatedAt: now } }
+            );
+        } catch {}
+    }
+
+    clearActiveApprovedPlansCache();
+    return {
+        success: true,
+        direction: canonicalDirection,
+        planType: effectivePlanType,
+        planVersion,
+        resolvedCount: resolvedResults.filter(r => r.allocated).length,
+        results: resolvedResults
+    };
 };
 
 /**
@@ -852,11 +1233,41 @@ export const getActiveLateResponses = async () => {
         const count = formattedList.length;
         const uniqueUnnotifiedKeys = Array.from(new Set(unnotifiedEventKeys));
 
+        let outwardCount = 0;
+        let inwardCount = 0;
+        const affectedDirectionsSet = new Set();
+
+        for (const item of formattedList) {
+            const dir = item.direction ? String(item.direction).toUpperCase().trim() : null;
+            if (!dir || dir === "BOTH" || dir === "ALL") {
+                outwardCount++;
+                inwardCount++;
+                affectedDirectionsSet.add("INWARD");
+                affectedDirectionsSet.add("OUTWARD");
+            } else if (dir === "OUTWARD" || dir === "FROM_SOURCE") {
+                outwardCount++;
+                affectedDirectionsSet.add("OUTWARD");
+            } else if (dir === "INWARD" || dir === "TO_DESTINATION") {
+                inwardCount++;
+                affectedDirectionsSet.add("INWARD");
+            } else {
+                outwardCount++;
+                inwardCount++;
+                affectedDirectionsSet.add("INWARD");
+                affectedDirectionsSet.add("OUTWARD");
+            }
+        }
+
+        const affectedDirections = Array.from(affectedDirectionsSet);
+
         return {
             success: true,
             count,
             lateComingResponsesCount: count,
             pendingReallocationUsersCount: count,
+            outwardCount,
+            inwardCount,
+            affectedDirections,
             unnotifiedCount: uniqueUnnotifiedKeys.length,
             unnotifiedEventKeys: uniqueUnnotifiedKeys,
             lateResponses: formattedList,

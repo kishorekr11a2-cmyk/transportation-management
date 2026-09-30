@@ -4,6 +4,7 @@ import { toast } from "react-hot-toast";
 import { HiArrowLeft } from "react-icons/hi";
 import {
     getManualPlan,
+    regenerateManualPlan,
     approveManualPlan,
     resetManualPlanAllocations,
     getManualPlanRecommendations
@@ -24,6 +25,7 @@ const AdminManualPlan = () => {
 
     const [loading, setLoading] = useState(true);
     const [approving, setApproving] = useState(false);
+    const [regenerating, setRegenerating] = useState(false);
     const [resetting, setResetting] = useState(false);
     const [recsLoading, setRecsLoading] = useState(false);
     const [planData, setPlanData] = useState(null);
@@ -100,6 +102,29 @@ const AdminManualPlan = () => {
         }
     };
 
+    // Regenerate manual plan preview with latest demand
+    const handleRegenerateManualPlan = async () => {
+        try {
+            setRegenerating(true);
+            const res = await regenerateManualPlan({ direction });
+            if (res?.success) {
+                toast.success(res.message || `Manual ${direction} plan regenerated with latest demand! Review before approving.`);
+                if (res.plan) {
+                    setPlanData(res.plan);
+                } else {
+                    await loadPlan(direction);
+                }
+            } else {
+                toast.error(res?.message || "Failed to regenerate manual plan.");
+            }
+        } catch (err) {
+            console.error("Regenerate manual plan error:", err);
+            toast.error(err.response?.data?.message || err.message || "Failed to regenerate manual plan.");
+        } finally {
+            setRegenerating(false);
+        }
+    };
+
     // Reset manual plan allocations
     const handleResetAllocations = async () => {
         try {
@@ -108,6 +133,17 @@ const AdminManualPlan = () => {
             if (res?.success) {
                 toast.success(res.message || `Manual plan allocations for ${direction} reset successfully.`);
                 setShowResetModal(false);
+                try {
+                    const activeSelection = JSON.parse(localStorage.getItem("active_ai_selection") || "null");
+                    if (activeSelection?.planType === "ADMIN" || activeSelection?.planType === "MANUAL") {
+                        localStorage.removeItem("active_ai_selection");
+                    }
+                    if (direction === "OUTWARD") {
+                        localStorage.removeItem("active_outward_plan");
+                    } else {
+                        localStorage.removeItem("active_inward_plan");
+                    }
+                } catch (e) {}
                 await loadPlan(direction);
             } else {
                 toast.error(res?.message || "Failed to reset manual plan allocations.");
@@ -144,6 +180,7 @@ const AdminManualPlan = () => {
     const routes = Array.isArray(planData?.buses) ? planData.buses : (Array.isArray(planData?.routes) ? planData.routes : []);
     const isSubmitted = Boolean(planData?.isSubmitted || planData?.isApproved);
     const isApproved = Boolean(planData?.isApproved);
+    const hasLateResponses = Boolean(planData?.hasLateResponses || planData?.pendingReallocation);
     const warnings = Array.isArray(planData?.warnings) ? planData.warnings : [];
 
     return (
@@ -154,7 +191,7 @@ const AdminManualPlan = () => {
                     <button
                         type="button"
                         className="manual-back-btn"
-                        onClick={() => navigate(-1)}
+                        onClick={() => navigate("/admin-dashboard")}
                         aria-label="Go back"
                     >
                         <HiArrowLeft size={16} />
@@ -266,6 +303,43 @@ const AdminManualPlan = () => {
                     </div>
                 </div>
 
+                {/* Late Response Notification Banner */}
+                {hasLateResponses && (
+                    <div style={{
+                        background: "#fffbeb",
+                        border: "1.5px solid #fef3c7",
+                        borderLeft: "4px solid #f59e0b",
+                        borderRadius: "10px",
+                        padding: "14px 18px",
+                        marginBottom: "18px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px"
+                    }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            <span style={{ fontSize: "20px" }}>⚠️</span>
+                            <div>
+                                <strong style={{ color: "#92400e", display: "block", fontSize: "14px" }}>
+                                    Late Travel Response Detected — Reallocation Required
+                                </strong>
+                                <span style={{ color: "#78350f", fontSize: "13px" }}>
+                                    Student responded after the plan was confirmed. Click "Regenerate Manual Plan" to recalculate allocations, then approve to finalize and write to MongoDB.
+                                </span>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={handleRegenerateManualPlan}
+                            disabled={regenerating || loading}
+                            style={{ whiteSpace: "nowrap", fontWeight: "600", padding: "8px 14px" }}
+                        >
+                            {regenerating ? "Regenerating..." : "🔄 Regenerate Plan"}
+                        </button>
+                    </div>
+                )}
+
                 {/* Warnings Banner */}
                 {warnings.length > 0 && routes.length > 0 && (
                     <div className="warnings-banner">
@@ -282,22 +356,34 @@ const AdminManualPlan = () => {
                 <div className="actions-row">
                     <button
                         type="button"
-                        className={`btn-approve-primary ${isApproved ? "is-approved" : ""}`}
+                        className={`btn-approve-primary ${isApproved && !hasLateResponses ? "is-approved" : ""}`}
                         onClick={handleApprove}
-                        disabled={loading || approving || isApproved || !isSubmitted || routes.length === 0}
+                        disabled={loading || approving || (isApproved && !hasLateResponses) || routes.length === 0}
                     >
                         {approving
                             ? `⏳ Approving & Allocating ${direction} Plan...`
-                            : isApproved
+                            : (isApproved && !hasLateResponses)
                                 ? `✓ ${direction} Manual Plan Approved & Active in MongoDB`
-                                : `✓ Approve ${direction} Manual Plan`}
+                                : hasLateResponses
+                                    ? `⚡ Approve & Allocate Updated ${direction} Plan`
+                                    : `✓ Approve ${direction} Manual Plan`}
+                    </button>
+
+                    <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleRegenerateManualPlan}
+                        disabled={loading || approving || regenerating || routes.length === 0}
+                        title="Recalculate allocations with current student demand, including late responses"
+                    >
+                        {regenerating ? "🔄 Regenerating..." : "🔄 Regenerate Manual Plan"}
                     </button>
 
                     <button
                         type="button"
                         className="btn-reset-allocations"
                         onClick={() => setShowResetModal(true)}
-                        disabled={resetting || approving || !isApproved}
+                        disabled={resetting || approving || routes.length === 0}
                         title="Remove student allocations while preserving manual routes"
                     >
                         {resetting ? "Resetting..." : "Reset Manual Plan Allocations"}
@@ -371,7 +457,7 @@ const AdminManualPlan = () => {
                 <div style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>
                     Loading manual plan data...
                 </div>
-            ) : (!isSubmitted && !isApproved) ? (
+            ) : routes.length === 0 ? (
                 <div className="empty-plan-card">
                     <div className="empty-icon">📋</div>
                     <h3 className="empty-title">

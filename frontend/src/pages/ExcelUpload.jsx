@@ -62,8 +62,8 @@ function ExcelUpload() {
 
     return (
         <div style={styles.container}>
-            <button className="back-btn" onClick={() => navigate(-1)}>
-                ← Back
+            <button className="back-btn" onClick={() => navigate("/users")}>
+                ← Back to Users
             </button>
 
             <div style={styles.card}>
@@ -79,13 +79,16 @@ function ExcelUpload() {
                     Import User Dataset into MongoDB for AI Route Optimization
                 </p>
 
-                {/* Required Columns Info */}
+                {/* Supported Columns Info */}
                 <div style={styles.formatBox}>
                     <div style={styles.formatHeader}>
-                        Required Excel Columns:
+                        Supported Excel Format:
                     </div>
                     <div style={styles.columnsText}>
-                        userId, name, stoppings, city, state, country
+                        User ID, Name, Phone Number, Stopping Area, Travel Status
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                        Phone Number and Travel Status are optional
                     </div>
                 </div>
 

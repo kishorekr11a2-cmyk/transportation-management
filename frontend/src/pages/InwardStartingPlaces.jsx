@@ -228,7 +228,7 @@ const InwardStartingPlaces = () => {
                 <div className="inward-places-header__left">
                     <button
                         className="inward-places-back-btn"
-                        onClick={() => navigate(-1)}
+                        onClick={() => navigate("/admin-dashboard")}
                         aria-label="Go back"
                     >
                         <HiArrowLeft size={16} />

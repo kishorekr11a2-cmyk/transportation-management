@@ -15,21 +15,18 @@ const validateExcelRowHeaders = (sheet) => {
     );
 
     const REQUIRED_COLUMNS = [
-        { field: "userId", aliases: ["userid", "user_id", "id"] },
-        { field: "name", aliases: ["name", "studentname", "username"] },
-        { field: "stoppings", aliases: ["stoppings", "stopping", "stop", "stoppingarea"] },
-        { field: "city", aliases: ["city"] },
-        { field: "state", aliases: ["state"] },
-        { field: "country", aliases: ["country"] }
+        { field: "userId", aliases: ["userid", "user_id", "id", "user id"] },
+        { field: "name", aliases: ["name", "studentname", "username", "student name", "user name"] },
+        { field: "stoppings", aliases: ["stoppings", "stopping", "stop", "stoppingarea", "stopping area"] }
     ];
 
     for (const reqCol of REQUIRED_COLUMNS) {
-        const hasCol = reqCol.aliases.some((alias) => rowKeys.includes(alias));
+        const hasCol = reqCol.aliases.some((alias) => rowKeys.includes(alias.toLowerCase().replace(/[\s_-]/g, "")));
         if (!hasCol) {
             return {
                 isValid: false,
                 missingField: reqCol.field,
-                error: `Missing required column: ${reqCol.field}. Required columns: userId, name, stoppings, city, state, country.`
+                error: `Missing required column: ${reqCol.field}. Required columns: User ID, Name, Stopping Area.`
             };
         }
     }
@@ -51,30 +48,30 @@ test("Excel Import 1: Valid 6-Column Excel Structure Verification", () => {
     assert.equal(result.data.length, 3);
 });
 
-test("Excel Import 2: District is NOT Required (6-Column Upload Succeeds Without District)", () => {
-    const rowsWithoutDistrict = [
-        { userId: "USR001", name: "Arun Kumar", stoppings: "Narimedu", city: "Madurai", state: "Tamil Nadu", country: "India" }
+test("Excel Import 2: City and State are NOT Required (Upload Succeeds Without City or State)", () => {
+    const rowsWithoutCityState = [
+        { "User ID": "USR001", "Name": "Arun Kumar", "Stopping Area": "Narimedu", "Phone Number": "9876543210", "Travel Status": "Pending" }
     ];
 
-    const worksheet = xlsx.utils.json_to_sheet(rowsWithoutDistrict);
+    const worksheet = xlsx.utils.json_to_sheet(rowsWithoutCityState);
     const result = validateExcelRowHeaders(worksheet);
 
-    assert.equal(result.isValid, true, "Excel upload without district column must succeed");
-    assert.equal(result.data[0].userId, "USR001");
+    assert.equal(result.isValid, true, "Excel upload without city or state must succeed");
+    assert.equal(result.data[0]["User ID"], "USR001");
 });
 
-test("Excel Import 3: Reject Missing Required Column (e.g. Missing 'country')", () => {
+test("Excel Import 3: Reject Missing Required Column (e.g. Missing 'stoppings')", () => {
     const invalidRows = [
-        // Missing country
-        { userId: "USR001", name: "Arun Kumar", stoppings: "Anna Nagar", city: "Madurai", state: "Tamil Nadu" }
+        // Missing stoppings
+        { userId: "USR001", name: "Arun Kumar" }
     ];
 
     const worksheet = xlsx.utils.json_to_sheet(invalidRows);
     const result = validateExcelRowHeaders(worksheet);
 
     assert.equal(result.isValid, false);
-    assert.equal(result.missingField, "country");
-    assert.ok(result.error.includes("Missing required column: country"));
+    assert.equal(result.missingField, "stoppings");
+    assert.ok(result.error.includes("Missing required column: stoppings"));
 });
 
 test("Excel Import 4: Automatic Assignment of travelStatus = 'Coming'", () => {

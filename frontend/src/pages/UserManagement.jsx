@@ -47,6 +47,7 @@ function UserManagement() {
     const [newUser, setNewUser] = useState({
         userId: "",
         name: "",
+        phoneNumber: "",
         stoppings: "",
         city: "",
         district: "",
@@ -573,6 +574,7 @@ function UserManagement() {
                 setNewUser({
                     userId: "",
                     name: "",
+                    phoneNumber: "",
                     stoppings: "",
                     city: "",
                     district: "",
@@ -656,7 +658,7 @@ function UserManagement() {
     if (fetchError && users.length === 0 && !loading) {
         return (
             <div className="user-page-container">
-                <button className="user-back-btn" onClick={() => navigate(-1)}>
+                <button className="user-back-btn" onClick={() => navigate("/admin-dashboard")}>
                     ← Back
                 </button>
                 <div className="user-error-state">
@@ -721,7 +723,7 @@ function UserManagement() {
 
             {/* Top Navigation */}
             <div className="user-top-nav">
-                <button className="user-back-btn" onClick={() => navigate(-1)}>
+                <button className="user-back-btn" onClick={() => navigate("/admin-dashboard")}>
                     ← Back
                 </button>
                 <div className="user-nav-actions">
@@ -1598,17 +1600,29 @@ function UserManagement() {
                                     </div>
                                 </div>
 
-                                <div className="form-group">
-                                    <label htmlFor="add-user-status">Initial Travel Status</label>
-                                    <select
-                                        id="add-user-status"
-                                        value={newUser.travelStatus}
-                                        onChange={(e) => setNewUser({ ...newUser, travelStatus: e.target.value })}
-                                    >
-                                        <option value="Coming">🟢 Coming</option>
-                                        <option value="Pending">🟡 Pending</option>
-                                        <option value="Not Coming">🔴 Not Coming</option>
-                                    </select>
+                                <div className="form-grid-two-col">
+                                    <div className="form-group">
+                                        <label htmlFor="add-user-phone">Phone Number (Optional)</label>
+                                        <input
+                                            id="add-user-phone"
+                                            type="tel"
+                                            placeholder="e.g. 9876543210"
+                                            value={newUser.phoneNumber}
+                                            onChange={(e) => setNewUser({ ...newUser, phoneNumber: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="form-group">
+                                        <label htmlFor="add-user-status">Initial Travel Status</label>
+                                        <select
+                                            id="add-user-status"
+                                            value={newUser.travelStatus}
+                                            onChange={(e) => setNewUser({ ...newUser, travelStatus: e.target.value })}
+                                        >
+                                            <option value="Coming">🟢 Coming</option>
+                                            <option value="Pending">🟡 Pending</option>
+                                            <option value="Not Coming">🔴 Not Coming</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
 

@@ -6,14 +6,12 @@ import {
   HiArrowRight,
   HiExclamationTriangle,
   HiXMark,
-  HiClipboardDocumentCheck,
   HiCheckBadge,
+  HiPaperAirplane,
 } from "react-icons/hi2";
 import {
   MdDirectionsBus,
   MdRoute,
-  MdCalendarMonth,
-  MdUploadFile,
   MdLogout
 } from "react-icons/md";
 import { TbBrandOpenai } from "react-icons/tb";
@@ -244,21 +242,21 @@ const AdminDashboard = () => {
         </Link>
 
         {/* ── Vehicles — primary card ── */}
-        <Link to="/vehicles" className="bento-card bento-card--vehicles" aria-label="Open Vehicle Management">
+        <Link to="/vehicles" className="bento-card bento-card--vehicles" aria-label="Open Vehicles & Schedule Management">
           <div className="bento-card__header">
             <div className="bento-card__icon-wrap" aria-hidden="true">
               <MdDirectionsBus size={28} />
             </div>
-            <span className="bento-card__tag">Fleet</span>
+            <span className="bento-card__tag">Fleet &amp; Schedules</span>
           </div>
           <div className="bento-card__body">
             <h3 className="bento-card__title">Vehicles</h3>
             <p className="bento-card__desc">
-              Manage the transportation fleet and vehicle configuration.
+              Manage fleet vehicles, capacities, and daily schedule availability.
             </p>
           </div>
           <div className="bento-card__action">
-            <span className="bento-card__action-text">Open Management</span>
+            <span className="bento-card__action-text">Open Fleet &amp; Schedules</span>
             <span className="bento-card__arrow" aria-hidden="true">
               <HiArrowRight size={16} />
             </span>
@@ -277,7 +275,7 @@ const AdminDashboard = () => {
           <div className="bento-card__body">
             <h3 className="bento-card__title">Routes</h3>
             <p className="bento-card__desc">
-              Create and manage manual transportation routes and stops.
+              Create and manage manual transportation routes, assign buses, and submit plans.
             </p>
           </div>
           <div className="bento-card__action">
@@ -288,70 +286,49 @@ const AdminDashboard = () => {
           </div>
         </Link>
 
-        {/* ── Schedule — secondary card ── */}
-        <Link to="/schedule" className="bento-card bento-card--schedule" aria-label="Open Schedule Management">
+        {/* ── Final Plan Confirmation ── */}
+        <Link to="/admin/plan-confirmation" className="bento-card bento-card--confirmation" aria-label="Open Plan Confirmation">
           <div className="bento-card__header">
             <div className="bento-card__icon-wrap" aria-hidden="true">
-              <MdCalendarMonth size={26} />
+              <HiCheckBadge size={26} />
             </div>
-            <span className="bento-card__tag">Schedule</span>
+            <span className="bento-card__tag">Confirm</span>
           </div>
           <div className="bento-card__body">
-            <h3 className="bento-card__title">Schedule</h3>
+            <h3 className="bento-card__title">Final Decision</h3>
             <p className="bento-card__desc">
-              Manage bus timings and vehicle schedule availability.
+              Review and confirm the official operational transportation plan for dispatch.
             </p>
           </div>
           <div className="bento-card__action">
-            <span className="bento-card__action-text">Open Schedule</span>
+            <span className="bento-card__action-text">Confirm Plan</span>
             <span className="bento-card__arrow" aria-hidden="true">
               <HiArrowRight size={16} />
             </span>
           </div>
         </Link>
 
-        {/* ── Excel Upload — utility card ── */}
-        <Link to="/excel-upload" className="bento-card bento-card--excel" aria-label="Open Excel Upload">
+        {/* ── Automation card ── */}
+        <Link to="/admin/automation" className="bento-card bento-card--automation" aria-label="Open Automation">
           <div className="bento-card__header">
             <div className="bento-card__icon-wrap" aria-hidden="true">
-              <MdUploadFile size={26} />
+              <HiPaperAirplane size={26} />
             </div>
-            <span className="bento-card__tag">Import</span>
+            <span className="bento-card__tag">Automation</span>
           </div>
           <div className="bento-card__body">
-            <h3 className="bento-card__title">Excel Upload</h3>
+            <h3 className="bento-card__title">Automation</h3>
             <p className="bento-card__desc">
-              Import transportation user data from Excel.
+              Trigger automated WhatsApp travel status notifications for registered passengers via n8n.
             </p>
           </div>
           <div className="bento-card__action">
-            <span className="bento-card__action-text">Upload Data</span>
+            <span className="bento-card__action-text">Open Automation</span>
             <span className="bento-card__arrow" aria-hidden="true">
               <HiArrowRight size={16} />
             </span>
           </div>
-        </Link>
-
-        {/* ── Admin Manual Plan ── */}
-        <Link to="/admin/manual-plan" className="bento-card bento-card--manual-plan" aria-label="Open Admin Manual Plan">
-          <div className="bento-card__header">
-            <div className="bento-card__icon-wrap" aria-hidden="true">
-              <HiClipboardDocumentCheck size={26} />
-            </div>
-            <span className="bento-card__tag">Manual</span>
-          </div>
-          <div className="bento-card__body">
-            <h3 className="bento-card__title">Admin Manual Plan</h3>
-            <p className="bento-card__desc">
-              Review, approve, and manage submitted manual routes for outward and inward trips.
-            </p>
-          </div>
-          <div className="bento-card__action">
-            <span className="bento-card__action-text">Review Manual Plan</span>
-            <span className="bento-card__arrow" aria-hidden="true">
-              <HiArrowRight size={16} />
-            </span>
-          </div>
+          <div className="bento-card__deco" aria-hidden="true" />
         </Link>
 
         {/* ── AI Agent — featured card ── */}
@@ -377,28 +354,6 @@ const AdminDashboard = () => {
           </div>
           <div className="bento-card__action">
             <span className="bento-card__action-text">Launch AI Agent</span>
-            <span className="bento-card__arrow" aria-hidden="true">
-              <HiArrowRight size={16} />
-            </span>
-          </div>
-        </Link>
-
-        {/* ── Final Plan Confirmation ── */}
-        <Link to="/admin/plan-confirmation" className="bento-card bento-card--confirmation" aria-label="Open Plan Confirmation">
-          <div className="bento-card__header">
-            <div className="bento-card__icon-wrap" aria-hidden="true">
-              <HiCheckBadge size={26} />
-            </div>
-            <span className="bento-card__tag">Confirm</span>
-          </div>
-          <div className="bento-card__body">
-            <h3 className="bento-card__title">Final Decision</h3>
-            <p className="bento-card__desc">
-              Compare AI Recommendations with Admin Manual Plan and confirm the official operational plan.
-            </p>
-          </div>
-          <div className="bento-card__action">
-            <span className="bento-card__action-text">Confirm Plan</span>
             <span className="bento-card__arrow" aria-hidden="true">
               <HiArrowRight size={16} />
             </span>

@@ -824,6 +824,14 @@ export const approveManualPlan = async (req, res) => {
             allocationMode: "MANUAL"
         });
 
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                code: result.code || "PLAN_APPROVAL_FAILED",
+                message: result.message || `Unable to approve manual ${canonicalDirection} transportation plan.`
+            });
+        }
+
         clearActiveApprovedPlansCache();
         clearActiveAIPlanCache(canonicalDirection);
         clearAIDataCache();
@@ -1019,9 +1027,14 @@ export const confirmManualPlan = async (req, res) => {
             });
         }
 
-        const plan = await buildManualTransportationPlan({ direction: canonicalDirection });
+        const plan = await buildManualTransportationPlan({
+            direction: canonicalDirection,
+            allocationMode: "MANUAL",
+            forceAllocate: true
+        });
 
         // Record the confirmed/submitted plan state and pre-calculated buses in MongoDB
+        let saveResult = null;
         if (mongoose.connection?.db) {
             await mongoose.connection.db.collection("manual_plan_submissions").updateOne(
                 {
@@ -1038,7 +1051,8 @@ export const confirmManualPlan = async (req, res) => {
                         submittedAt: new Date(),
                         totalAssignedRoutes: validAssignedRoutes.length,
                         routeIds: validAssignedRoutes.map((r) => r._id),
-                        buses: plan.buses || []
+                        buses: plan.buses || [],
+                        plan
                     },
                     $unset: {
                         resetAt: ""
@@ -1058,8 +1072,34 @@ export const confirmManualPlan = async (req, res) => {
                 },
                 { $set: { isSubmitted: true, confirmedAt: new Date() } }
             );
+
+            const existingApproved = await mongoose.connection.db.collection("ai_selected_plans").findOne({
+                active: true,
+                status: "active",
+                approved: true,
+                $or: [
+                    { direction: canonicalDirection },
+                    { tripMode: canonicalDirection },
+                    { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                    { "plan.direction": canonicalDirection },
+                    { "plan.tripMode": canonicalDirection }
+                ]
+            });
+
+            if (existingApproved || req.body?.approve === true || req.body?.allocate === true) {
+                // If a transportation plan was already approved in this direction or explicit allocation is requested,
+                // confirming the regenerated plan updates the authoritative active plan and persists allocations to User documents.
+                saveResult = await saveSelectedPlan({
+                    planType: "ADMIN",
+                    direction: canonicalDirection,
+                    tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION",
+                    plan,
+                    allocationMode: "MANUAL"
+                });
+            }
         }
 
+        clearActiveApprovedPlansCache();
         clearActiveAIPlanCache(canonicalDirection);
         clearAIDataCache();
         invalidateRouteAllocationCache(canonicalDirection);
@@ -1069,13 +1109,103 @@ export const confirmManualPlan = async (req, res) => {
             message: `Admin manual ${canonicalDirection} plan with ${assignedRoutes.length} assigned routes confirmed and submitted to AI Route Management!`,
             direction: canonicalDirection,
             totalAssignedRoutes: assignedRoutes.length,
-            plan
+            plan: saveResult?.plan || plan,
+            saveResult
         });
     } catch (error) {
         console.error("Confirm manual plan error:", error);
         res.status(500).json({
             success: false,
             message: error.message || "Unable to confirm manual plan."
+        });
+    }
+};
+
+// ======================================
+// REGENERATE MANUAL TRANSPORTATION PLAN (Review Preview)
+// ======================================
+
+export const regenerateManualPlan = async (req, res) => {
+    try {
+        const direction = req.body.direction || req.query.direction || "INWARD";
+        const canonicalDirection = (String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD";
+
+        const assignedRoutes = await Route.find({
+            $or: [
+                { direction: canonicalDirection },
+                { direction: canonicalDirection.toLowerCase() },
+                { direction: new RegExp(`^${canonicalDirection}$`, "i") },
+                { direction: "BOTH" }
+            ],
+            assignedVehicle: { $ne: null }
+        })
+            .populate("assignedVehicle", "vehicleName capacity vehicleNumber")
+            .lean();
+
+        const validAssignedRoutes = (assignedRoutes || []).filter(
+            (r) => Boolean(r.assignedVehicle && (r.assignedVehicle.vehicleName || r.assignedVehicle._id || r.vehicleName))
+        );
+
+        if (!validAssignedRoutes || validAssignedRoutes.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: `No routes with assigned buses found for ${canonicalDirection}. Please assign a bus to at least one ${canonicalDirection} route before regenerating.`
+            });
+        }
+
+        // Recalculate plan with current eligible demand including late responses
+        const plan = await buildManualTransportationPlan({
+            direction: canonicalDirection,
+            allocationMode: "MANUAL",
+            forceAllocate: true
+        });
+
+        // Update manual_plan_submissions with the newly regenerated draft plan
+        if (mongoose.connection?.db) {
+            await mongoose.connection.db.collection("manual_plan_submissions").updateOne(
+                {
+                    $or: [
+                        { direction: canonicalDirection },
+                        { direction: canonicalDirection.toLowerCase() }
+                    ]
+                },
+                {
+                    $set: {
+                        direction: canonicalDirection,
+                        isSubmitted: true,
+                        status: "active",
+                        regeneratedAt: new Date(),
+                        submittedAt: new Date(),
+                        totalAssignedRoutes: validAssignedRoutes.length,
+                        routeIds: validAssignedRoutes.map((r) => r._id),
+                        buses: plan.buses || [],
+                        plan
+                    },
+                    $unset: {
+                        resetAt: ""
+                    }
+                },
+                { upsert: true }
+            );
+        }
+
+        clearActiveAIPlanCache(canonicalDirection);
+        clearAIDataCache();
+        invalidateRouteAllocationCache(canonicalDirection);
+
+        res.json({
+            success: true,
+            isDraft: true,
+            message: `Admin manual ${canonicalDirection} plan regenerated with latest demand! Review proposed allocations before confirming.`,
+            direction: canonicalDirection,
+            totalAssignedRoutes: validAssignedRoutes.length,
+            plan
+        });
+    } catch (error) {
+        console.error("Regenerate manual plan error:", error);
+        res.status(500).json({
+            success: false,
+            message: error.message || "Unable to regenerate manual plan."
         });
     }
 };

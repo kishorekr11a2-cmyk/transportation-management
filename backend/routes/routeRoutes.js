@@ -12,6 +12,7 @@ import {
     getManualPlan,
     getManualPlanRecommendations,
     confirmManualPlan,
+    regenerateManualPlan,
     approveManualPlan,
     resetManualPlan,
     resetManualAllocations
@@ -42,6 +43,13 @@ router.post(
     authMiddleware,
     adminMiddleware,
     confirmManualPlan
+);
+
+router.post(
+    "/regenerate-plan",
+    authMiddleware,
+    adminMiddleware,
+    regenerateManualPlan
 );
 
 router.post(

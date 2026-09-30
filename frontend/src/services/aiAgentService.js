@@ -110,6 +110,20 @@ export const getActivePlan = async (params = {}) => {
 };
 
 /* -------------------------------------------------------
+   GET PLAN PERSISTENT STATUS (INWARD & OUTWARD)
+------------------------------------------------------- */
+
+export const getPlanStatus = async (params = {}) => {
+    const response = await api.get("/ai-agent/status", {
+        params: {
+            ...params,
+            _t: Date.now()
+        }
+    });
+    return response.data;
+};
+
+/* -------------------------------------------------------
    RESET AI PLAN & STUDENT TRAVEL STATUSES
 ------------------------------------------------------- */
 
@@ -119,8 +133,18 @@ export const resetAIPlan = async (payload = {}) => {
 };
 
 /* -------------------------------------------------------
-   SAVE FINAL PLAN
+   SAVE / SUBMIT / CONFIRM AI PLAN (PENDING APPROVAL)
 ------------------------------------------------------- */
+
+export const confirmAIPlan = async (payload) => {
+    const response = await api.post("/ai-agent/confirm-plan", payload);
+    return response.data;
+};
+
+export const approveAIPlan = async (payload) => {
+    const response = await api.post("/ai-agent/approve-plan", payload);
+    return response.data;
+};
 
 export const saveSelectedPlan = async (payload) => {
     const response = await api.post("/ai-agent/select-plan", payload);
@@ -156,6 +180,11 @@ export const getManualPlan = async (params = {}) => {
 
 export const confirmManualPlan = async (payload = {}) => {
     const response = await api.post("/routes/confirm-plan", payload);
+    return response.data;
+};
+
+export const regenerateManualPlan = async (payload = {}) => {
+    const response = await api.post("/routes/regenerate-plan", payload);
     return response.data;
 };
 
@@ -263,6 +292,7 @@ export default {
     getManualPlan,
     getManualPlanRecommendations,
     confirmManualPlan,
+    regenerateManualPlan,
     approveManualPlan,
     resetManualPlan,
     resetManualPlanAllocations,
@@ -270,7 +300,10 @@ export default {
     resolveLocation,
     generateRecommendations,
     getActivePlan,
+    getPlanStatus,
     resetAIPlan,
+    confirmAIPlan,
+    approveAIPlan,
     saveSelectedPlan,
     getSelectedPlan,
     isValidCoordinate,

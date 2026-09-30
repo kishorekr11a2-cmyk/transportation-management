@@ -1,0 +1,141 @@
+[
+  {
+    "updatedAt": "2026-09-29T15:06:01.504Z",
+    "createdAt": "2026-09-28T05:49:04.455Z",
+    "id": "olp5BZ1OLe5XQMeU",
+    "name": "My workflow",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "transport/send-travel-status",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          16
+        ],
+        "id": "dcf40fad-a782-4980-8f4a-3c782c3c64d9",
+        "name": "Webhook",
+        "webhookId": "0579cdc8-9c80-4a65-985a-b4bd8eae84ec"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Retrieve payload from webhook body\nconst body = $input.first().json.body || $input.first().json;\nlet rawUsers = [];\n\nif (Array.isArray(body?.users) && body.users.length > 0) {\n  rawUsers = body.users;\n} else if (body?.phoneNumber) {\n  rawUsers = [body];\n}\n\n// Deduplicate phone numbers within this run\nconst seen = new Set();\nconst items = [];\n\nfor (const u of rawUsers) {\n  if (!u || !u.phoneNumber) continue;\n  const digits = String(u.phoneNumber).replace(/\\D/g, '');\n  if (!digits || digits.length < 10 || seen.has(digits)) continue;\n  seen.add(digits);\n\n  const phone = String(u.phoneNumber).trim();\n  const msg = String(u.message || '').trim();\n\n  items.push({\n    json: {\n      body: {\n        phoneNumber: phone,\n        message: msg,\n        userId: u.userId || '',\n        name: u.name || ''\n      },\n      phoneNumber: phone,\n      message: msg,\n      userId: u.userId || '',\n      name: u.name || ''\n    }\n  });\n}\n\nreturn items;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          16
+        ],
+        "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+        "name": "Process Eligible Students"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://localhost:5000/api/whatsapp/send",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "phoneNumber",
+                "value": "={{ $json.body.phoneNumber }}"
+              },
+              {
+                "name": "message",
+                "value": "={{ $json.body.message }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          448,
+          16
+        ],
+        "id": "8d02b1a7-58c7-4d5d-926f-74d6d3f7e769",
+        "name": "HTTP Request",
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Process Eligible Students",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Eligible Students": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request": {
+        "main": [
+          []
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "binaryMode": "separate",
+      "availableInMCP": false
+    },
+    "staticData": null,
+    "meta": {
+      "templateCredsSetupCompleted": true
+    },
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "fa729415-25ea-4548-8ed2-3f1dae309b2d",
+    "activeVersionId": "fa729415-25ea-4548-8ed2-3f1dae309b2d",
+    "versionCounter": 101,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-28T05:49:04.460Z",
+        "createdAt": "2026-09-28T05:49:04.460Z",
+        "role": "workflow:owner",
+        "workflowId": "olp5BZ1OLe5XQMeU",
+        "projectId": "egilJq4XtBS537cg",
+        "project": {
+          "updatedAt": "2026-09-28T05:38:07.106Z",
+          "createdAt": "2026-09-28T05:34:31.791Z",
+          "id": "egilJq4XtBS537cg",
+          "name": "Kishore K R <kishore.k.r11a2@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "ef9e488d-b846-4743-800a-4518fcbb51c5"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "Version fa729415",
+      "description": ""
+    }
+  }
+]

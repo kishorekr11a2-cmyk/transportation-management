@@ -6,6 +6,8 @@ import {
     getActivePlan,
     getManualPlan,
     saveSelectedPlan,
+    confirmAIPlan,
+    approveAIPlan,
     confirmAndAllocatePlan,
     approveManualPlan,
     getAIData
@@ -132,13 +134,42 @@ const PlanConfirmation = () => {
                 const total = Array.isArray(d.students) ? d.students.length : (d.summary?.totalStudents ?? coming);
                 setInwardAttendance({ comingStudents: coming, totalStudents: total });
             }
+
+            // Auto-detect planType based on persistent MongoDB lifecycle priority if not explicitly specified in URL
+            if (!urlPlanType) {
+                const getPlanRank = (p) => {
+                    if (!p) return 0;
+                    if (p.isApproved === true || p.approved === true || (p.status === "active" && p.approvedAt)) return 3; // Approved & Assigned
+                    if (p.isSubmitted === true || p.status === "pending_approval" || p.status === "submitted") return 2; // Pending approval
+                    const bList = Array.isArray(p.buses) ? p.buses : (Array.isArray(p.routes) ? p.routes : []);
+                    if (bList.length > 0 || p.status === "generated") return 1; // Generated
+                    return 0;
+                };
+
+                const curDir = direction === "INWARD" ? "INWARD" : "OUTWARD";
+                const aiP = (curDir === "INWARD")
+                    ? (inwardAiRes.status === "fulfilled" && inwardAiRes.value?.success ? (inwardAiRes.value.inwardPlan || inwardAiRes.value.plan) : null)
+                    : (outwardAiRes.status === "fulfilled" && outwardAiRes.value?.success ? (outwardAiRes.value.outwardPlan || outwardAiRes.value.plan) : null);
+                const manP = (curDir === "INWARD")
+                    ? (inwardManualRes.status === "fulfilled" && inwardManualRes.value?.success ? inwardManualRes.value.plan : null)
+                    : (outwardManualRes.status === "fulfilled" && outwardManualRes.value?.success ? outwardManualRes.value.plan : null);
+
+                const aiRank = getPlanRank(aiP);
+                const manRank = getPlanRank(manP);
+
+                if (manRank > aiRank) {
+                    setPlanType("ADMIN");
+                } else if (aiRank >= manRank && aiRank > 0) {
+                    setPlanType("AI");
+                }
+            }
         } catch (err) {
             console.error("Load Confirmation Data Error:", err);
             toast.error("Failed to load plan confirmation data from server.");
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [direction, urlPlanType]);
 
     useEffect(() => {
         loadConfirmationData();
@@ -156,6 +187,27 @@ const PlanConfirmation = () => {
             p.set("direction", newDir);
             return p;
         });
+
+        if (!urlPlanType) {
+            const getPlanRank = (p) => {
+                if (!p) return 0;
+                if (p.isApproved === true || p.approved === true || (p.status === "active" && p.approvedAt)) return 3;
+                if (p.isSubmitted === true || p.status === "pending_approval" || p.status === "submitted") return 2;
+                const bList = Array.isArray(p.buses) ? p.buses : (Array.isArray(p.routes) ? p.routes : []);
+                if (bList.length > 0 || p.status === "generated") return 1;
+                return 0;
+            };
+
+            const targetAi = (newDir === "INWARD") ? inwardAiPlan : outwardAiPlan;
+            const targetMan = (newDir === "INWARD") ? inwardManualPlan : outwardManualPlan;
+            const aiR = getPlanRank(targetAi);
+            const manR = getPlanRank(targetMan);
+            if (manR > aiR) {
+                setPlanType("ADMIN");
+            } else if (aiR >= manR && aiR > 0) {
+                setPlanType("AI");
+            }
+        }
     };
 
     const handlePlanTypeToggle = (type) => {
@@ -173,10 +225,8 @@ const PlanConfirmation = () => {
         if (isPendingMode) {
             try { sessionStorage.removeItem("pending_confirmation_plan"); } catch {}
             setPendingPlan(null);
-            navigate(planType === "ADMIN" ? "/admin/manual-plan" : "/ai-agent");
-            return;
         }
-        navigate(planType === "ADMIN" ? "/admin/manual-plan" : "/ai-agent");
+        navigate("/admin-dashboard");
     };
 
     // Calculate metrics for any plan
@@ -225,11 +275,21 @@ const PlanConfirmation = () => {
             ? allocated
             : (attendance?.comingStudents || attendance?.totalStudents || 0);
 
-        // A plan is truly confirmed/active ONLY when explicitly approved or selected
-        const isActive = !isPendingMode && Boolean(
+        const hasLate = Boolean(targetPlan.hasLateResponses || targetPlan.pendingReallocation);
+
+        // A plan is truly confirmed/active ONLY when explicitly approved or selected AND has no pending late responses
+        const isActive = !isPendingMode && !hasLate && Boolean(
             targetPlan.isApproved === true ||
             targetPlan.approved === true ||
             (targetPlan.status === "active" && targetPlan.approvedAt)
+        );
+
+        // A plan is pending approval when submitted but NOT yet approved, OR when approved plan has pending late responses
+        const isPendingApproval = !isActive && Boolean(
+            hasLate ||
+            targetPlan.isSubmitted === true ||
+            targetPlan.status === "pending_approval" ||
+            targetPlan.status === "submitted"
         );
 
         return {
@@ -239,6 +299,7 @@ const PlanConfirmation = () => {
             seats,
             allocated,
             isActive,
+            isPendingApproval,
             isAvailable: routesCount > 0 || seats > 0 || allocated > 0
         };
     };
@@ -263,6 +324,7 @@ const PlanConfirmation = () => {
             seats: outwardMetrics.seats + inwardMetrics.seats,
             allocated: outwardMetrics.allocated + inwardMetrics.allocated,
             isActive: outwardMetrics.isActive && inwardMetrics.isActive,
+            isPendingApproval: outwardMetrics.isPendingApproval || inwardMetrics.isPendingApproval,
             isAvailable: outwardMetrics.isAvailable || inwardMetrics.isAvailable
         };
     })();
@@ -276,6 +338,15 @@ const PlanConfirmation = () => {
         return false;
     })();
 
+    // Determine if current selection is submitted and pending approval
+    const isCurrentPlanPendingApproval = (() => {
+        if (isPendingMode) return false;
+        if (direction === "OUTWARD") return outwardMetrics.isPendingApproval;
+        if (direction === "INWARD") return inwardMetrics.isPendingApproval;
+        if (direction === "BOTH") return outwardMetrics.isPendingApproval || inwardMetrics.isPendingApproval;
+        return false;
+    })();
+
     // Stale Demand Check: plan marked stale by backend
     const activeTargetDoc = direction === "INWARD" ? inwardTargetDoc : outwardTargetDoc;
     const isPlanDemandStale = Boolean(
@@ -283,7 +354,7 @@ const PlanConfirmation = () => {
         (activeTargetDoc?.isStale === true || activeTargetDoc?.status === "stale")
     );
 
-    // Confirmation Handler
+    // Confirmation / Approval Handler
     const handleConfirm = async () => {
         if (isActionRunningRef.current || actionLoading || confirmLoading) return;
 
@@ -293,137 +364,72 @@ const PlanConfirmation = () => {
             return;
         }
 
-        // Pending Staged Mode confirmation
-        if (isPendingMode && pendingPlan) {
-            try {
-                isActionRunningRef.current = true;
-                setConfirmLoading(true);
-                setConfirmStep("Validating plan constraints & allocating students...");
-
-                const payload = {
-                    planType: pendingPlan.planType || planType || "AI",
-                    direction: pendingPlan.direction || direction || "INWARD",
-                    tripMode: pendingPlan.tripMode,
-                    plan: pendingPlan.plan,
-                    startingPoint: pendingPlan.startingPoint
-                };
-
-                const res = await confirmAndAllocatePlan(payload);
-                if (!res?.success) {
-                    throw new Error(res?.message || "Failed to confirm and allocate transportation plan.");
-                }
-
-                try { sessionStorage.removeItem("pending_confirmation_plan"); } catch {}
-                setPendingPlan(null);
-
-                setSearchParams((prev) => {
-                    const next = new URLSearchParams(prev);
-                    next.delete("pending");
-                    return next;
-                });
-
-                toast.success(`✓ ${payload.direction} plan confirmed and students allocated successfully!`);
-                await loadConfirmationData();
-            } catch (err) {
-                console.error("Confirm & allocate plan error:", err);
-                toast.error(err?.response?.data?.message || err?.message || "Failed to confirm plan.");
-            } finally {
-                isActionRunningRef.current = false;
-                setConfirmLoading(false);
-                setConfirmStep("");
-            }
-            return;
-        }
-
-        // Standard Confirmation / Activation Flow
         try {
             isActionRunningRef.current = true;
-            setActionLoading(true);
+            setConfirmLoading(true);
+            setConfirmStep("Approving plan and allocating students in database...");
 
-            if (direction === "OUTWARD") {
-                if (planType === "ADMIN") {
+            const targetDirection = (isPendingMode && pendingPlan?.direction) ? pendingPlan.direction : direction;
+            const targetPlanType = (isPendingMode && pendingPlan?.planType) ? pendingPlan.planType : planType;
+
+            if (targetDirection === "OUTWARD" || targetDirection === "BOTH") {
+                if (targetPlanType === "ADMIN") {
                     const res = await approveManualPlan({ direction: "OUTWARD" });
-                    if (!res?.success) throw new Error(res?.message || "Failed to approve Outward Manual plan.");
-                } else {
-                    const planPayload = outwardAiPlan?.aiPlan || outwardAiPlan;
-                    const res = await saveSelectedPlan({
+                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Outward Manual plan.");
+                } else if (outwardAiPlan || (isPendingMode && pendingPlan?.direction === "OUTWARD")) {
+                    const planPayload = (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.plan)
+                        ? pendingPlan.plan
+                        : (outwardAiPlan?.aiPlan || outwardAiPlan);
+                    const res = await approveAIPlan({
                         planType: "AI",
                         direction: "OUTWARD",
                         tripMode: "FROM_SOURCE",
                         plan: planPayload,
-                        planId: outwardAiPlan?._id || outwardAiPlan?.planId,
-                        startingPoint: outwardAiPlan?.startingPoint || null,
-                        allocationMode: "AI"
+                        planId: (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.planId) || outwardAiPlan?._id || outwardAiPlan?.planId,
+                        startingPoint: (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.startingPoint) || outwardAiPlan?.startingPoint || null
                     });
-                    if (!res?.success) throw new Error(res?.message || "Failed to activate Outward AI plan.");
+                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Outward AI plan.");
                 }
-                toast.success(`✓ Outward ${planType === "ADMIN" ? "Manual" : "AI"} plan confirmed & activated!`);
-            } else if (direction === "INWARD") {
-                if (planType === "ADMIN") {
+            }
+
+            if (targetDirection === "INWARD" || targetDirection === "BOTH") {
+                if (targetPlanType === "ADMIN") {
                     const res = await approveManualPlan({ direction: "INWARD" });
-                    if (!res?.success) throw new Error(res?.message || "Failed to approve Inward Manual plan.");
-                } else {
-                    const planPayload = inwardAiPlan?.aiPlan || inwardAiPlan;
-                    const res = await saveSelectedPlan({
+                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Inward Manual plan.");
+                } else if (inwardAiPlan || (isPendingMode && pendingPlan?.direction === "INWARD")) {
+                    const planPayload = (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.plan)
+                        ? pendingPlan.plan
+                        : (inwardAiPlan?.aiPlan || inwardAiPlan);
+                    const res = await approveAIPlan({
                         planType: "AI",
                         direction: "INWARD",
                         tripMode: "TO_DESTINATION",
                         plan: planPayload,
-                        planId: inwardAiPlan?._id || inwardAiPlan?.planId,
-                        startingPoint: inwardAiPlan?.startingPoint || null,
-                        allocationMode: "AI"
+                        planId: (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.planId) || inwardAiPlan?._id || inwardAiPlan?.planId,
+                        startingPoint: (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.startingPoint) || inwardAiPlan?.startingPoint || null
                     });
-                    if (!res?.success) throw new Error(res?.message || "Failed to activate Inward AI plan.");
+                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Inward AI plan.");
                 }
-                toast.success(`✓ Inward ${planType === "ADMIN" ? "Manual" : "AI"} plan confirmed & activated!`);
-            } else if (direction === "BOTH") {
-                if (planType === "ADMIN") {
-                    if (outwardMetrics.isAvailable) await approveManualPlan({ direction: "OUTWARD" });
-                    if (inwardMetrics.isAvailable) await approveManualPlan({ direction: "INWARD" });
-                } else {
-                    const outPayload = outwardAiPlan?.aiPlan || outwardAiPlan;
-                    const inPayload = inwardAiPlan?.aiPlan || inwardAiPlan;
-                    const activated = [];
-
-                    if (outwardMetrics.isAvailable && outPayload) {
-                        const outRes = await saveSelectedPlan({
-                            planType: "AI",
-                            direction: "OUTWARD",
-                            tripMode: "FROM_SOURCE",
-                            plan: outPayload,
-                            planId: outwardAiPlan?._id || outwardAiPlan?.planId,
-                            startingPoint: outwardAiPlan?.startingPoint || null,
-                            allocationMode: "AI"
-                        });
-                        if (outRes?.success) activated.push("Outward");
-                    }
-
-                    if (inwardMetrics.isAvailable && inPayload) {
-                        const inRes = await saveSelectedPlan({
-                            planType: "AI",
-                            direction: "INWARD",
-                            tripMode: "TO_DESTINATION",
-                            plan: inPayload,
-                            planId: inwardAiPlan?._id || inwardAiPlan?.planId,
-                            startingPoint: inwardAiPlan?.startingPoint || null,
-                            allocationMode: "AI"
-                        });
-                        if (inRes?.success) activated.push("Inward");
-                    }
-
-                    if (activated.length === 0) {
-                        throw new Error("No valid generated plan available to confirm.");
-                    }
-                }
-                toast.success(`✓ ${planType === "ADMIN" ? "Manual" : "AI"} plan confirmed & activated!`);
             }
+
+            toast.success(`✓ Plan approved & students allocated successfully in database!`);
+
+            try { sessionStorage.removeItem("pending_confirmation_plan"); } catch {}
+            setPendingPlan(null);
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("pending");
+                return next;
+            });
 
             await loadConfirmationData();
         } catch (err) {
-            console.error("Plan Confirmation Error:", err);
-            toast.error(err?.response?.data?.message || err?.message || "Failed to confirm transportation plan.");
+            console.error("Approve plan error:", err);
+            toast.error(err?.response?.data?.message || err?.message || "Failed to approve plan.");
         } finally {
             isActionRunningRef.current = false;
+            setConfirmLoading(false);
+            setConfirmStep("");
             setActionLoading(false);
         }
     };
@@ -439,6 +445,9 @@ const PlanConfirmation = () => {
                     </h3>
                     {metrics.isActive && (
                         <span className="compact-active-badge">✓ ACTIVE</span>
+                    )}
+                    {!metrics.isActive && metrics.isPendingApproval && (
+                        <span className="compact-pending-badge" style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "bold" }}>⏳ PENDING APPROVAL</span>
                     )}
                 </div>
 
@@ -461,7 +470,9 @@ const PlanConfirmation = () => {
                     </div>
                     <div className="stat-line">
                         <span className="stat-label">Allocated</span>
-                        <span className="stat-val font-numeric highlight-green">{metrics.allocated}</span>
+                        <span className={`stat-val font-numeric ${metrics.isActive ? "highlight-green" : ""}`} style={metrics.isPendingApproval ? { color: "#b45309", fontWeight: "600" } : {}}>
+                            {metrics.isActive ? `${metrics.allocated} / ${metrics.students}` : (metrics.isPendingApproval ? "Pending Approval" : "Not Allocated")}
+                        </span>
                     </div>
                 </div>
             </div>
@@ -617,7 +628,11 @@ const PlanConfirmation = () => {
                             </div>
                         </div>
                     )}
-                    <p className="confirmation-prompt">Confirm this transportation plan?</p>
+                    <p className="confirmation-prompt">
+                        {isCurrentPlanActive
+                            ? "This plan is already active and confirmed."
+                            : "Approve and activate this plan (allocates students in database)?"}
+                    </p>
                     <div className="confirmation-action-buttons">
                         <button
                             type="button"
@@ -627,6 +642,27 @@ const PlanConfirmation = () => {
                         >
                             ← Back
                         </button>
+
+                        {!isPendingMode && !activeMetrics.isAvailable && (
+                            <button
+                                type="button"
+                                className="btn-generate-new"
+                                onClick={() => navigate(planType === "ADMIN" ? "/routes" : "/ai-agent")}
+                                style={{
+                                    padding: "10px 18px",
+                                    fontSize: "14px",
+                                    fontWeight: "600",
+                                    background: "#2563eb",
+                                    color: "#ffffff",
+                                    border: "none",
+                                    borderRadius: "8px",
+                                    cursor: "pointer"
+                                }}
+                            >
+                                ⚡ Generate New Plan →
+                            </button>
+                        )}
+
                         <button
                             type="button"
                             className="btn-confirm-plan"
@@ -641,14 +677,14 @@ const PlanConfirmation = () => {
                             }
                         >
                             {confirmLoading || actionLoading
-                                ? "⏳ Confirming..."
+                                ? "⏳ Processing..."
                                 : isPlanDemandStale
                                     ? "⚠️ Plan Stale (Regeneration Required)"
                                     : isCurrentPlanActive
                                         ? "✓ Plan Active & Confirmed"
                                         : !activeMetrics.isAvailable && !isPendingMode
                                             ? "No Plan Generated"
-                                            : "✓ Confirm Plan"}
+                                            : "✓ Approve & Activate Plan"}
                         </button>
                     </div>
                 </div>

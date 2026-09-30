@@ -187,15 +187,9 @@
 }
 
 /*
-  Row 1: Users (col 1) | Vehicles (col 2)   → both equal, large
-  Row 2: Routes (col 1) | Schedule (col 2)  → both equal, medium
-  Row 3: Excel (col 1)  | AI Agent (col 2)  → excel smaller, AI larger
-*/
-
-/*
-  Card layout notes:
-  - Excel card (.bento-card--excel) stays in its natural 1-col grid cell
-  - AI card (.bento-card--ai) featured styling is defined in the AI Agent section below
+  Row 1: Users (col 1)      | Vehicles (col 2)
+  Row 2: Routes (col 1)     | Plan Confirmation (col 2)
+  Row 3: Automation (col 1) | AI Route Optimization (col 2)
 */
 
 /* ────────────────────────────────────────────────────
@@ -339,12 +333,12 @@
 }
 
 /* ────────────────────────────────────────────────────
-   AI AGENT CARD — Featured
+   AI AGENT CARD — AI Route Optimization
 ──────────────────────────────────────────────────── */
 .bento-card--ai {
   background: linear-gradient(145deg, #f0f7ff 0%, #eef2ff 50%, #f5f3ff 100%);
   border-color: rgba(99, 102, 241, 0.25);
-  min-height: 260px;
+  min-height: 220px;
 }
 
 .bento-card--ai:hover {
@@ -498,7 +492,7 @@
   }
 
   .bento-card--ai {
-    min-height: 220px;
+    min-height: 180px;
   }
 
   .bento-card__icon-wrap {

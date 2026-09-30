@@ -1,0 +1,32 @@
+{
+    "files.exclude": {
+        "**/node_modules": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/.git": true,
+        "**/.cache": true,
+        "**/coverage": true,
+        "**/logs": true,
+        "**/uploads": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/.git": true,
+        "**/.cache": true,
+        "**/coverage": true,
+        "**/logs": true,
+        "**/uploads": true
+    },
+    "files.watcherExclude": {
+        "**/node_modules/**": true,
+        "**/dist/**": true,
+        "**/build/**": true,
+        "**/.git/**": true,
+        "**/.cache/**": true,
+        "**/coverage/**": true,
+        "**/logs/**": true,
+        "**/uploads/**": true
+    }
+}
