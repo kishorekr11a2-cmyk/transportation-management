@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 dotenv.config();
 
-const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/college_bus_management";
+const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/college_bus_management";
 
 async function inspect() {
     try {

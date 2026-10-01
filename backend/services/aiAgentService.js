@@ -11,7 +11,7 @@ import { resolveLateResponsesForPlan, resolveLateResponsesForPreviousPlan, getAc
 import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 import { buildConsecutiveSegmentRoadGeometry } from "./roadMatrixService.js";
 import { recordActivatedPlanPerformance, seedHistoricalRoutesIfEmpty } from "./historicalRouteService.js";
-import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes } from "./routeOptimizationService.js";
+import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes, consolidateAndRebalanceLowOccupancyOutwardRoutes } from "./routeOptimizationService.js";
 import { ML_SYSTEM_STATUS } from "./mlPredictionService.js";
 
 /*
@@ -4909,6 +4909,19 @@ export const buildAIPlan = async ({
     chosenBuses = continuityRepairResult.buses;
     const continuityUnallocated = continuityRepairResult.unallocatedPassengers || [];
 
+    // Outward Post-Continuity Fleet Consolidation & Passenger Rebalancing (Requirements 4, 5, 6, 7, 21, 22)
+    // If continuity repair introduced a low-occupancy fallback bus (or an under-utilized bus remains),
+    // evaluate whether its stops can be continuously absorbed into adjacent corridor routes.
+    if (effectiveTripMode === "FROM_SOURCE" && chosenBuses.length > 1) {
+        chosenBuses = consolidateAndRebalanceLowOccupancyOutwardRoutes({
+            routes: chosenBuses,
+            availableVehicles,
+            sourceHub: resolvedSourceHub || anchorHub,
+            matrix: globalOpt?.matrix,
+            tripMode: effectiveTripMode,
+            auditTrail: chosenAudit
+        });
+    }
 
     // INWARD VALIDATION: Validate starting location for EACH EXACT SELECTED BUS
     if (effectiveTripMode === "TO_DESTINATION" && chosenBuses.length > 0) {

@@ -2766,33 +2766,177 @@ export const selectInwardFleet = ({
 };
 
 /**
- * Balances passenger demands across inward candidate routes to match the capacities
+ * Hard-Constraint Outward Fleet Selection Engine with Soft-Objective Vehicle Reuse.
+ * 
+ * Hard Constraints:
+ * 1. 100% Demand coverage (minimum fleet capacity >= demand)
+ * 2. Active/scheduled vehicle eligibility (capacity > 0, active status)
+ * 3. Mathematical minimum bus count: Math.ceil(demand / maxUsableCapacity)
+ * 
+ * Soft Objectives:
+ * 4. Prefer reusing vehicles from Inward operation (without shrinking fleet below requirement)
+ * 5. Consolidate into the minimum number of feasible high-capacity buses to avoid empty/low-occupancy buses.
+ */
+export const selectOutwardFleet = ({
+    totalComingPassengers = 0,
+    availableVehicles = [],
+    oppositePlan = null,
+    preferredVehicleIds = []
+}) => {
+    // 1. HARD CONSTRAINT: Filter eligible active outward buses with capacity > 0
+    const eligibleOutwardBuses = (availableVehicles || []).filter((v) => {
+        const cap = Number(v.capacity || v.seatCapacity || 0);
+        if (cap <= 0) return false;
+        if (v.isActive === false || String(v.status || "").toUpperCase() === "INACTIVE") return false;
+        return true;
+    });
+
+    const maxUsableCapacity = eligibleOutwardBuses.length > 0
+        ? Math.max(...eligibleOutwardBuses.map((b) => Number(b.capacity || b.seatCapacity || 0)))
+        : 70;
+
+    // 2. HARD CONSTRAINT: Minimum buses required to meet demand mathematically (greedy accumulation by capacity)
+    const sortedByCapDesc = [...eligibleOutwardBuses].sort((a, b) =>
+        Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0)
+    );
+    let accumulatedCap = 0;
+    let minimumBusCount = 0;
+    for (const b of sortedByCapDesc) {
+        accumulatedCap += Number(b.capacity || b.seatCapacity || 0);
+        minimumBusCount++;
+        if (accumulatedCap >= totalComingPassengers) break;
+    }
+    if (minimumBusCount === 0 && totalComingPassengers > 0) {
+        minimumBusCount = Math.max(1, Math.ceil(totalComingPassengers / maxUsableCapacity));
+    }
+
+    // 3. SOFT PREFERENCE: Identify reusable inward vehicles (from opposite plan)
+    const oppVehIds = new Set(
+        (preferredVehicleIds || []).map((id) => String(id).trim()).filter(Boolean)
+    );
+    if (oppositePlan) {
+        const oppBuses = oppositePlan.buses || oppositePlan.routes || [];
+        oppBuses.forEach((b) => {
+            const vid = String(b.assignedVehicle?._id || b.assignedVehicle?.id || b.vehicleId || b.vehicle?._id || b.vehicle?.id || "").trim();
+            if (vid) oppVehIds.add(vid);
+            const vName = String(b.vehicleName || b.vehicle?.vehicleName || b.vehicle?.name || b.assignedVehicle?.vehicleName || "").trim().toLowerCase();
+            if (vName) {
+                const match = eligibleOutwardBuses.find((ev) => (ev.vehicleName || ev.name || "").toLowerCase() === vName);
+                if (match) oppVehIds.add(String(match._id || match.id || ""));
+            }
+        });
+    }
+
+    const reusableBuses = eligibleOutwardBuses.filter((v) =>
+        oppVehIds.has(String(v._id || v.id || "")) ||
+        oppVehIds.has(String(v.vehicleId || ""))
+    );
+    const nonReusableBuses = eligibleOutwardBuses.filter((v) =>
+        !oppVehIds.has(String(v._id || v.id || "")) &&
+        !oppVehIds.has(String(v.vehicleId || ""))
+    );
+
+    // Rank reusable buses: Sort reusable buses by capacity descending, followed by non-reusable buses by capacity descending.
+    const rankedBuses = [
+        ...reusableBuses.sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0)),
+        ...nonReusableBuses.sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0))
+    ];
+
+    const selectedBuses = [];
+    const selectedReusable = [];
+    const additionalBuses = [];
+    let selectedCapacity = 0;
+
+    for (const bus of rankedBuses) {
+        if (selectedBuses.length >= minimumBusCount && selectedCapacity >= totalComingPassengers) {
+            break;
+        }
+        selectedBuses.push(bus);
+        const cap = Number(bus.capacity || bus.seatCapacity || 0);
+        selectedCapacity += cap;
+        if (reusableBuses.some((rb) => String(rb._id || rb.id) === String(bus._id || bus.id))) {
+            selectedReusable.push(bus);
+        } else {
+            additionalBuses.push(bus);
+        }
+    }
+
+    // Fallback if needed
+    if (selectedBuses.length < minimumBusCount || selectedCapacity < totalComingPassengers) {
+        const remainingVehicles = (availableVehicles || [])
+            .filter((v) => {
+                const vid = String(v._id || v.id || "");
+                const cap = Number(v.capacity || v.seatCapacity || 0);
+                if (cap <= 0) return false;
+                if (v.isActive === false || String(v.status || "").toUpperCase() === "INACTIVE") return false;
+                return !selectedBuses.some((sb) => String(sb._id || sb.id || "") === vid);
+            })
+            .sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+
+        for (const bus of remainingVehicles) {
+            if (selectedBuses.length >= minimumBusCount && selectedCapacity >= totalComingPassengers) {
+                break;
+            }
+            selectedBuses.push(bus);
+            const cap = Number(bus.capacity || bus.seatCapacity || 0);
+            selectedCapacity += cap;
+            additionalBuses.push(bus);
+        }
+    }
+
+    return {
+        eligibleOutwardBuses,
+        selectedBuses,
+        reusableBuses,
+        selectedReusable,
+        additionalBuses,
+        minimumBusCount,
+        selectedCapacity,
+        totalEligibleCapacity: eligibleOutwardBuses.reduce((sum, b) => sum + Number(b.capacity || b.seatCapacity || 0), 0),
+        isSufficient: selectedCapacity >= totalComingPassengers
+    };
+};
+
+/**
+ * Balances passenger demands across inward & outward candidate routes to match the capacities
  * of the selected fleet, respecting corridor continuity and starting hub assignments.
  */
 export const balanceCandidateRoutesToFleetCapacities = ({
     routes = [],
     fleet = [],
     activeInwardStartingPlaces = [],
-    matrix = null
+    matrix = null,
+    tripMode = "TO_DESTINATION",
+    sourceHub = null,
+    destinationHub = null
 }) => {
     if (!Array.isArray(routes) || routes.length === 0 || !Array.isArray(fleet) || fleet.length === 0) {
         return routes;
     }
+
+    const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
 
     // Look for buses whose capacity is less than standard max (e.g. w1 with 60 seats)
     const sortedFleet = [...fleet].sort((a, b) => Number(a.capacity || a.seatCapacity || 70) - Number(b.capacity || b.seatCapacity || 70));
 
     for (const bus of sortedFleet) {
         const busCap = Number(bus.capacity || bus.seatCapacity || 70);
-        const sp = findStartingPlaceForBus(bus, activeInwardStartingPlaces);
-        if (!sp) continue;
 
-        // Find candidate route that matches this starting place or corridor
-        const matchingRoute = routes.find((r) => {
-            const firstStop = r.stops?.[0];
-            return (firstStop && (isSameLocation(firstStop, sp) || calculateDistanceKm(sp.latitude, sp.longitude, firstStop.latitude, firstStop.longitude) <= 3.5)) ||
-                   (r.stops || []).some((s) => isSameLocation(s, sp));
-        });
+        let matchingRoute = null;
+        if (!isOutward && activeInwardStartingPlaces && activeInwardStartingPlaces.length > 0) {
+            const sp = findStartingPlaceForBus(bus, activeInwardStartingPlaces);
+            if (!sp) continue;
+
+            // Find candidate route that matches this starting place or corridor
+            matchingRoute = routes.find((r) => {
+                const firstStop = r.stops?.[0];
+                return (firstStop && (isSameLocation(firstStop, sp) || calculateDistanceKm(sp.latitude, sp.longitude, firstStop.latitude, firstStop.longitude) <= 3.5)) ||
+                       (r.stops || []).some((s) => isSameLocation(s, sp));
+            });
+        } else {
+            // For OUTWARD or unanchored routes: match route whose passenger demand exceeds busCap
+            matchingRoute = routes.find((r) => r.assignedUsers > busCap);
+        }
 
         if (matchingRoute && matchingRoute.assignedUsers > busCap) {
             const excess = matchingRoute.assignedUsers - busCap;
@@ -2800,7 +2944,8 @@ export const balanceCandidateRoutesToFleetCapacities = ({
             // Find target route with spare capacity relative to fleet
             const targetRoute = routes.find((r) => {
                 if (r === matchingRoute) return false;
-                return (r.assignedUsers + excess) <= 70;
+                const rCap = Number(r.capacity || r.vehicle?.capacity || 70);
+                return (r.assignedUsers + excess) <= rCap;
             });
 
             if (targetRoute) {
@@ -2907,60 +3052,41 @@ export const evaluateFleetBalancingDecision = ({
         };
     }
 
-    // Existing OUTWARD logic - 100% UNCHANGED
-    const rawCandidateCount = Math.max(candidateRoutes.length, 1);
+    // OUTWARD FLEET BALANCING ENGINE
+    const fleetSelection = selectOutwardFleet({
+        totalComingPassengers: currentDemand,
+        availableVehicles,
+        oppositePlan
+    });
 
-    // Eligible vehicles: for Inward, prioritize vehicles that have configured starting places
-    const eligibleVehicles = availableVehicles;
-    const effectiveVehicles = availableVehicles;
+    const minCapacityBuses = fleetSelection.minimumBusCount;
+    const targetRouteCount = Math.max(minCapacityBuses, fleetSelection.selectedBuses.length);
+    const symmetryStatus = oppositePlan ? "BALANCED_FLEET" : "INDEPENDENT_DIRECTION";
 
-    const fleetCaps = effectiveVehicles
-        .map((v) => Number(v.capacity || v.seatCapacity || 0))
-        .filter((c) => c > 0);
-    const maxBusCapacity = fleetCaps.length > 0 ? Math.max(...fleetCaps) : 70;
-
-    // Pure mathematical minimum buses based on passenger demand and maximum bus capacity
-    const minCapacityBuses = Math.max(Math.ceil(currentDemand / maxBusCapacity), 1);
-
-    // Initial target route count starts at mathematical minimum capacity (Requirements 2, 4, 21)
-    let targetRouteCount = minCapacityBuses;
-    let symmetryStatus = "INDEPENDENT_DIRECTION";
     let decisionReason = `Minimum capacity requirement: ${minCapacityBuses} buses. Feasible route allocation: ${targetRouteCount} buses based on capacity and road network topology.`;
-    let oppositeBusCount = null;
-    let oppositeDemand = null;
-    let oppositeVehicleIds = [];
-
-    if (oppositePlan) {
+    if (fleetSelection.selectedReusable.length > 0 && oppositePlan) {
         const oppBuses = oppositePlan.buses || oppositePlan.routes || [];
-        oppositeBusCount = oppBuses.length;
-        oppositeDemand = Number(
-            oppositePlan.assignedUsers ??
-            oppositePlan.summary?.comingUsers ??
-            oppositePlan.summary?.allocatedUsers ??
-            currentDemand
-        );
-
-        oppositeVehicleIds = oppBuses
-            .map((b) => String(b.assignedVehicle?._id || b.assignedVehicle?.id || b.vehicleId || b.vehicle?._id || b.vehicle?.id || ""))
-            .filter(Boolean);
-
-        if (oppositeBusCount > 0) {
-            const oppDirection = "INWARD";
-            targetRouteCount = minCapacityBuses;
-            symmetryStatus = "BALANCED_FLEET";
-            decisionReason = `Minimum capacity requirement: ${minCapacityBuses} buses. Feasible route allocation: ${targetRouteCount} buses based on capacity and road network topology. Preferred vehicle reuse from ${oppDirection} operation enabled without increasing fleet size.`;
-        }
+        decisionReason += ` Preferred vehicle reuse from INWARD operation enabled (${fleetSelection.selectedReusable.length}/${oppBuses.length} vehicles reused).`;
     }
+    if (!fleetSelection.isSufficient) {
+        decisionReason = `Fleet capacity insufficient: Demand is ${currentDemand}, but available eligible outward fleet capacity is ${fleetSelection.totalEligibleCapacity} seats across ${fleetSelection.eligibleOutwardBuses.length} buses (shortfall: ${currentDemand - fleetSelection.totalEligibleCapacity} seats).`;
+    }
+
+    const oppBuses = oppositePlan ? (oppositePlan.buses || oppositePlan.routes || []) : [];
+    const oppositeVehicleIds = fleetSelection.reusableBuses.map((b) => String(b._id || b.id || ""));
 
     return {
         targetRouteCount,
         symmetryStatus,
         decisionReason,
-        oppositeBusCount,
-        oppositeDemand,
+        oppositeBusCount: oppBuses.length,
+        oppositeDemand: oppositePlan ? Number(oppositePlan.assignedUsers ?? oppositePlan.summary?.comingUsers ?? currentDemand) : null,
         oppositeVehicleIds,
         minCapacityBuses,
-        baselineTarget: minCapacityBuses
+        baselineTarget: minCapacityBuses,
+        selectedFleet: fleetSelection.selectedBuses,
+        eligibleFleet: fleetSelection.eligibleOutwardBuses,
+        fleetCapacity: fleetSelection.selectedCapacity
     };
 };
 
@@ -3390,6 +3516,378 @@ export const assignVehiclesToOptimizedRoutes = ({
         vehicleReuseRate,
         reusedVehicleNames
     };
+};
+
+/**
+ * Purpose-Driven Outward Fleet Consolidation & Passenger Rebalancing Engine
+ * 
+ * Objectives:
+ * 1. Identify low-occupancy routes (e.g. <= 15 passengers or utilization < 35%).
+ * 2. Attempt direct absorption of each stop into geographically compatible corridor routes with spare capacity.
+ * 3. If the most compatible corridor route is full, attempt Corridor Multi-Hop Rebalancing:
+ *    reassign a donor stop from the full corridor route to a third route with spare capacity,
+ *    enabling the corridor route to absorb the low-occupancy stop.
+ * 4. Recalculate and strictly validate road continuity, zero directional reversals, backtracking < 2.0km,
+ *    and detour ratio <= 2.25x for every modified route using sequenceOutwardRouteStops.
+ * 5. Consolidate and dissolve the low-occupancy bus when all its stops are continuously absorbed,
+ *    reducing fleet size without sacrificing passenger convenience or road validity.
+ * 6. If consolidation is impossible due to genuine geographic isolation or overall capacity saturation,
+ *    retain the separate bus with a verified explanation.
+ * 7. Apply intra-corridor passenger load balancing to avoid extreme disparities (e.g. 70/70 vs 60/70)
+ *    where stops can be shared/balanced along the same corridor without increasing detour.
+ */
+export const consolidateAndRebalanceLowOccupancyOutwardRoutes = ({
+    routes = [],
+    availableVehicles = [],
+    sourceHub = DEFAULT_SOURCE_HUB,
+    matrix = null,
+    tripMode = "FROM_SOURCE",
+    auditTrail = [],
+    maxDetourRatio = 2.25,
+    lowOccupancyThreshold = 15,
+    minUtilization = 0.35
+}) => {
+    if (!Array.isArray(routes) || routes.length <= 1) return routes;
+
+    const resolvedHub = sourceHub || DEFAULT_SOURCE_HUB;
+
+    let currentRoutes = routes.map((r, idx) => ({
+        ...r,
+        routeId: r.routeId || `route_${idx + 1}`,
+        stops: (r.stops || []).map((s) => ({
+            ...s,
+            userIds: Array.isArray(s.userIds) ? [...s.userIds] : []
+        })),
+        users: Array.isArray(r.users) ? [...r.users] : []
+    }));
+
+    let changed = true;
+    let passes = 0;
+    const MAX_PASSES = 4;
+
+    while (changed && passes < MAX_PASSES && currentRoutes.length > 1) {
+        changed = false;
+        passes++;
+
+        // Identify low-occupancy routes
+        const lowRoutes = currentRoutes
+            .filter((r) => {
+                const pax = Number(r.assignedUsers || 0);
+                const cap = Number(r.capacity || r.vehicle?.capacity || 70);
+                if (pax <= 0) return false;
+                const util = cap > 0 ? pax / cap : 0;
+                return pax <= lowOccupancyThreshold || util < minUtilization;
+            })
+            .sort((a, b) => (a.assignedUsers || 0) - (b.assignedUsers || 0));
+
+        for (const lowRoute of lowRoutes) {
+            let allStopsAbsorbed = true;
+            const otherRoutes = currentRoutes.filter((r) => r.routeId !== lowRoute.routeId);
+
+            // Create working deep-copies of other routes for transaction safety
+            let trialOtherRoutes = otherRoutes.map((r) => ({
+                ...r,
+                stops: r.stops.map((s) => ({ ...s, userIds: [...(s.userIds || [])] })),
+                users: [...(r.users || [])]
+            }));
+
+            for (const stop of lowRoute.stops) {
+                const stopPax = Array.isArray(stop.userIds) && stop.userIds.length > 0
+                    ? stop.userIds.length
+                    : Number(stop.userCount || stop.passengerCount || 0);
+
+                if (stopPax <= 0) continue;
+
+                let stopAbsorbed = false;
+
+                // Priority 1: Direct insertion into a compatible route with sufficient spare capacity
+                const viableRoutes = trialOtherRoutes.filter((r) => {
+                    const rCap = Number(r.capacity || r.vehicle?.capacity || 70);
+                    return (rCap - r.assignedUsers) >= stopPax;
+                });
+
+                // Sort candidate target routes by proximity to this stop
+                viableRoutes.sort((rA, rB) => {
+                    const distA = Math.min(...rA.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
+                    const distB = Math.min(...rB.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
+                    return distA - distB;
+                });
+
+                for (const targetRoute of viableRoutes) {
+                    const nearestDist = Math.min(...targetRoute.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
+                    if (nearestDist > 8.0) continue; // Reject cross-town leaps
+
+                    const testTour = [...targetRoute.stops, stop];
+                    const seq = sequenceOutwardRouteStops({
+                        departureHub: resolvedHub,
+                        stops: testTour,
+                        matrix,
+                        tripMode
+                    });
+                    const qv = seq.qualityValidation || {};
+
+                    const isContinuous = qv.operationalContinuityVerified !== false &&
+                        (qv.directionalReversals || 0) === 0 &&
+                        (qv.backtrackingDistanceKm || 0) < 2.0 &&
+                        (qv.detourRatio || 1.0) <= maxDetourRatio;
+
+                    if (isContinuous) {
+                        targetRoute.stops = seq.stops;
+                        targetRoute.assignedUsers += stopPax;
+                        targetRoute.users.push(...(stop.userIds || []));
+                        targetRoute.routeDistanceKm = seq.routeDistanceKm;
+                        targetRoute.qualityValidation = qv;
+                        targetRoute.routeQuality = qv;
+                        stopAbsorbed = true;
+                        break;
+                    }
+                }
+
+                if (stopAbsorbed) continue;
+
+                // Priority 2: Corridor Multi-Hop Rebalancing
+                // When the geographically closest corridor route is full (or near full),
+                // check if that corridor route can offload a donor stop to a third route with spare capacity.
+                const compatibleFullRoutes = trialOtherRoutes.filter((r) => {
+                    const rCap = Number(r.capacity || r.vehicle?.capacity || 70);
+                    if ((rCap - r.assignedUsers) >= stopPax) return false;
+                    const nearestDist = Math.min(...r.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
+                    return nearestDist <= 4.5; // Strictly close corridor route
+                });
+
+                for (const corridorRoute of compatibleFullRoutes) {
+                    const corridorCap = Number(corridorRoute.capacity || corridorRoute.vehicle?.capacity || 70);
+                    const neededSeats = stopPax - (corridorCap - corridorRoute.assignedUsers);
+
+                    // Candidate donor stops on the corridor route
+                    const donorCandidates = corridorRoute.stops.filter((s) => {
+                        const sCount = Array.isArray(s.userIds) ? s.userIds.length : Number(s.userCount || 0);
+                        return sCount >= neededSeats;
+                    });
+
+                    for (const donorStop of donorCandidates) {
+                        const shiftPax = neededSeats;
+                        const thirdRoutes = trialOtherRoutes.filter((r) => {
+                            if (r.routeId === corridorRoute.routeId) return false;
+                            const rCap = Number(r.capacity || r.vehicle?.capacity || 70);
+                            return (rCap - r.assignedUsers) >= shiftPax;
+                        });
+
+                        for (const thirdRoute of thirdRoutes) {
+                            const thirdDist = Math.min(...thirdRoute.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, donorStop.latitude, donorStop.longitude)));
+                            if (thirdDist > 6.0) continue;
+
+                            const shiftIds = Array.isArray(donorStop.userIds) ? donorStop.userIds.slice(0, shiftPax) : [];
+                            const testDonorStop = {
+                                ...donorStop,
+                                userCount: shiftPax,
+                                passengerCount: shiftPax,
+                                userIds: shiftIds
+                            };
+
+                            const thirdTour = [...thirdRoute.stops, testDonorStop];
+                            const thirdSeq = sequenceOutwardRouteStops({
+                                departureHub: resolvedHub,
+                                stops: thirdTour,
+                                matrix,
+                                tripMode
+                            });
+                            const thirdQv = thirdSeq.qualityValidation || {};
+
+                            const thirdValid = thirdQv.operationalContinuityVerified !== false &&
+                                (thirdQv.directionalReversals || 0) === 0 &&
+                                (thirdQv.backtrackingDistanceKm || 0) < 2.0 &&
+                                (thirdQv.detourRatio || 1.0) <= maxDetourRatio;
+
+                            if (thirdValid) {
+                                // Test corridor route with donor shifted and new stop added
+                                const remainingDonorPax = (donorStop.userCount || 0) - shiftPax;
+                                const updatedCorridorStops = corridorRoute.stops.map((s) => {
+                                    if (s.name === donorStop.name) {
+                                        return {
+                                            ...s,
+                                            userCount: remainingDonorPax,
+                                            passengerCount: remainingDonorPax,
+                                            userIds: Array.isArray(s.userIds) ? s.userIds.slice(shiftPax) : []
+                                        };
+                                    }
+                                    return s;
+                                }).filter((s) => (s.userCount || 0) > 0);
+
+                                updatedCorridorStops.push(stop);
+
+                                const corrSeq = sequenceOutwardRouteStops({
+                                    departureHub: resolvedHub,
+                                    stops: updatedCorridorStops,
+                                    matrix,
+                                    tripMode
+                                });
+                                const corrQv = corrSeq.qualityValidation || {};
+
+                                const corrValid = corrQv.operationalContinuityVerified !== false &&
+                                    (corrQv.directionalReversals || 0) === 0 &&
+                                    (corrQv.backtrackingDistanceKm || 0) < 2.0 &&
+                                    (corrQv.detourRatio || 1.0) <= maxDetourRatio;
+
+                                if (corrValid) {
+                                    // Apply multi-hop transfer
+                                    corridorRoute.stops = corrSeq.stops;
+                                    corridorRoute.assignedUsers = corridorRoute.assignedUsers - shiftPax + stopPax;
+                                    corridorRoute.users = corridorRoute.stops.flatMap((s) => s.userIds || []);
+                                    corridorRoute.routeDistanceKm = corrSeq.routeDistanceKm;
+                                    corridorRoute.qualityValidation = corrQv;
+
+                                    thirdRoute.stops = thirdSeq.stops;
+                                    thirdRoute.assignedUsers += shiftPax;
+                                    thirdRoute.users.push(...shiftIds);
+                                    thirdRoute.routeDistanceKm = thirdSeq.routeDistanceKm;
+                                    thirdRoute.qualityValidation = thirdQv;
+
+                                    stopAbsorbed = true;
+                                    auditTrail.push({
+                                        action: "CORRIDOR_MULTI_HOP_REBALANCE",
+                                        donorRoute: corridorRoute.vehicleName || corridorRoute.routeCode,
+                                        thirdRoute: thirdRoute.vehicleName || thirdRoute.routeCode,
+                                        donorStop: donorStop.name,
+                                        absorbedStop: stop.name,
+                                        passengersMoved: shiftPax,
+                                        reason: `Multi-hop rebalanced ${shiftPax} pax of '${donorStop.name}' from '${corridorRoute.vehicleName}' to '${thirdRoute.vehicleName}', enabling '${corridorRoute.vehicleName}' to absorb '${stop.name}' (${stopPax} pax).`
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        if (stopAbsorbed) break;
+                    }
+                    if (stopAbsorbed) break;
+                }
+
+                if (!stopAbsorbed) {
+                    allStopsAbsorbed = false;
+                    break;
+                }
+            }
+
+            if (allStopsAbsorbed) {
+                currentRoutes = trialOtherRoutes;
+                changed = true;
+                auditTrail.push({
+                    action: "CONSOLIDATE_LOW_OCCUPANCY_BUS",
+                    vehicleName: lowRoute.vehicleName || lowRoute.routeCode,
+                    passengersMoved: lowRoute.assignedUsers,
+                    reason: `Consolidated low-occupancy bus '${lowRoute.vehicleName || lowRoute.routeCode}' (${lowRoute.assignedUsers} pax) into compatible corridor routes. Reduced fleet from ${currentRoutes.length + 1} to ${currentRoutes.length} buses.`
+                });
+                break;
+            } else {
+                lowRoute.whySeparateRouteNeeded = "Separate bus retained because stops cannot be continuously absorbed into adjacent corridor routes without exceeding detour ratio or vehicle capacity limits.";
+            }
+        }
+    }
+
+    // Intra-Corridor Passenger Balancing:
+    // If two routes in the same corridor have a notable load disparity (e.g. 70/70 and 60/70),
+    // balance passenger counts where stops overlap or are in close proximity (<= 2.0 km),
+    // without increasing route detour ratio > 2.25.
+    if (currentRoutes.length > 1) {
+        for (let i = 0; i < currentRoutes.length; i++) {
+            for (let j = i + 1; j < currentRoutes.length; j++) {
+                const rA = currentRoutes[i];
+                const rB = currentRoutes[j];
+                const capA = Number(rA.capacity || rA.vehicle?.capacity || 70);
+                const capB = Number(rB.capacity || rB.vehicle?.capacity || 70);
+
+                if (Math.abs(rA.assignedUsers - rB.assignedUsers) >= 8) {
+                    const fuller = rA.assignedUsers > rB.assignedUsers ? rA : rB;
+                    const lighter = rA.assignedUsers > rB.assignedUsers ? rB : rA;
+                    const lighterCap = lighter === rA ? capA : capB;
+
+                    if (lighter.assignedUsers < lighterCap) {
+                        const targetDiff = Math.floor((fuller.assignedUsers - lighter.assignedUsers) / 2);
+                        const spareLighter = lighterCap - lighter.assignedUsers;
+                        const maxShift = Math.min(targetDiff, spareLighter);
+
+                        // Look for a shared or close stop on fuller route to share/transfer
+                        for (const stop of fuller.stops) {
+                            const count = Array.isArray(stop.userIds) ? stop.userIds.length : Number(stop.userCount || 0);
+                            if (count <= 0) continue;
+
+                            const isStopShared = lighter.stops.some((s) => s.name === stop.name);
+                            const nearestLighterDist = Math.min(...lighter.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
+
+                            if (isStopShared || nearestLighterDist <= 2.0) {
+                                const shiftCount = Math.min(count, maxShift);
+                                if (shiftCount <= 0) continue;
+
+                                const shiftIds = Array.isArray(stop.userIds) ? stop.userIds.slice(0, shiftCount) : [];
+
+                                // Test testLighter
+                                const testLighterStops = lighter.stops.map((s) => ({ ...s, userIds: [...(s.userIds || [])] }));
+                                const lighterMatchingStop = testLighterStops.find((s) => s.name === stop.name);
+                                if (lighterMatchingStop) {
+                                    lighterMatchingStop.userCount = (lighterMatchingStop.userCount || 0) + shiftCount;
+                                    lighterMatchingStop.passengerCount = lighterMatchingStop.userCount;
+                                    lighterMatchingStop.userIds.push(...shiftIds);
+                                } else {
+                                    testLighterStops.push({
+                                        ...stop,
+                                        userCount: shiftCount,
+                                        passengerCount: shiftCount,
+                                        userIds: shiftIds
+                                    });
+                                }
+
+                                const lighterSeq = sequenceOutwardRouteStops({
+                                    departureHub: resolvedHub,
+                                    stops: testLighterStops,
+                                    matrix,
+                                    tripMode
+                                });
+                                const lQv = lighterSeq.qualityValidation || {};
+
+                                if (lQv.operationalContinuityVerified !== false &&
+                                    (lQv.directionalReversals || 0) === 0 &&
+                                    (lQv.backtrackingDistanceKm || 0) < 2.0 &&
+                                    (lQv.detourRatio || 1.0) <= maxDetourRatio) {
+                                    
+                                    // Update fuller stop
+                                    stop.userCount -= shiftCount;
+                                    stop.passengerCount = stop.userCount;
+                                    if (Array.isArray(stop.userIds)) {
+                                        stop.userIds = stop.userIds.slice(shiftCount);
+                                    }
+                                    fuller.stops = fuller.stops.filter((s) => (s.userCount || 0) > 0);
+                                    fuller.assignedUsers -= shiftCount;
+                                    if (Array.isArray(fuller.users)) {
+                                        const shiftSet = new Set(shiftIds);
+                                        fuller.users = fuller.users.filter((uid) => !shiftSet.has(uid));
+                                    }
+
+                                    // Update lighter route
+                                    lighter.stops = lighterSeq.stops;
+                                    lighter.assignedUsers += shiftCount;
+                                    lighter.users.push(...shiftIds);
+                                    lighter.routeDistanceKm = lighterSeq.routeDistanceKm;
+                                    lighter.qualityValidation = lQv;
+
+                                    auditTrail.push({
+                                        action: "INTRA_CORRIDOR_PASSENGER_BALANCE",
+                                        fromRoute: fuller.vehicleName || fuller.routeCode,
+                                        toRoute: lighter.vehicleName || lighter.routeCode,
+                                        stopName: stop.name,
+                                        passengersBalanced: shiftCount,
+                                        reason: `Balanced ${shiftCount} passenger(s) at '${stop.name}' from '${fuller.vehicleName}' to '${lighter.vehicleName}' along shared corridor.`
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return currentRoutes;
 };
 
 // ============================================================================
@@ -4086,15 +4584,18 @@ export const executeGlobalRouteOptimization = async ({
         });
     }
 
-    // Purpose-Driven Fleet Capacity Balancing for Inward:
-    // Balances passenger demands across inward candidate routes to match the capacities
-    // of the selected fleet, respecting corridor continuity and starting hub assignments.
-    if (!isOutward && fleetBalancing.selectedFleet?.length > 0) {
+    // Purpose-Driven Fleet Capacity Balancing for Inward & Outward:
+    // Balances passenger demands across candidate routes to match the capacities
+    // of the selected fleet, respecting corridor continuity.
+    if (fleetBalancing.selectedFleet?.length > 0) {
         candidateRoutes = balanceCandidateRoutesToFleetCapacities({
             routes: candidateRoutes,
             fleet: fleetBalancing.selectedFleet,
             activeInwardStartingPlaces: configuredPlacesList,
-            matrix
+            matrix,
+            tripMode,
+            sourceHub: options.sourceHub || anchorHub,
+            destinationHub: options.destinationHub || anchorHub
         });
     }
 
@@ -4114,7 +4615,7 @@ export const executeGlobalRouteOptimization = async ({
 
     // Step 6: Delayed Fleet-Wide Vehicle Assignment (with Vehicle Reuse Preference)
     const {
-        assignedRoutes,
+        assignedRoutes: initialAssignedRoutes,
         unassignedRoutes,
         vehicleUsageLogs,
         vehicleReuseCount,
@@ -4122,12 +4623,13 @@ export const executeGlobalRouteOptimization = async ({
         reusedVehicleNames
     } = assignVehiclesToOptimizedRoutes({
         routes: candidateRoutes,
-        availableVehicles: (!isOutward && fleetBalancing.selectedFleet?.length > 0) ? fleetBalancing.selectedFleet : availableVehicles,
+        availableVehicles: (fleetBalancing.selectedFleet?.length > 0) ? fleetBalancing.selectedFleet : availableVehicles,
         tripMode,
         activeInwardStartingPlaces: configuredPlacesList,
         previousRoutes: options.previousRoutes || [],
         preferredVehicleIds: fleetBalancing.oppositeVehicleIds || []
     });
+    let assignedRoutes = initialAssignedRoutes;
 
     // Step 6A: Stage C GLOBAL BALANCING & PASSENGER REASSIGNMENT (Requirements 4, 5, 6, 10, 13)
     if (unassignedRoutes.length > 0 && assignedRoutes.length > 0) {
@@ -4168,6 +4670,20 @@ export const executeGlobalRouteOptimization = async ({
             anchorHub,
             sourceHub: options.sourceHub || anchorHub,
             destinationHub: options.destinationHub || anchorHub,
+            auditTrail
+        });
+    }
+
+    // Step 6D: Purpose-Driven Outward Fleet Consolidation & Passenger Rebalancing (Requirements 4, 5, 6, 7, 21, 22)
+    // Evaluates whether low-occupancy buses can be dissolved into adjacent corridor routes
+    // via direct insertion or corridor multi-hop rebalancing, preserving 100% road continuity and detour ratio <= 2.25x.
+    if (isOutward && assignedRoutes.length > 1) {
+        assignedRoutes = consolidateAndRebalanceLowOccupancyOutwardRoutes({
+            routes: assignedRoutes,
+            availableVehicles,
+            sourceHub: options.sourceHub || anchorHub,
+            matrix,
+            tripMode,
             auditTrail
         });
     }
