@@ -1,39 +1,41 @@
-# TASK: Replace the Old System Architecture Diagram with an Updated Architecture
+# TASK: Completely Update ARCHITECTURE.md for GitHub Mermaid Rendering
 
-Project: AI-Based Transportation Management System
+Project: AI-Based Transportation Management System  
+Project Path: `E:\AI-Transportation-Management`
 
-Project folder: `E:\AI-Transportation-Management`
+## OBJECTIVE
 
-## 1. AUDIT THE CURRENT PROJECT FIRST
+Update the existing `ARCHITECTURE.md` file with a new, accurate, professional System Architecture Diagram that GitHub can render directly.
 
-Before changing anything, inspect the current frontend, backend, services, models, routes, and integrations. The existing architecture in `ARCHITECTURE.md` is outdated because the project has been updated.
+The old architecture diagram is outdated. Audit the current source code first, then replace the old high-level architecture diagram with a new one reflecting the current implementation.
 
-Identify the components that are actually implemented. Do not assume that every component described in the old documentation is still present.
+IMPORTANT: This task is ONLY for `ARCHITECTURE.md`. Do not modify application code or create unnecessary files.
 
-Inspect relevant files, including:
+## 1. AUDIT THE CURRENT CODEBASE
+
+Inspect the current project before writing the diagram:
+
 - `frontend/src/pages/`
 - `backend/server.js`
 - `backend/routes/`
 - `backend/controllers/`
 - `backend/services/`
 - `backend/models/`
-- Backend configuration and integration files.
+- Backend integrations and configuration.
 
-## 2. REMOVE AND REPLACE THE OLD ARCHITECTURE DIAGRAM
+Document only components that exist or can be verified from the source code.
 
-In `ARCHITECTURE.md`, replace the existing **High-Level System Architecture** diagram with a new architecture diagram that accurately represents the current project.
+Do not assume that old documentation accurately describes the current system.
 
-Do not delete the entire Markdown file. Preserve and update useful documentation about the plan lifecycle, optimization approach, and data domains.
+## 2. REQUIRED ARCHITECTURE SECTIONS
 
-## 3. NEW ARCHITECTURE COMPONENTS
+Create one main diagram with these numbered sections:
 
-Organize the diagram into clearly numbered sections.
-
-**1. USERS**
+### 1. Users
 - Admin
 - Student
 
-**2. FRONTEND — React + Vite**
+### 2. Frontend — React + Vite
 - Admin Dashboard
 - User Management
 - Vehicle Management
@@ -43,120 +45,153 @@ Organize the diagram into clearly numbered sections.
 - Admin Manual Plan
 - Plan Confirmation
 - Student Dashboard
-- Excel Import / Upload
+- Excel Upload / Import
 - Automation Interface, if implemented
 
-**3. BACKEND API — Node.js + Express**
-- REST API and Routes
+### 3. Backend — Node.js + Express
+- REST API
 - Authentication and Authorization
-- Controllers
-- User, Vehicle, Schedule, Route and Stop Management
-- Travel Status and Demand Aggregation
+- Controllers and API Routes
+- User and Travel Status Management
+- Vehicle and Schedule Management
+- Route and Stop Management
 - AI Agent Orchestration
-- Plan Approval, Activation and Allocation
+- Plan Preview, Approval and Activation
+- Student Bus Allocation
 - Late-Response Lifecycle
 - Excel Import Processing
-- WhatsApp Integration, if confirmed by the current code
+- WhatsApp Integration, if confirmed in code
 
-**4. AI ROUTE OPTIMIZATION ENGINE**
+### 4. AI Route Optimization Engine
 - Road-Aware Stop Grouping
-- Road Distance and Travel-Time Matrix
-- Clarke-Wright Savings and Route Candidate Search
+- OSRM Road Distance and Travel-Time Matrix
+- Clarke-Wright Savings and Candidate Search
 - 2-Opt Stop-Sequence Optimization
 - Route Rebalancing and Stop Relocation
-- Vehicle Capacity and Availability Validation
-- Route Continuity and Passenger Allocation Validation
+- Vehicle Capacity and Availability Checks
+- Route Continuity Validation
+- Passenger Uniqueness and Allocation Validation
 - Historical Route and Co-occurrence Scoring
 - Deterministic Heuristic Optimization
 
-**5. DATABASE — MongoDB**
-Include the data collections or models actually used, such as:
+### 5. Database — MongoDB
+Include the models and data domains actually used:
 - Users and Travel Status
 - Vehicles
 - Schedules
 - Routes and Stops
 - AI Plans and Manual Plans
 - Late-Response Events
-- Historical Routes and Route Performance
+- Historical Routes
+- Route Performance
 - Road Matrix Cache
 - Inward Starting Places
-- Map Locations, where applicable
+- Map Locations, if applicable
 
-**6. EXTERNAL AND SUPPORTING SERVICES**
-- OpenStreetMap for map display
-- Nominatim for geocoding and place search
-- OSRM for road distances, travel durations and route geometry
-- Excel/XLSX import
-- WhatsApp connectivity and QR pairing, if confirmed in the code
-- n8n only if a working integration is present in the current project
-- Trained ML model only if actually implemented and active
+### 6. External and Supporting Services
+- OpenStreetMap
+- Nominatim Geocoding
+- OSRM Routing
+- Excel/XLSX Import
+- WhatsApp Integration, if implemented
+- n8n, only if an actual integration exists
+- Trained ML Model, only if implemented and active
 
-These are proposed diagram categories, not permission to invent functionality. Verify each item against the code before including it.
+## 3. REQUIRED CONNECTIONS
 
-## 4. CONNECTIONS AND DATA FLOW
+Use correctly directed arrows to show:
 
-Show clear, correctly directed arrows representing the actual system:
+Admin / Student → Frontend → REST API → Controllers and Services → MongoDB.
 
-Admin / Student → React Frontend → Express REST API → Controllers and Services → MongoDB.
+Show the AI planning flow:
 
-Show the AI planning flow separately:
+Confirmed Coming Passengers → AI Recommendation or Admin Manual Plan → Preview and Review → Admin Approval → Plan Activation → Student Allocation.
 
-Confirmed Coming Passengers → AI Recommendation or Admin Manual Plan → Preview and Review → Admin Approval → Plan Activation → Student Bus Allocation.
+Show the late-response flow:
 
-Show that late Coming responses received after plan approval or activation enter the late-response workflow and require the supported administrative re-planning process.
+Late Coming Response After Plan Approval → Late-Response Queue → Administrative Re-planning → Approval and Activation → Resolution.
 
-Connect the optimization engine to OSRM, Nominatim, historical data and the road-matrix cache wherever the implementation supports those connections.
+Connect the optimization engine to road-routing services, historical data, and road-matrix caching wherever the code supports those connections.
 
-Distinguish read operations, write operations and external API calls where doing so improves clarity. Avoid unnecessary crossing arrows, duplicate connections and self-referencing loops.
+Do not draw unsupported connections, duplicate arrows, or misleading relationships. Keep the diagram logically organized and readable.
 
-## 5. VISUAL DESIGN
+## 4. GITHUB MERMAID REQUIREMENTS
 
-Use the uploaded architecture reference image as the design guide.
+The primary diagram MUST be written using GitHub-supported Mermaid syntax inside a fenced Markdown block:
 
-The final diagram should have:
-- A dark royal-blue background.
-- A large, centered, readable title: **AI-BASED TRANSPORTATION MANAGEMENT SYSTEM — ARCHITECTURE DIAGRAM**.
-- White or light-colored component cards.
-- Numbered section headers.
-- Clear icons and concise labels.
-- Frontend and backend as the main central columns.
-- Users on the left.
-- Database and external services on the right or lower section.
-- Directional arrows with readable labels.
-- Consistent spacing, alignment, font sizes and card dimensions.
+\`\`\`mermaid
+flowchart LR
+    ...
+\`\`\`
+
+Use a clean `flowchart LR` layout with logical subgraphs and short component labels.
+
+Requirements:
+- Valid Mermaid syntax.
+- Balanced brackets, parentheses, quotation marks and subgraphs.
+- Every node has a unique identifier.
+- All subgraphs are properly closed.
+- No unsupported HTML or custom rendering dependencies.
+- No external JavaScript, CSS, plugins or image paths required for the main diagram.
+- Use Mermaid `classDef` and `class` only if supported by GitHub rendering.
+- Keep text concise enough to avoid excessively large cards.
+- Avoid self-referencing arrows and unnecessary crossing lines.
+- Ensure the diagram renders when someone opens `ARCHITECTURE.md` on GitHub.
+
+Use GitHub's standard Mermaid renderer. Do not assume GitHub will display a separately styled SVG/PNG automatically inside the Markdown.
+
+## 5. VISUAL STYLE
+
+Use the uploaded reference diagram as the design inspiration.
+
+Aim for:
+- A dark blue and white visual appearance where supported by Mermaid.
+- A large, clear architecture heading.
+- Six numbered architectural sections.
+- Distinct component groups.
+- Consistent labels and spacing.
+- Clear directional arrows.
 - A professional academic-project presentation style.
-- A landscape layout suitable for a final-year project report or presentation.
 
-Do not simply put all components in one long Mermaid flowchart and consider the task complete. Create a polished, properly arranged architecture diagram.
+Do not sacrifice GitHub compatibility to imitate the reference image. Prioritize a diagram that renders reliably on GitHub.
 
-## 6. OUTPUT FILES
+## 6. UPDATE THE DOCUMENTATION
 
-Create or update the following:
+Replace the old high-level architecture diagram rather than appending a second competing architecture diagram.
 
-1. `ARCHITECTURE.md` — updated architecture documentation and Mermaid source.
-2. `docs/system-architecture.svg` — a polished, scalable architecture diagram matching the reference style, if feasible with the available tooling.
-3. `docs/system-architecture.png` — a high-resolution export if the available tooling supports it.
+Keep useful documentation, but revise outdated claims about:
+- Active trained ML models.
+- Optimization capabilities.
+- Plan approval and activation.
+- Late-response handling.
+- Database collections and external integrations.
 
-If you create an SVG or PNG, ensure it is valid, readable and consistent with the Mermaid source and the actual codebase. Do not generate fake screenshots or placeholder diagrams.
+The current prediction service indicates deterministic heuristic optimization, with trained-model integration pending. Represent this accurately unless the current source code proves that this status has changed.
 
-## 7. STRICT SAFETY RULES
+Keep the following sections after the main architecture diagram, updating them where necessary:
+1. Core Architectural Principles
+2. Plan Lifecycle
+3. Late-Response Workflow
+4. Optimization Approach
+5. Database and Integration Overview
 
-- Do not modify frontend application logic.
-- Do not modify backend application logic.
-- Do not modify database schemas, API behavior, optimization algorithms or authentication.
-- Do not install unnecessary dependencies.
-- Do not claim trained ML is active if the project currently uses heuristic scoring.
-- Do not claim n8n integration is active unless the code confirms it.
-- Preserve useful existing documentation outside the replaced architecture section.
-- Do not delete project files unrelated to the documentation task.
+Remove obsolete descriptions that no longer match the code.
 
-## 8. VALIDATION AND FINAL REPORT
+## 7. VALIDATION
 
 Before finishing:
-- Verify that all components and connections match the current source code.
-- Check that the Markdown and Mermaid syntax are valid.
-- Check the SVG/PNG output if generated.
-- Confirm that only intended documentation and diagram files were changed.
-- Report the files created or updated and any components omitted because they were not implemented or could not be verified.
 
-First audit, then implement the documentation and diagram updates. Do not change the application's working functionality.
+1. Verify every component against the current repository.
+2. Verify Mermaid syntax and subgraph structure.
+3. Ensure there is only one primary high-level System Architecture Diagram.
+4. Check that the Markdown renders correctly in a compatible Mermaid preview.
+5. Confirm that only `ARCHITECTURE.md` has been changed.
+6. Summarize the changes and identify any features excluded because they could not be verified.
+
+Do not modify React components, CSS, backend services, routes, controllers, database schemas, dependencies, or application behavior.
+
+## FINAL RESULT
+
+The updated `ARCHITECTURE.md` must contain a current, accurate and readable System Architecture Diagram that renders directly on the GitHub repository page.
+
+Audit first, then update the Markdown file, validate the Mermaid syntax, and report completion.
