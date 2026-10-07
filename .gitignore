@@ -7,3 +7,9 @@ dist-ssr
 *.local
 .DS_Store
 Thumbs.db
+
+backend/whatsapp/auth/
+
+node_modules/
+
+.env

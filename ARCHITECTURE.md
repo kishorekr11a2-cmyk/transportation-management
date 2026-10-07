@@ -1,184 +1,163 @@
-# AI-Based Transportation Management System — Hybrid Optimization Architecture
 
-A production-grade, multi-tier transportation management and routing platform designed for institutions, universities, schools, and corporate campuses of arbitrary scale.
+# AI-Based Transportation Management System
 
----
+## System Overview
 
-## 1. High-Level System Architecture
+The AI-Based Transportation Management System manages student transportation through user and vehicle management, route optimization, schedule management, travel-status tracking, and administrator-controlled plan approval.
+
+The system uses a React/Vite frontend, a Node.js/Express backend, MongoDB for persistent storage, and road-routing services for distance-aware route planning.
+
+## System Architecture Diagram
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["Client Layer (React + Vite)"]
-        UI_Admin["Admin Operations Dashboard"]
-        UI_Student["Student / Passenger Portal"]
-        UI_AIAgent["AI Optimization & Plan Management"]
-        UI_Expl["Explainable AI Metrics & Route Diagnostics"]
+    A["Admin"] --> FE
+    S["Student"] --> FE
+
+    subgraph FRONTEND["Frontend - React and Vite"]
+        FE["Web Application"]
+        FE --> AUTH["Authentication"]
+        FE --> UM["User Management"]
+        FE --> VM["Vehicle Management"]
+        FE --> SM["Schedule Management"]
+        FE --> RM["Route Management"]
+        FE --> AI["AI Agent"]
+        FE --> PC["Plan Confirmation"]
+        FE --> SD["Student Dashboard"]
+        FE --> EX["Excel Upload"]
+        FE --> WAUI["WhatsApp and Automation Pages"]
     end
 
-    subgraph APILayer ["API & Business Logic Layer (Node.js / Express)"]
-        AUTH["JWT Authentication & RBAC"]
-        CTRL["REST Controllers & Routes"]
-        AIAgent["AI Agent Orchestrator (aiAgentService)"]
-        Demand["Demand Aggregation & Travel Status Engine"]
-        LateResp["Late-Response Lifecycle Controller"]
+    FE --> API
+
+    subgraph BACKEND["Backend - Node.js and Express"]
+        API["REST API"]
+        API --> AR["Authentication Routes"]
+        API --> UR["User and Vehicle Routes"]
+        API --> RR["Route and Schedule Routes"]
+        API --> ER["Excel and Stop Routes"]
+        API --> AIR["AI Agent Routes"]
+        API --> LR["Location and Inward Starting Place Routes"]
+        API --> WR["WhatsApp and Automation Routes"]
+
+        AIR --> AG["AI Agent Service"]
+        AG --> RE["Route Optimization Service"]
+        RE --> MA["Map-Aware Route Engine"]
+        RE --> ROAD["Road Matrix Service"]
+        AG --> MP["ML Prediction Service"]
+        AG --> MR["Manual Plan Recommendation Service"]
+        AG --> LC["Late-Response Lifecycle and Regeneration"]
     end
 
-    subgraph OptimizationEngine ["Hybrid AI Optimization Engine"]
-        GeoCache["Geocoding & Matrix Cache (Nominatim + MongoDB RoadMatrixCache)"]
-        OSRM_Client["OSRM Engine (Table API + Route API)"]
-        CW_Opt["Combinatorial Optimizer (Clarke-Wright Savings + 2-Opt)"]
-        Cluster["Capacity-Aware Spatial & Co-occurrence Clustering"]
-        ML_Scoring["Tabular ML Route & Stop Compatibility Predictor"]
-        DeterministicVal["Deterministic Validation Layer (Zero-Loss / Strict Capacity)"]
+    subgraph DATABASE["MongoDB"]
+        DB1[("Users")]
+        DB2[("Vehicles and Schedules")]
+        DB3[("Routes and Stops")]
+        DB4[("AI Plans")]
+        DB5[("Historical Routes and Training Records")]
+        DB6[("Road Matrix Cache and Route Performance")]
+        DB7[("Inward Starting Places and Late-Response Events")]
     end
 
-    subgraph DataPipeline ["Historical & ML Training Pipeline (Python + Node.js)"]
-        Hist_Store["Historical Route Repository (HistoricalRoute Model)"]
-        Perf_Telemetry["Plan Performance Telemetry (RoutePerformance Model)"]
-        ETL["Training Data Preprocessor (prepare_dataset.py)"]
-        Model_Train["Baseline ML Model Trainer (train_model.py)"]
-        Model_Weights["Exported Weights (route_quality_model.json)"]
+    AR --> DB1
+    UR --> DB1
+    UR --> DB2
+    RR --> DB2
+    RR --> DB3
+    ER --> DB1
+    ER --> DB3
+    AG --> DB4
+    AG --> DB1
+    RE --> DB6
+    ROAD --> DB6
+    MP --> DB5
+    LC --> DB7
+    LC --> DB4
+    LR --> DB7
+
+    subgraph EXTERNAL["External Services"]
+        OSRM["OSRM Road Routing"]
+        NOM["Nominatim Geocoding"]
+        WAPP["WhatsApp via Baileys"]
+        XLS["Excel Spreadsheet Files"]
     end
 
-    subgraph StorageLayer ["Persistence Layer (MongoDB Atlas)"]
-        DB_Users[("Users / Passengers")]
-        DB_Vehicles[("Vehicles & Capacity")]
-        DB_Schedules[("Schedules & Constraints")]
-        DB_Plans[("AI Plans & Manual Plans")]
-        DB_LateEvents[("LateResponseEvents")]
-        DB_HistRoutes[("Historical Routes")]
-        DB_MatrixCache[("RoadMatrixCache")]
-        DB_Perf[("RoutePerformance")]
-    end
+    ROAD --> OSRM
+    MA --> OSRM
+    LR --> NOM
+    WR --> WAPP
+    EX --> XLS
 
-    %% Client to API
-    UI_Admin --> CTRL
-    UI_Student --> CTRL
-    UI_AIAgent --> CTRL
-    CTRL --> AUTH
-    CTRL --> AIAgent
-    CTRL --> Demand
-
-    %% API to Optimization
-    AIAgent --> Cluster
-    Cluster --> CW_Opt
-    CW_Opt --> ML_Scoring
-    CW_Opt --> CW_Opt
-    Cluster --> GeoCache
-    GeoCache --> OSRM_Client
-    CW_Opt --> DeterministicVal
-    DeterministicVal --> AIAgent
-
-    %% Late Response Workflow
-    Demand --> LateResp
-    LateResp --> DB_LateEvents
-
-    %% Persistence
-    CTRL --> DB_Users
-    CTRL --> DB_Vehicles
-    CTRL --> DB_Schedules
-    AIAgent --> DB_Plans
-    GeoCache --> DB_MatrixCache
-    AIAgent --> DB_Perf
-
-    %% ML Pipeline & Telemetry
-    AIAgent -.-> Perf_Telemetry
-    Perf_Telemetry --> Hist_Store
-    Hist_Store --> DB_HistRoutes
-    Hist_Store --> ETL
-    ETL --> Model_Train
-    Model_Train --> Model_Weights
-    Model_Weights -.-> ML_Scoring
+    AG --> PLAN["Generated Transportation Plan"]
+    PLAN --> REVIEW["Administrator Review and Approval"]
+    REVIEW --> ACT["Plan Activation and Passenger Allocation"]
+    ACT --> DB1
+    ACT --> DB4
+    DB1 --> DASH["Student Dashboard"]
+    DASH --> STATUS["Coming / Not Coming / Pending"]
+    STATUS --> AG
+    ACT --> LATE["Late Coming Response"]
+    LATE --> LC
+    LC --> REGEN["Regeneration and Re-approval"]
+    REGEN --> REVIEW
+    RESET["Direction-Specific Plan Reset"] --> AG
+    RESET --> DB4
+    RESET --> DB1
 ```
+
+## Main Components
+
+### 1. Frontend
+
+The React/Vite application provides separate interfaces for administrators and students. Administrators manage users, vehicles, schedules, routes, and transportation plans. Students submit travel-status responses and view their transportation allocation.
+
+### 2. Backend and API
+
+The Node.js/Express backend exposes REST APIs for authentication, user and vehicle management, routes, schedules, Excel imports, AI recommendations, location management, WhatsApp, and automation.
+
+### 3. AI Route Optimization
+
+The route optimization pipeline uses road-network information, passenger demand, vehicle capacity, stop locations, and fleet availability to generate transportation plans. Optimization techniques include capacity-aware routing, road-cost-based stop sequencing, route improvement, and 2-opt optimization.
+
+### 4. Database
+
+MongoDB stores user information, vehicles, schedules, routes, stops, AI plans, historical route information, road-matrix cache data, and late-response events.
+
+### 5. External Services
+
+- **OSRM:** Road-network distances, travel-time estimates, and route geometry.
+- **Nominatim:** Geographic location search and geocoding.
+- **WhatsApp:** Messaging integration through the Baileys library.
+- **Excel:** Spreadsheet-based user-data import.
+
+Availability and behavior depend on the current implementation and external service connectivity.
+
+## Transportation Plan Lifecycle
+
+1. Students submit their travel status.
+2. The backend identifies confirmed passengers and available vehicles.
+3. The route optimization engine generates a proposed plan.
+4. The administrator reviews and approves the plan.
+5. Plan activation saves passenger allocations.
+6. Students view their allocations on the student dashboard.
+7. A late Coming response after plan approval can trigger the late-response handling and regeneration workflow.
+8. An administrator can reset a plan when required. Reset behavior is direction-specific.
+
+## Machine Learning Status
+
+The current route-planning implementation includes deterministic heuristic optimization and historical-data-based features. A trained machine-learning model should not be considered active unless model training and inference are verified in the implementation.
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React, Vite, CSS |
+| Backend | Node.js, Express |
+| Database | MongoDB, Mongoose |
+| Mapping and routing | OSRM, Nominatim, Leaflet where implemented |
+| Spreadsheet import | XLSX |
+| Messaging | Baileys WhatsApp integration |
+| Optimization | Road-aware routing, capacity constraints, route-improvement algorithms |
 
 ---
 
-## 2. Core Architectural Principles
-
-The architecture follows a strict hierarchy of authority:
-
-```
-+-------------------------------------------------------------+
-|                      HUMAN AUTHORITY                        |
-|   Admin Reviews, Approves, and Activates Transportation     |
-+-------------------------------------------------------------+
-                              |
-+-------------------------------------------------------------+
-|                 DETERMINISTIC SAFETY LAYER                  |
-|   Zero passenger loss; strict vehicle capacity enforcement; |
-|   passenger uniqueness; schedule availability checking.      |
-+-------------------------------------------------------------+
-                              |
-+-------------------------------------------------------------+
-|                    ROAD NETWORK VERIFIER                    |
-|   OSRM Table API (real travel time/distance matrices) &     |
-|   OSRM Route API (true road geometry and turn-by-turn).     |
-+-------------------------------------------------------------+
-                              |
-+-------------------------------------------------------------+
-|                  COMBINATORIAL SEARCH & DSA                 |
-|   Clarke-Wright Savings; Min-Heap Priority Queue;           |
-|   Capacity-Aware Greedy Clustering; 2-Opt Local Search.     |
-+-------------------------------------------------------------+
-                              |
-+-------------------------------------------------------------+
-|                     MACHINE LEARNING                        |
-|   Tabular scoring advisor: Stop Compatibility, Route        |
-|   Quality, Vehicle Suitability (never overrides road laws).  |
-+-------------------------------------------------------------+
-```
-
----
-
-## 3. Detailed Component Lifecycles
-
-### A. AI Plan vs Manual Plan Lifecycle
-1. **Demand Snapshot**: Student travel status is aggregated (`Coming`, `Not Coming`, `Pending`). Only confirmed `Coming` passengers are routed.
-2. **Recommendation Generation (Dry-Run)**: The engine clusters stops, queries OSRM (with MongoDB caching), calculates Clarke-Wright savings, scores candidates with ML, and applies 2-opt search. No database records are modified during preview.
-3. **Admin Review & Approval**: The plan is saved as `DRAFT`, then transitioned to `APPROVED`.
-4. **Plan Activation**: Upon activation, students are assigned their bus details, and a telemetry record is automatically written to `RoutePerformance` and `HistoricalRoute` to continuously expand training data.
-
-### B. Late-Response Isolation Workflow
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Student
-    participant System as Travel Status Controller
-    participant DB as MongoDB (LateResponseEvent)
-    actor Admin
-    participant Engine as AI Route Optimization Engine
-
-    Student->>System: Updates status to "Coming" (AFTER plan approved/active)
-    System->>DB: Log LateResponseEvent (status: PENDING)
-    System-->>Student: Confirm received; status: UNALLOCATED / WAITING
-    Note over Student,System: Student is NOT automatically inserted into active route
-    Admin->>System: Inspects Unallocated / Late-Response Queue
-    Admin->>Engine: Requests Route Regeneration or Manual Allocation
-    Engine-->>Admin: Proposes Revised Plan with Capacity Checks
-    Admin->>System: Approves & Activates Updated Plan
-    System->>DB: Mark LateResponseEvent as RESOLVED
-    System-->>Student: Bus Allocation Confirmed
-```
-
----
-
-## 4. Multi-Tier ML Fallback Hierarchy
-
-To guarantee reliability across organizations of all sizes (from single school startups to multi-campus universities):
-
-1. **Tier 1 (Trained ML Model)**: Used when `>= 10` validated historical routes exist. Scores candidate routes and stop co-occurrence affinities using weights learned from actual institutional trips.
-2. **Tier 2 (Historical Co-occurrence Graph)**: When formal models are training, candidate stops are scored based on empirical Jaccard similarity and co-occurrence frequency in past schedules.
-3. **Tier 3 (Pure Deterministic Optimization)**: When cold-starting with zero historical data, the engine gracefully falls back to classical Clarke-Wright savings, nearest insertion, spatial Euclidean/OSRM heuristics, and 2-opt refinement.
-
----
-
-## 5. Algorithmic Specifications
-
-| Component | Algorithm / Structure | Purpose |
-| :--- | :--- | :--- |
-| **Savings Queue** | Binary Min-Heap (`PriorityQueue`) | $O(\log K)$ extraction of top Clarke-Wright savings candidates |
-| **Stop Clustering** | Capacity-Constrained Greedy Clustering | Prevents cluster overflow before routing commences |
-| **Route Generation** | Clarke-Wright Savings with ML Blending | Merges radial trips based on road savings $\times$ ML affinity |
-| **Stop Sequencing** | 2-Opt Local Search | Uncrosses paths and minimizes total road distance/time |
-| **Matrix Caching** | Two-Tier Cache (In-Memory + MongoDB TTL) | Eliminates redundant OSRM network calls for recurring stops |
-| **Telemetry Recording** | Automated Event Listener | Records planned vs. actual operational metrics upon plan activation |
