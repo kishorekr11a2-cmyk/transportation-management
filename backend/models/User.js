@@ -93,6 +93,11 @@ const userSchema = new mongoose.Schema(
             trim: true
         },
 
+        responseLocked: {
+            type: Boolean,
+            default: false
+        },
+
         lateResponseDetected: {
             type: Boolean,
             default: false
@@ -274,6 +279,15 @@ userSchema.index({ role: 1, requiresReallocation: 1 });
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ role: 1, "allocatedBus.direction": 1 });
 userSchema.index({ role: 1, "allocatedBus.isAllocated": 1 });
+
+userSchema.pre("save", function (next) {
+    if (this.travelStatus === "Pending") {
+        this.responseLocked = false;
+    } else if (this.travelStatus === "Coming" || this.travelStatus === "Not Coming") {
+        this.responseLocked = true;
+    }
+    if (typeof next === "function") next();
+});
 
 export default mongoose.model(
     "User",

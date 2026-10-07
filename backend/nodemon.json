@@ -1,0 +1,21 @@
+{
+  "watch": [
+    "server.js",
+    "controllers",
+    "models",
+    "routes",
+    "services",
+    "middleware"
+  ],
+  "ignore": [
+    "whatsapp/auth/**",
+    "whatsapp/auth/*",
+    "whatsapp/auth",
+    "uploads/**",
+    "tests/**",
+    "*.test.js",
+    "*.xlsx",
+    "*.log"
+  ],
+  "ext": "js,mjs,json"
+}

@@ -32,15 +32,16 @@ const PlanConfirmation = () => {
     const isPendingMode = Boolean(isPendingParam && pendingPlan?.plan);
 
     const urlDirection = searchParams.get("direction")?.toUpperCase();
-    const initialDirection = (urlDirection === "OUTWARD" || urlDirection === "INWARD" || urlDirection === "BOTH")
+    const initialDirection = (urlDirection === "OUTWARD" || urlDirection === "INWARD")
         ? urlDirection
-        : (pendingPlan?.direction || (() => {
-            try {
-                return localStorage.getItem("active_confirmation_direction") ||
-                    localStorage.getItem("active_plan_direction") ||
-                    "OUTWARD";
-            } catch { return "OUTWARD"; }
-        })());
+        : ((pendingPlan?.direction === "OUTWARD" || pendingPlan?.direction === "INWARD")
+            ? pendingPlan.direction
+            : (() => {
+                try {
+                    const stored = localStorage.getItem("active_confirmation_direction") || localStorage.getItem("active_plan_direction");
+                    return (stored === "OUTWARD" || stored === "INWARD") ? stored : "OUTWARD";
+                } catch { return "OUTWARD"; }
+            })());
 
     const urlPlanType = searchParams.get("type")?.toUpperCase();
     const initialPlanType = (urlPlanType === "AI" || urlPlanType === "ADMIN" || urlPlanType === "MANUAL")
@@ -79,10 +80,10 @@ const PlanConfirmation = () => {
                 inwardManualRes,
                 inwardAiDataRes
             ] = await Promise.allSettled([
-                getActivePlan({ direction: "OUTWARD", forceRefresh: true }),
+                getActivePlan({ direction: "OUTWARD", planType: "AI", forceRefresh: true }),
                 getManualPlan({ direction: "OUTWARD" }),
                 getAIData({ direction: "OUTWARD" }).catch(() => null),
-                getActivePlan({ direction: "INWARD", forceRefresh: true }),
+                getActivePlan({ direction: "INWARD", planType: "AI", forceRefresh: true }),
                 getManualPlan({ direction: "INWARD" }),
                 getAIData({ direction: "INWARD" }).catch(() => null)
             ]);
@@ -138,7 +139,7 @@ const PlanConfirmation = () => {
             // Auto-detect planType based on persistent MongoDB lifecycle priority if not explicitly specified in URL
             if (!urlPlanType) {
                 const getPlanRank = (p) => {
-                    if (!p) return 0;
+                    if (!p || p.isStale === true || p.status === "stale") return 0;
                     if (p.isApproved === true || p.approved === true || (p.status === "active" && p.approvedAt)) return 3; // Approved & Assigned
                     if (p.isSubmitted === true || p.status === "pending_approval" || p.status === "submitted") return 2; // Pending approval
                     const bList = Array.isArray(p.buses) ? p.buses : (Array.isArray(p.routes) ? p.routes : []);
@@ -163,6 +164,19 @@ const PlanConfirmation = () => {
                     setPlanType("AI");
                 }
             }
+
+            // Auto-detect direction if URL didn't force a single direction
+            if (!urlDirection) {
+                const outDoc = outwardAiRes.status === "fulfilled" && outwardAiRes.value?.success ? (outwardAiRes.value.outwardPlan || outwardAiRes.value.plan) : null;
+                const inDoc = inwardAiRes.status === "fulfilled" && inwardAiRes.value?.success ? (inwardAiRes.value.inwardPlan || inwardAiRes.value.plan) : null;
+                const hasOut = Boolean(outDoc && (Array.isArray(outDoc.buses) ? outDoc.buses.length : outDoc.routes?.length));
+                const hasIn = Boolean(inDoc && (Array.isArray(inDoc.buses) ? inDoc.buses.length : inDoc.routes?.length));
+                if (hasIn && !hasOut) {
+                    setDirection("INWARD");
+                } else {
+                    setDirection((prev) => (prev === "INWARD" ? "INWARD" : "OUTWARD"));
+                }
+            }
         } catch (err) {
             console.error("Load Confirmation Data Error:", err);
             toast.error("Failed to load plan confirmation data from server.");
@@ -176,6 +190,7 @@ const PlanConfirmation = () => {
     }, [loadConfirmationData]);
 
     const handleDirectionChange = (newDir) => {
+        if (newDir !== "OUTWARD" && newDir !== "INWARD") return;
         if (newDir === direction) return;
         setDirection(newDir);
         try {
@@ -190,7 +205,7 @@ const PlanConfirmation = () => {
 
         if (!urlPlanType) {
             const getPlanRank = (p) => {
-                if (!p) return 0;
+                if (!p || p.isStale === true || p.status === "stale") return 0;
                 if (p.isApproved === true || p.approved === true || (p.status === "active" && p.approvedAt)) return 3;
                 if (p.isSubmitted === true || p.status === "pending_approval" || p.status === "submitted") return 2;
                 const bList = Array.isArray(p.buses) ? p.buses : (Array.isArray(p.routes) ? p.routes : []);
@@ -284,12 +299,15 @@ const PlanConfirmation = () => {
             (targetPlan.status === "active" && targetPlan.approvedAt)
         );
 
-        // A plan is pending approval when submitted but NOT yet approved, OR when approved plan has pending late responses
+        // A plan is pending approval when submitted but NOT yet approved, OR when approved plan has pending late responses, OR when generated and awaiting approval
         const isPendingApproval = !isActive && Boolean(
             hasLate ||
             targetPlan.isSubmitted === true ||
             targetPlan.status === "pending_approval" ||
-            targetPlan.status === "submitted"
+            targetPlan.status === "submitted" ||
+            targetPlan.status === "generated" ||
+            isPendingMode ||
+            (routesCount > 0 && !isActive)
         );
 
         return {
@@ -308,47 +326,26 @@ const PlanConfirmation = () => {
     const isOutwardPending = Boolean(isPendingMode && (pendingPlan?.direction === "OUTWARD" || !pendingPlan?.direction));
     const isInwardPending = Boolean(isPendingMode && pendingPlan?.direction === "INWARD");
 
-    const outwardTargetDoc = planType === "ADMIN" ? outwardManualPlan : outwardAiPlan;
-    const inwardTargetDoc = planType === "ADMIN" ? inwardManualPlan : inwardAiPlan;
+    const outwardTargetDoc = (isOutwardPending && pendingPlan?.plan)
+        ? pendingPlan.plan
+        : (planType === "ADMIN" ? outwardManualPlan : outwardAiPlan);
+    const inwardTargetDoc = (isInwardPending && pendingPlan?.plan)
+        ? pendingPlan.plan
+        : (planType === "ADMIN" ? inwardManualPlan : inwardAiPlan);
 
     const outwardMetrics = extractPlanMetrics(outwardTargetDoc, outwardAttendance, isOutwardPending);
     const inwardMetrics = extractPlanMetrics(inwardTargetDoc, inwardAttendance, isInwardPending);
 
-    const activeMetrics = (() => {
-        if (direction === "OUTWARD") return outwardMetrics;
-        if (direction === "INWARD") return inwardMetrics;
-        return {
-            students: Math.max(outwardMetrics.students, inwardMetrics.students),
-            routes: outwardMetrics.routes + inwardMetrics.routes,
-            vehicles: outwardMetrics.vehicles + inwardMetrics.vehicles,
-            seats: outwardMetrics.seats + inwardMetrics.seats,
-            allocated: outwardMetrics.allocated + inwardMetrics.allocated,
-            isActive: outwardMetrics.isActive && inwardMetrics.isActive,
-            isPendingApproval: outwardMetrics.isPendingApproval || inwardMetrics.isPendingApproval,
-            isAvailable: outwardMetrics.isAvailable || inwardMetrics.isAvailable
-        };
-    })();
+    const activeMetrics = direction === "INWARD" ? inwardMetrics : outwardMetrics;
+    const activeTargetDoc = direction === "INWARD" ? inwardTargetDoc : outwardTargetDoc;
 
     // Determine if current selection is active/confirmed
-    const isCurrentPlanActive = (() => {
-        if (isPendingMode) return false;
-        if (direction === "OUTWARD") return outwardMetrics.isActive;
-        if (direction === "INWARD") return inwardMetrics.isActive;
-        if (direction === "BOTH") return outwardMetrics.isActive && inwardMetrics.isActive;
-        return false;
-    })();
+    const isCurrentPlanActive = !isPendingMode && Boolean(activeMetrics.isActive);
 
     // Determine if current selection is submitted and pending approval
-    const isCurrentPlanPendingApproval = (() => {
-        if (isPendingMode) return false;
-        if (direction === "OUTWARD") return outwardMetrics.isPendingApproval;
-        if (direction === "INWARD") return inwardMetrics.isPendingApproval;
-        if (direction === "BOTH") return outwardMetrics.isPendingApproval || inwardMetrics.isPendingApproval;
-        return false;
-    })();
+    const isCurrentPlanPendingApproval = !isPendingMode && Boolean(activeMetrics.isPendingApproval);
 
     // Stale Demand Check: plan marked stale by backend
-    const activeTargetDoc = direction === "INWARD" ? inwardTargetDoc : outwardTargetDoc;
     const isPlanDemandStale = Boolean(
         !isPendingMode &&
         (activeTargetDoc?.isStale === true || activeTargetDoc?.status === "stale")
@@ -372,10 +369,10 @@ const PlanConfirmation = () => {
             const targetDirection = (isPendingMode && pendingPlan?.direction) ? pendingPlan.direction : direction;
             const targetPlanType = (isPendingMode && pendingPlan?.planType) ? pendingPlan.planType : planType;
 
-            if (targetDirection === "OUTWARD" || targetDirection === "BOTH") {
+            if (targetDirection === "OUTWARD") {
                 if (targetPlanType === "ADMIN") {
                     const res = await approveManualPlan({ direction: "OUTWARD" });
-                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Outward Manual plan.");
+                    if (!res?.success) throw new Error(res?.message || "Failed to approve Outward Manual plan.");
                 } else if (outwardAiPlan || (isPendingMode && pendingPlan?.direction === "OUTWARD")) {
                     const planPayload = (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.plan)
                         ? pendingPlan.plan
@@ -388,14 +385,12 @@ const PlanConfirmation = () => {
                         planId: (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.planId) || outwardAiPlan?._id || outwardAiPlan?.planId,
                         startingPoint: (isPendingMode && pendingPlan?.direction === "OUTWARD" && pendingPlan?.startingPoint) || outwardAiPlan?.startingPoint || null
                     });
-                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Outward AI plan.");
+                    if (!res?.success) throw new Error(res?.message || "Failed to approve Outward AI plan.");
                 }
-            }
-
-            if (targetDirection === "INWARD" || targetDirection === "BOTH") {
+            } else if (targetDirection === "INWARD") {
                 if (targetPlanType === "ADMIN") {
                     const res = await approveManualPlan({ direction: "INWARD" });
-                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Inward Manual plan.");
+                    if (!res?.success) throw new Error(res?.message || "Failed to approve Inward Manual plan.");
                 } else if (inwardAiPlan || (isPendingMode && pendingPlan?.direction === "INWARD")) {
                     const planPayload = (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.plan)
                         ? pendingPlan.plan
@@ -408,11 +403,11 @@ const PlanConfirmation = () => {
                         planId: (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.planId) || inwardAiPlan?._id || inwardAiPlan?.planId,
                         startingPoint: (isPendingMode && pendingPlan?.direction === "INWARD" && pendingPlan?.startingPoint) || inwardAiPlan?.startingPoint || null
                     });
-                    if (!res?.success && targetDirection !== "BOTH") throw new Error(res?.message || "Failed to approve Inward AI plan.");
+                    if (!res?.success) throw new Error(res?.message || "Failed to approve Inward AI plan.");
                 }
             }
 
-            toast.success(`✓ Plan approved & students allocated successfully in database!`);
+            toast.success(`✓ ${targetDirection === "OUTWARD" ? "Outward" : "Inward"} ${targetPlanType === "ADMIN" ? "Manual" : "AI"} plan approved & students allocated successfully in database!`);
 
             try { sessionStorage.removeItem("pending_confirmation_plan"); } catch {}
             setPendingPlan(null);
@@ -514,13 +509,6 @@ const PlanConfirmation = () => {
                             >
                                 🟢 INWARD
                             </button>
-                            <button
-                                type="button"
-                                className={`sel-btn ${direction === "BOTH" ? "active both" : ""}`}
-                                onClick={() => handleDirectionChange("BOTH")}
-                            >
-                                🔄 BOTH
-                            </button>
                         </div>
                     </div>
 
@@ -545,7 +533,7 @@ const PlanConfirmation = () => {
                     </div>
                 </div>
 
-                {/* 2. Compact Plan Summary */}
+                {/* 2. Respective Plan Details */}
                 {loading ? (
                     <div className="compact-loading-card">
                         <div className="loading-spinner" />
@@ -553,55 +541,9 @@ const PlanConfirmation = () => {
                     </div>
                 ) : (
                     <div className="compact-summary-section">
-                        {direction === "OUTWARD" && renderCompactCard("Outward", "🔵", outwardMetrics)}
-
-                        {direction === "INWARD" && renderCompactCard("Inward", "🟢", inwardMetrics)}
-
-                        {direction === "BOTH" && (
-                            <div className="both-summaries-stack">
-                                {renderCompactCard("Outward", "🔵", outwardMetrics)}
-                                {renderCompactCard("Inward", "🟢", inwardMetrics)}
-
-                                {/* Small Combined Summary */}
-                                <div className="compact-plan-card combined-card">
-                                    <div className="compact-card-header">
-                                        <h4 className="compact-card-title combined-title">Combined Summary</h4>
-                                    </div>
-                                    <div className="compact-stats-list">
-                                        <div className="stat-line">
-                                            <span className="stat-label">Students</span>
-                                            <span className="stat-val font-numeric">
-                                                {outwardMetrics.students + inwardMetrics.students}
-                                            </span>
-                                        </div>
-                                        <div className="stat-line">
-                                            <span className="stat-label">Total Routes</span>
-                                            <span className="stat-val font-numeric">
-                                                {outwardMetrics.routes + inwardMetrics.routes}
-                                            </span>
-                                        </div>
-                                        <div className="stat-line">
-                                            <span className="stat-label">Total Vehicles</span>
-                                            <span className="stat-val font-numeric">
-                                                {outwardMetrics.vehicles + inwardMetrics.vehicles}
-                                            </span>
-                                        </div>
-                                        <div className="stat-line">
-                                            <span className="stat-label">Total Seats</span>
-                                            <span className="stat-val font-numeric">
-                                                {outwardMetrics.seats + inwardMetrics.seats}
-                                            </span>
-                                        </div>
-                                        <div className="stat-line">
-                                            <span className="stat-label">Total Allocated</span>
-                                            <span className="stat-val font-numeric highlight-green">
-                                                {outwardMetrics.allocated + inwardMetrics.allocated}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        {direction === "OUTWARD"
+                            ? renderCompactCard("Outward", "🔵", outwardMetrics)
+                            : renderCompactCard("Inward", "🟢", inwardMetrics)}
                     </div>
                 )}
 

@@ -21,7 +21,27 @@ export const triggerTravelStatusAutomation = async () => {
     return response.data;
 };
 
+/**
+ * Check if Approved + Allocated conditions are met for sending allocation details.
+ */
+export const getAllocationStatus = async () => {
+    const response = await api.get("/whatsapp/allocation-status");
+    return response.data;
+};
+
+/**
+ * Trigger sending approved transportation allocation details to allocated students.
+ */
+export const triggerAllocationDetailsAutomation = async () => {
+    const response = await api.post("/whatsapp/send-allocation-details", {}, {
+        timeout: 60000
+    });
+    return response.data;
+};
+
 export default {
     triggerTravelStatusAutomation,
+    getAllocationStatus,
+    triggerAllocationDetailsAutomation,
     N8N_TRAVEL_STATUS_WEBHOOK_URL
 };

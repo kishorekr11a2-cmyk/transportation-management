@@ -239,6 +239,7 @@ export const getUsers = async (req, res) => {
                 country: 1,
                 phoneNumber: 1,
                 travelStatus: 1,
+                responseLocked: 1,
                 assignedVehicle: 1,
                 assignedRoute: 1,
                 allocationStatus: 1,
@@ -563,7 +564,394 @@ export const getUserAllocation = async (req, res) => {
 };
 
 // =====================================================
-// UPDATE TRAVEL STATUS (STUDENT / USER ONLY)
+// =====================================================
+// SHARED HELPER: HANDLE STUDENT TRAVEL STATUS SUBMISSION
+// (Used by both Website Student Dashboard and WhatsApp Inbound Webhook)
+// =====================================================
+
+// In-memory per-student concurrency lock queue
+const studentSubmissionQueues = new Map();
+
+export function withStudentSubmissionLock(studentKey, fn) {
+    if (!studentKey) return fn();
+    const key = String(studentKey);
+    const prevPromise = studentSubmissionQueues.get(key) || Promise.resolve();
+    const nextPromise = prevPromise
+        .catch(() => {})
+        .then(fn)
+        .finally(() => {
+            if (studentSubmissionQueues.get(key) === nextPromise) {
+                studentSubmissionQueues.delete(key);
+            }
+        });
+    studentSubmissionQueues.set(key, nextPromise);
+    return nextPromise;
+}
+
+export const handleStudentTravelStatusSubmission = async ({
+    user,
+    travelStatus,
+    requestedDirection = null,
+    source = "web"
+}) => {
+    const studentKey = String(user?.userId || user?._id || "unknown");
+    return withStudentSubmissionLock(studentKey, async () => {
+        const allowedStatuses = ["Coming", "Not Coming"];
+        if (!allowedStatuses.includes(travelStatus)) {
+            return {
+                success: false,
+                message: "Invalid travel status. Only 'Coming' or 'Not Coming' can be submitted."
+            };
+        }
+
+        if (!user || user.role !== "student") {
+            return {
+                success: false,
+                message: "Only students can update travel status."
+            };
+        }
+
+        // 1. Fetch fresh state directly from MongoDB (source of truth)
+        let currentUser = user;
+        const canQueryDb = isDbConnected() && user._id && mongoose.Types.ObjectId.isValid(user._id);
+        if (canQueryDb) {
+            const freshDoc = await User.findById(user._id);
+            if (freshDoc) {
+                currentUser = freshDoc;
+            }
+        }
+
+        // 2. ENFORCE SINGLE-SUBMISSION PER CYCLE (MongoDB Source of Truth):
+        // Single source of truth: If travelStatus !== "Pending", response is locked until administrator reset.
+        if (currentUser.travelStatus && currentUser.travelStatus !== "Pending") {
+            return {
+                success: false,
+                alreadySubmitted: true,
+                code: "RESPONSE_ALREADY_SUBMITTED",
+                message: `Your travel response has already been recorded as "${currentUser.travelStatus}". Your response is locked and cannot be changed until administrator reset.`,
+                travelStatus: currentUser.travelStatus,
+                allocationStatus: currentUser.allocationStatus,
+                responseLocked: true
+            };
+        }
+
+        user = currentUser;
+
+        const previousTravelStatus = user.previousTravelStatus || "Pending";
+        const responseSubmittedAt = new Date();
+
+    // Helper to format clean user payload for instant frontend hydration
+    const buildSanitizedUser = (u) => {
+        const isLateResponse = Boolean(
+            u.travelStatus === "Coming" &&
+            (Boolean(u.isLateResponse) || Boolean(u.lateResponseDetected) || u.allocationStatus === "Pending Reallocation" || Boolean(u.requiresReallocation))
+        );
+        const isAllocated = !isLateResponse && Boolean(
+            u.travelStatus === "Coming" &&
+            (u.isAllocated === true || u.allocationStatus === "Assigned" || u.allocationStatus === "Re-assigned") &&
+            (u.allocatedBus?.isAllocated || u.assignedVehicle || u.manualBusId)
+        );
+        const isUnallocated = !isAllocated;
+        const effectiveAllocationStatus = isLateResponse
+            ? "Unallocated"
+            : (isAllocated ? (u.allocationStatus || "Assigned") : "Unallocated");
+        const unallocatedCategory = (isLateResponse && isUnallocated)
+            ? "LATE_RESPONSE_UNALLOCATED"
+            : (isUnallocated ? "NORMAL_UNALLOCATED" : null);
+
+        return {
+            _id: u._id,
+            userId: u.userId,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            stoppings: u.stoppings,
+            city: u.city,
+            district: u.district,
+            state: u.state,
+            country: u.country,
+            travelStatus: u.travelStatus,
+            responseLocked: Boolean(u.responseLocked || (u.travelStatus && u.travelStatus !== "Pending")),
+            allocationStatus: effectiveAllocationStatus,
+            assignedVehicle: isAllocated ? u.assignedVehicle : null,
+            assignedRoute: isAllocated ? u.assignedRoute : null,
+            allocatedBus: isAllocated ? u.allocatedBus : null,
+            lateResponse: isLateResponse,
+            isLateResponse,
+            lateResponseDetected: isLateResponse,
+            approvedPlanType: u.approvedPlanType,
+            manualRouteId: isAllocated ? u.manualRouteId : null,
+            manualBusId: isAllocated ? u.manualBusId : null,
+            routeId: isAllocated ? u.routeId : null,
+            busId: isAllocated ? u.busId : null,
+            approvalStatus: u.approvalStatus,
+            lateResponseAt: u.lateResponseAt,
+            travelResponseSubmittedAt: u.travelResponseSubmittedAt,
+            lastTravelResponseAt: u.lastTravelResponseAt,
+            previousTravelStatus: u.previousTravelStatus,
+            requiresReallocation: u.requiresReallocation,
+            affectedDirections: u.affectedDirections,
+            isAllocated,
+            isUnallocated,
+            unallocatedCategory,
+            outward: u.outward || u.allocatedBus?.outward || null,
+            inward: u.inward || u.allocatedBus?.inward || null
+        };
+    };
+
+    const approvedPlans = await resolveActiveApprovedPlans();
+    const activeApprovedPlan = approvedPlans.OUTWARD.isApproved ? approvedPlans.OUTWARD : (approvedPlans.INWARD.isApproved ? approvedPlans.INWARD : null);
+    const currentPlanVersion = (activeApprovedPlan && typeof activeApprovedPlan.planVersion === "number") ? activeApprovedPlan.planVersion : (activeApprovedPlan ? 1 : null);
+    const currentApprovalEventId = activeApprovedPlan ? activeApprovedPlan.approvalEventId : null;
+
+    const sId = String(user.userId || "").toLowerCase().trim();
+    const sMongoId = String(user._id || "").toLowerCase().trim();
+
+    // Check if student is already allocated in an active approved plan
+    const validation = await validateStudentResponse({
+        user,
+        activePlan: activeApprovedPlan,
+        travelStatus,
+        responseSubmittedAt
+    });
+
+    if (!validation.allowed) {
+        return {
+            success: false,
+            code: validation.code,
+            message: validation.message,
+            travelStatus: user.travelStatus,
+            allocationStatus: user.allocationStatus,
+            responseLocked: true,
+            planVersion: currentPlanVersion || 1
+        };
+    }
+
+    // =====================================================
+    // CASE 1: Student selects "Not Coming"
+    // =====================================================
+    if (travelStatus === "Not Coming") {
+        const responseVersion = (user.responseVersion || 0) + 1;
+        const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
+        user.responseEventId = responseEventId;
+        user.lastResponseEventId = responseEventId;
+        user.responseVersion = responseVersion;
+        user.previousTravelStatus = previousTravelStatus;
+        user.travelStatus = "Not Coming";
+        user.responseLocked = true;
+        user.travelResponseSubmittedAt = responseSubmittedAt;
+        user.lastTravelResponseAt = responseSubmittedAt;
+        user.submittedPlanVersion = currentPlanVersion;
+        user.submittedApprovalEventId = currentApprovalEventId;
+        user.allocationStatus = "Not Assigned";
+        user.assignedVehicle = null;
+        user.assignedRoute = null;
+        user.allocatedBus = null;
+        user.lateResponseDetected = false;
+        user.lateResponse = false;
+        user.isLateResponse = false;
+        user.lateResponseAt = null;
+        user.requiresReallocation = false;
+        user.affectedDirections = [];
+        await user.save();
+
+        // Cancel any open late response events for this user
+        try {
+            await LateResponseEvent.updateMany(
+                { userId: String(user.userId || ""), status: { $in: ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] } },
+                { $set: { status: "CANCELLED", resolvedAt: new Date(), updatedAt: new Date(), resolutionReason: "Changed status to Not Coming" } }
+            );
+        } catch (lreErr) {
+            console.warn("LateResponseEvent update on Not Coming warning:", lreErr.message);
+        }
+
+        clearActiveApprovedPlansCache();
+
+        return {
+            success: true,
+            message: "Travel status updated successfully. No bus seat will be reserved.",
+            travelStatus: user.travelStatus,
+            responseLocked: true,
+            allocationStatus: user.allocationStatus,
+            lateResponse: false,
+            isLateResponse: false,
+            user: buildSanitizedUser(user)
+        };
+    }
+
+    // =====================================================
+    // CASE 2: Student selects "Coming"
+    // =====================================================
+    const responseVersion = (user.responseVersion || 0) + 1;
+    const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
+    user.responseEventId = responseEventId;
+    user.lastResponseEventId = responseEventId;
+    user.responseVersion = responseVersion;
+    user.travelResponseSubmittedAt = responseSubmittedAt;
+    user.lastTravelResponseAt = responseSubmittedAt;
+
+    const hasApprovedPlan = Boolean(approvedPlans.INWARD?.isApproved || approvedPlans.OUTWARD?.isApproved);
+
+    const candidateDirections = requestedDirection ? [requestedDirection] : ["INWARD", "OUTWARD"];
+    const lateDirections = [];
+    const lateLifecycleResults = [];
+
+    for (const dir of candidateDirections) {
+        const planForDir = approvedPlans[dir];
+        if (!planForDir || !planForDir.isApproved) {
+            continue;
+        }
+
+        const planApprovedAt = planForDir.approvedAt ? new Date(planForDir.approvedAt) : null;
+        const planApprovalTime = planApprovedAt ? planApprovedAt.getTime() : 0;
+        const isSubmittedAfterPlanApproval = planApprovalTime > 0 && (responseSubmittedAt.getTime() > planApprovalTime);
+
+        const wasInApprovedPlan = Boolean(
+            (planForDir.allocatedUserIds && (planForDir.allocatedUserIds.has(sId) || planForDir.allocatedUserIds.has(sMongoId))) ||
+            (user.allocatedBus?.[dir.toLowerCase()]?.isAllocated && (user.allocatedBus[dir.toLowerCase()].approved === true || user.allocatedBus[dir.toLowerCase()].adminApprovalStatus === "Approved"))
+        );
+
+        if (isSubmittedAfterPlanApproval && !wasInApprovedPlan) {
+            lateDirections.push(dir);
+            const lateLifecycleRes = await createOrGetLateResponseEvent({
+                userId: user.userId,
+                user,
+                direction: dir,
+                planType: planForDir.planType || "AI",
+                approvedPlan: planForDir,
+                responseEventId,
+                responseSubmittedAt,
+                previousTravelStatus
+            });
+            lateLifecycleResults.push(lateLifecycleRes);
+        }
+    }
+
+    // Late Coming Response
+    if (lateDirections.length > 0) {
+        user.travelStatus = "Coming";
+        user.responseLocked = true;
+        user.allocationStatus = "Pending Reallocation";
+        user.isAllocated = false;
+        user.isUnallocated = true;
+        user.assignedVehicle = null;
+        user.assignedRoute = null;
+        user.allocatedBus = null;
+        user.lateResponseDetected = true;
+        user.lateResponse = true;
+        user.isLateResponse = true;
+        user.lateResponseAt = responseSubmittedAt;
+        user.requiresReallocation = true;
+        user.affectedDirections = lateDirections;
+        await user.save();
+
+        for (const lateRes of lateLifecycleResults) {
+            if (lateRes?.isNew) {
+                const planReviewUpdate = {
+                    $set: {
+                        requiresReview: true,
+                        hasLateResponses: true,
+                        pendingReallocation: true,
+                        lastLateResponseAt: responseSubmittedAt
+                    }
+                };
+                const affectedDir = lateRes.event?.direction || null;
+                const dirFilter = affectedDir ? {
+                    $or: [
+                        { direction: affectedDir },
+                        { tripMode: affectedDir },
+                        { tripMode: affectedDir === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+                    ]
+                } : {};
+
+                try {
+                    await AiPlan.updateMany({ active: true, isApproved: true, ...dirFilter }, planReviewUpdate);
+                    if (mongoose.connection?.db) {
+                        await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true, ...dirFilter }, planReviewUpdate);
+                        await mongoose.connection.db.collection("manual_plan_submissions").updateMany({ isSubmitted: true, ...dirFilter }, planReviewUpdate);
+                    }
+                } catch (planErr) {
+                    console.warn("Plan review update warning:", planErr.message);
+                }
+            }
+        }
+
+        clearActiveApprovedPlansCache();
+        const refreshedUser = await User.findById(user._id);
+
+        return {
+            success: true,
+            message: `Travel response recorded as Coming. Transportation allocation is pending administrator review for ${lateDirections.join(", ")}.`,
+            travelStatus: refreshedUser.travelStatus,
+            responseLocked: true,
+            allocationStatus: refreshedUser.allocationStatus,
+            isAllocated: false,
+            isUnallocated: true,
+            lateResponse: true,
+            isLateResponse: true,
+            lateResponseDetected: true,
+            affectedDirections: lateDirections,
+            planVersion: currentPlanVersion,
+            approvalEventId: currentApprovalEventId,
+            responseSubmittedAt,
+            lateResponseEventKey: lateLifecycleResults[0]?.event?.eventKey || lateLifecycleResults[0]?.eventKey,
+            user: buildSanitizedUser(refreshedUser)
+        };
+    }
+
+    // Normal Coming Response
+    const isAllocatedInAnyApprovedPlan = Boolean(
+        (approvedPlans.INWARD?.isApproved && (approvedPlans.INWARD?.allocatedUserIds?.has(sId) || approvedPlans.INWARD?.allocatedUserIds?.has(sMongoId))) ||
+        (approvedPlans.OUTWARD?.isApproved && (approvedPlans.OUTWARD?.allocatedUserIds?.has(sId) || approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId)))
+    );
+
+    user.travelStatus = "Coming";
+    user.responseLocked = true;
+    user.lateResponse = false;
+    user.lateResponseDetected = false;
+    user.isLateResponse = false;
+    user.lateResponseAt = null;
+    user.requiresReallocation = false;
+    user.affectedDirections = [];
+    user.submittedPlanVersion = currentPlanVersion || 0;
+    user.submittedApprovalEventId = currentApprovalEventId || null;
+
+    if (isAllocatedInAnyApprovedPlan) {
+        user.allocationStatus = "Assigned";
+        user.isAllocated = true;
+        user.isUnallocated = false;
+    } else {
+        user.allocationStatus = "Unallocated";
+        user.isAllocated = false;
+        user.isUnallocated = true;
+        user.assignedVehicle = null;
+        user.assignedRoute = null;
+        user.allocatedBus = null;
+    }
+
+    await user.save();
+    clearActiveApprovedPlansCache();
+
+    return {
+        success: true,
+        message: hasApprovedPlan
+            ? "Travel response submitted. Awaiting transportation plan allocation."
+            : "Travel response submitted. Awaiting transportation plan generation and approval.",
+        travelStatus: user.travelStatus,
+        responseLocked: true,
+        allocationStatus: user.allocationStatus,
+        lateResponse: false,
+        isLateResponse: false,
+        lateResponseDetected: false,
+        isAllocated: user.isAllocated,
+        isUnallocated: user.isUnallocated,
+        user: buildSanitizedUser(user)
+    };
+    });
+};
+
+// =====================================================
+// UPDATE TRAVEL STATUS (STUDENT / USER ONLY VIA HTTP)
 // =====================================================
 
 export const updateTravelStatus = async (req, res) => {
@@ -573,15 +961,6 @@ export const updateTravelStatus = async (req, res) => {
 
     try {
         const { travelStatus } = req.body;
-        const allowedStatuses = ["Coming", "Not Coming"];
-
-        if (!allowedStatuses.includes(travelStatus)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid travel status. Only 'Coming' or 'Not Coming' can be submitted."
-            });
-        }
-
         const user = await User.findById(req.user.id);
         if (!user) {
             return res.status(404).json({
@@ -597,343 +976,23 @@ export const updateTravelStatus = async (req, res) => {
             });
         }
 
-        const previousTravelStatus = user.travelStatus || "Pending";
-        const responseSubmittedAt = new Date();
-
-        // Helper to format clean user payload for instant frontend hydration
-        const buildSanitizedUser = (u) => {
-            const isLateResponse = Boolean(
-                u.travelStatus === "Coming" &&
-                (Boolean(u.isLateResponse) || Boolean(u.lateResponseDetected) || u.allocationStatus === "Pending Reallocation" || Boolean(u.requiresReallocation))
-            );
-            const isAllocated = !isLateResponse && Boolean(
-                u.travelStatus === "Coming" &&
-                (u.isAllocated === true || u.allocationStatus === "Assigned" || u.allocationStatus === "Re-assigned") &&
-                (u.allocatedBus?.isAllocated || u.assignedVehicle || u.manualBusId)
-            );
-            const isUnallocated = !isAllocated;
-            const effectiveAllocationStatus = isLateResponse
-                ? "Unallocated"
-                : (isAllocated ? (u.allocationStatus || "Assigned") : "Unallocated");
-            const unallocatedCategory = (isLateResponse && isUnallocated)
-                ? "LATE_RESPONSE_UNALLOCATED" // TYPE 1: Late Coming, unallocated, requires admin review
-                : (isUnallocated ? "NORMAL_UNALLOCATED" : null); // TYPE 2: Normal Coming, unallocated due to capacity/vehicle availability
-
-            return {
-                _id: u._id,
-                userId: u.userId,
-                name: u.name,
-                email: u.email,
-                role: u.role,
-                stoppings: u.stoppings,
-                city: u.city,
-                district: u.district,
-                state: u.state,
-                country: u.country,
-                travelStatus: u.travelStatus,
-                allocationStatus: effectiveAllocationStatus,
-                assignedVehicle: isAllocated ? u.assignedVehicle : null,
-                assignedRoute: isAllocated ? u.assignedRoute : null,
-                allocatedBus: isAllocated ? u.allocatedBus : null,
-                lateResponse: isLateResponse,
-                isLateResponse,
-                lateResponseDetected: isLateResponse,
-                approvedPlanType: u.approvedPlanType,
-                manualRouteId: isAllocated ? u.manualRouteId : null,
-                manualBusId: isAllocated ? u.manualBusId : null,
-                routeId: isAllocated ? u.routeId : null,
-                busId: isAllocated ? u.busId : null,
-                approvalStatus: u.approvalStatus,
-                lateResponseAt: u.lateResponseAt,
-                travelResponseSubmittedAt: u.travelResponseSubmittedAt,
-                lastTravelResponseAt: u.lastTravelResponseAt,
-                previousTravelStatus: u.previousTravelStatus,
-                requiresReallocation: u.requiresReallocation,
-                affectedDirections: u.affectedDirections,
-                isAllocated,
-                isUnallocated,
-                unallocatedCategory,
-                outward: u.outward || u.allocatedBus?.outward || null,
-                inward: u.inward || u.allocatedBus?.inward || null
-            };
-        };
-
-        const approvedPlans = await resolveActiveApprovedPlans();
-        const activeApprovedPlan = approvedPlans.OUTWARD.isApproved ? approvedPlans.OUTWARD : (approvedPlans.INWARD.isApproved ? approvedPlans.INWARD : null);
-        const currentPlanVersion = (activeApprovedPlan && typeof activeApprovedPlan.planVersion === "number") ? activeApprovedPlan.planVersion : (activeApprovedPlan ? 1 : null);
-        const currentApprovalEventId = activeApprovedPlan ? activeApprovedPlan.approvalEventId : null;
-
-        const sId = String(user.userId || "").toLowerCase().trim();
-        const sMongoId = String(user._id || "").toLowerCase().trim();
-
-        if (user.travelStatus === "Not Coming" && travelStatus === "Coming") {
-            return res.status(400).json({
-                success: false,
-                code: "STATUS_CHANGE_NOT_ALLOWED",
-                message: "You cannot change from Not Coming to Coming. Please contact the administrator.",
-                travelStatus: user.travelStatus,
-                allocationStatus: user.allocationStatus,
-                responseLocked: true,
-                planVersion: currentPlanVersion || 1
-            });
-        }
-
-        // 1. Check if student is already allocated in an active approved plan (e.g. Step 8 after Plan Version 2 approval)
-        // Common response validation: enforces 1 student + 1 plan version = 1 response only
-        const validation = await validateStudentResponse({
-            user,
-            activePlan: activeApprovedPlan,
-            travelStatus,
-            responseSubmittedAt
-        });
-
-        if (!validation.allowed) {
-            return res.status(400).json({
-                success: false,
-                code: validation.code,
-                message: validation.message,
-                travelStatus: user.travelStatus,
-                allocationStatus: user.allocationStatus,
-                responseLocked: true,
-                planVersion: currentPlanVersion || 1
-            });
-        }
-
-        // =====================================================
-        // CASE 1: Student selects "Not Coming"
-        // =====================================================
-        if (travelStatus === "Not Coming") {
-            const responseVersion = (user.responseVersion || 0) + 1;
-            const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
-            user.responseEventId = responseEventId;
-            user.lastResponseEventId = responseEventId;
-            user.responseVersion = responseVersion;
-            user.previousTravelStatus = previousTravelStatus;
-            user.travelStatus = "Not Coming";
-            user.travelResponseSubmittedAt = responseSubmittedAt;
-            user.lastTravelResponseAt = responseSubmittedAt;
-            user.submittedPlanVersion = currentPlanVersion;
-            user.submittedApprovalEventId = currentApprovalEventId;
-            user.allocationStatus = "Not Assigned";
-            user.assignedVehicle = null;
-            user.assignedRoute = null;
-            user.allocatedBus = null;
-            user.lateResponseDetected = false;
-            user.lateResponse = false;
-            user.isLateResponse = false;
-            user.lateResponseAt = null;
-            user.requiresReallocation = false;
-            user.affectedDirections = [];
-            await user.save();
-
-            // Cancel any open late response events for this user
-            try {
-                await LateResponseEvent.updateMany(
-                    { userId: String(user.userId || ""), status: { $in: ["OPEN", "ACTIVE", "Pending", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] } },
-                    { $set: { status: "CANCELLED", resolvedAt: new Date(), updatedAt: new Date(), resolutionReason: "Changed status to Not Coming" } }
-                );
-            } catch (lreErr) {
-                console.warn("LateResponseEvent update on Not Coming warning:", lreErr.message);
-            }
-
-            clearActiveApprovedPlansCache();
-
-            return res.status(200).json({
-                success: true,
-                message: "Travel status updated successfully. No bus seat will be reserved.",
-                travelStatus: user.travelStatus,
-                allocationStatus: user.allocationStatus,
-                lateResponse: false,
-                isLateResponse: false,
-                user: buildSanitizedUser(user)
-            });
-        }
-
-        // =====================================================
-        // CASE 2: Student selects "Coming"
-        // =====================================================
-        const responseVersion = (user.responseVersion || 0) + 1;
-        const responseEventId = `resp_${String(user.userId).toLowerCase()}_${responseSubmittedAt.getTime()}`;
-        user.responseEventId = responseEventId;
-        user.lastResponseEventId = responseEventId;
-        user.responseVersion = responseVersion;
-        user.travelResponseSubmittedAt = responseSubmittedAt;
-        user.lastTravelResponseAt = responseSubmittedAt;
-
-        const hasApprovedPlan = Boolean(approvedPlans.INWARD?.isApproved || approvedPlans.OUTWARD?.isApproved);
-
-        // Determine requested direction if explicitly passed (e.g. OUTWARD or INWARD)
         const rawReqDir = req.body?.direction || req.query?.direction;
         const requestedDir = rawReqDir
             ? (String(rawReqDir).toUpperCase().trim() === "OUTWARD" ? "OUTWARD" : (String(rawReqDir).toUpperCase().trim() === "INWARD" ? "INWARD" : null))
             : null;
 
-        const candidateDirections = requestedDir ? [requestedDir] : ["INWARD", "OUTWARD"];
-        const lateDirections = [];
-        const lateLifecycleResults = [];
-
-        // Evaluate Late Response strictly per direction according to critical business rule:
-        // A user becomes a Late Response ONLY when:
-        // 1. An Admin has already approved/confirmed/assigned an active transportation plan for that direction.
-        // 2. The user's response was not included in that assigned plan.
-        // 3. After the plan was already approved/assigned, the user submits Coming (responseSubmittedAt > planApprovalTime).
-        for (const dir of candidateDirections) {
-            const planForDir = approvedPlans[dir];
-            if (!planForDir || !planForDir.isApproved) {
-                // No approved plan exists for this direction -> cannot be late for this direction
-                continue;
-            }
-
-            const planApprovedAt = planForDir.approvedAt ? new Date(planForDir.approvedAt) : null;
-            const planApprovalTime = planApprovedAt ? planApprovedAt.getTime() : 0;
-            const isSubmittedAfterPlanApproval = planApprovalTime > 0 && (responseSubmittedAt.getTime() > planApprovalTime);
-
-            // Check if student was already part of the approved plan by matching unique userId or MongoDB _id
-            const wasInApprovedPlan = Boolean(
-                (planForDir.allocatedUserIds && (planForDir.allocatedUserIds.has(sId) || planForDir.allocatedUserIds.has(sMongoId))) ||
-                (user.allocatedBus?.[dir.toLowerCase()]?.isAllocated && (user.allocatedBus[dir.toLowerCase()].approved === true || user.allocatedBus[dir.toLowerCase()].adminApprovalStatus === "Approved"))
-            );
-
-            if (isSubmittedAfterPlanApproval && !wasInApprovedPlan) {
-                lateDirections.push(dir);
-                const lateLifecycleRes = await createOrGetLateResponseEvent({
-                    userId: user.userId,
-                    user,
-                    direction: dir,
-                    planType: planForDir.planType || "AI",
-                    approvedPlan: planForDir,
-                    responseEventId,
-                    responseSubmittedAt,
-                    previousTravelStatus
-                });
-                lateLifecycleResults.push(lateLifecycleRes);
-            }
-        }
-
-        // =====================================================
-        // SUB-CASE 1: GENUINE LATE RESPONSE DETECTED
-        // =====================================================
-        if (lateDirections.length > 0) {
-            user.travelStatus = "Coming";
-            user.allocationStatus = "Pending Reallocation";
-            user.isAllocated = false;
-            user.isUnallocated = true;
-            user.assignedVehicle = null;
-            user.assignedRoute = null;
-            user.allocatedBus = null;
-            user.lateResponseDetected = true;
-            user.lateResponse = true;
-            user.isLateResponse = true;
-            user.lateResponseAt = responseSubmittedAt;
-            user.requiresReallocation = true;
-            user.affectedDirections = lateDirections;
-            await user.save();
-
-            // Mark plans for affected directions as requiring review if event was newly created
-            for (const lateRes of lateLifecycleResults) {
-                if (lateRes?.isNew) {
-                    const planReviewUpdate = {
-                        $set: {
-                            requiresReview: true,
-                            hasLateResponses: true,
-                            pendingReallocation: true,
-                            lastLateResponseAt: responseSubmittedAt
-                        }
-                    };
-                    const affectedDir = lateRes.event?.direction || null;
-                    const dirFilter = affectedDir ? {
-                        $or: [
-                            { direction: affectedDir },
-                            { tripMode: affectedDir },
-                            { tripMode: affectedDir === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
-                        ]
-                    } : {};
-
-                    try {
-                        await AiPlan.updateMany({ active: true, isApproved: true, ...dirFilter }, planReviewUpdate);
-                        if (mongoose.connection?.db) {
-                            await mongoose.connection.db.collection("ai_selected_plans").updateMany({ active: true, approved: true, ...dirFilter }, planReviewUpdate);
-                            await mongoose.connection.db.collection("manual_plan_submissions").updateMany({ isSubmitted: true, ...dirFilter }, planReviewUpdate);
-                        }
-                    } catch (planErr) {
-                        console.warn("Plan review update warning:", planErr.message);
-                    }
-                }
-            }
-
-            clearActiveApprovedPlansCache();
-
-            // Refresh user document
-            const refreshedUser = await User.findById(user._id);
-
-            return res.status(200).json({
-                success: true,
-                message: `Travel response recorded as Coming. Transportation allocation is pending administrator review for ${lateDirections.join(", ")}.`,
-                travelStatus: refreshedUser.travelStatus,
-                allocationStatus: refreshedUser.allocationStatus,
-                isAllocated: false,
-                isUnallocated: true,
-                lateResponse: true,
-                isLateResponse: true,
-                lateResponseDetected: true,
-                affectedDirections: lateDirections,
-                planVersion: currentPlanVersion,
-                approvalEventId: currentApprovalEventId,
-                responseSubmittedAt,
-                lateResponseEventKey: lateLifecycleResults[0]?.event?.eventKey || lateLifecycleResults[0]?.eventKey,
-                user: buildSanitizedUser(refreshedUser)
-            });
-        }
-
-        // =====================================================
-        // SUB-CASE 2: NORMAL COMING RESPONSE
-        // (No plan approved yet, submitted before approval, or already included in approved plan)
-        // =====================================================
-        const isAllocatedInAnyApprovedPlan = Boolean(
-            (approvedPlans.INWARD?.isApproved && (approvedPlans.INWARD?.allocatedUserIds?.has(sId) || approvedPlans.INWARD?.allocatedUserIds?.has(sMongoId))) ||
-            (approvedPlans.OUTWARD?.isApproved && (approvedPlans.OUTWARD?.allocatedUserIds?.has(sId) || approvedPlans.OUTWARD?.allocatedUserIds?.has(sMongoId)))
-        );
-
-        user.travelStatus = "Coming";
-        user.lateResponse = false;
-        user.lateResponseDetected = false;
-        user.isLateResponse = false;
-        user.lateResponseAt = null;
-        user.requiresReallocation = false;
-        user.affectedDirections = [];
-        user.submittedPlanVersion = currentPlanVersion || 0;
-        user.submittedApprovalEventId = currentApprovalEventId || null;
-
-        if (isAllocatedInAnyApprovedPlan) {
-            user.allocationStatus = "Assigned";
-            user.isAllocated = true;
-            user.isUnallocated = false;
-        } else {
-            user.allocationStatus = "Unallocated";
-            user.isAllocated = false;
-            user.isUnallocated = true;
-            user.assignedVehicle = null;
-            user.assignedRoute = null;
-            user.allocatedBus = null;
-        }
-
-        await user.save();
-        clearActiveApprovedPlansCache();
-
-        return res.status(200).json({
-            success: true,
-            message: hasApprovedPlan
-                ? "Travel response submitted. Awaiting transportation plan allocation."
-                : "Travel response submitted. Awaiting transportation plan generation and approval.",
-            travelStatus: user.travelStatus,
-            allocationStatus: user.allocationStatus,
-            lateResponse: false,
-            isLateResponse: false,
-            lateResponseDetected: false,
-            isAllocated: user.isAllocated,
-            isUnallocated: user.isUnallocated,
-            user: buildSanitizedUser(user)
+        const result = await handleStudentTravelStatusSubmission({
+            user,
+            travelStatus,
+            requestedDirection: requestedDir,
+            source: "web"
         });
+
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+
+        return res.status(200).json(result);
     } catch (error) {
         console.error("Update Travel Status Error:", error.message);
         if (!isDbConnected()) return dbUnavailableResponse(res);
@@ -1115,6 +1174,7 @@ export const resetAllUsersTravelStatus = async (req, res) => {
         // Invariant: allocatedBus and allocation fields are completely removed via $unset without path conflict
         const resetSetFields = {
             travelStatus: "Pending",
+            responseLocked: false,
             allocationStatus: "Unallocated",
             isAllocated: false,
             isUnallocated: true,
@@ -1316,6 +1376,7 @@ export const resetUserTravelStatus = async (req, res) => {
         // Reset travel status to initial Pending state and clear allocation & late response flags
         const resetSetFields = {
             travelStatus: "Pending",
+            responseLocked: false,
             allocationStatus: "Unallocated",
             isAllocated: false,
             isUnallocated: true,
@@ -1389,6 +1450,7 @@ export const resetUserTravelStatus = async (req, res) => {
                 state: user.state,
                 country: user.country,
                 travelStatus: "Pending",
+                responseLocked: false,
                 assignedVehicle: null,
                 assignedRoute: null,
                 allocationStatus: "Unallocated",

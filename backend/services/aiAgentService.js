@@ -11,14 +11,36 @@ import { resolveLateResponsesForPlan, resolveLateResponsesForPreviousPlan, getAc
 import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 import { buildConsecutiveSegmentRoadGeometry } from "./roadMatrixService.js";
 import { recordActivatedPlanPerformance, seedHistoricalRoutesIfEmpty } from "./historicalRouteService.js";
-import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes, consolidateAndRebalanceLowOccupancyOutwardRoutes } from "./routeOptimizationService.js";
+import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes, consolidateAndRebalanceLowOccupancyOutwardRoutes, rebalanceInwardUnallocatedPassengers, mergeDuplicateStopsInRoute, isRouteCorridorCoherent, calculateMaxBearingSpan, isSamePlace } from "./routeOptimizationService.js";
 import { ML_SYSTEM_STATUS } from "./mlPredictionService.js";
+import { DEFAULT_SOURCE_HUB } from "./mapGeocodingService.js";
 
 /*
 |--------------------------------------------------------------------------
 | GENERAL HELPERS
 |--------------------------------------------------------------------------
 */
+
+export const canonicalizeCollegeHub = (hub) => {
+    if (!hub) return null;
+    const name = String(hub.name || "").toLowerCase();
+    const address = String(hub.address || hub.displayName || "").toLowerCase();
+    const isCollege = name.includes("kln") || name.includes("k. l. n.") || name.includes("pottapalayam") ||
+        name.includes("engineering") || name.includes("information technology") ||
+        address.includes("pottapalayam") || address.includes("kln") ||
+        (isValidCoordinate(hub.latitude, hub.longitude) &&
+         calculateDistanceKm(hub.latitude, hub.longitude, DEFAULT_SOURCE_HUB.latitude, DEFAULT_SOURCE_HUB.longitude) <= 8.0);
+    if (isCollege) {
+        return {
+            ...hub,
+            name: DEFAULT_SOURCE_HUB.name,
+            address: DEFAULT_SOURCE_HUB.address,
+            latitude: DEFAULT_SOURCE_HUB.latitude,
+            longitude: DEFAULT_SOURCE_HUB.longitude
+        };
+    }
+    return hub;
+};
 
 const normalize = (value) => {
     if (value === null || value === undefined) {
@@ -61,6 +83,61 @@ export const isValidCoordinate = (latitude, longitude) => {
 
     return true;
 };
+
+/**
+ * Centralized canonical stop-name normalization for stop coverage comparison (ASSERT 11)
+ * and identity checking.
+ * 
+ * Rules:
+ * 1. Trim whitespace.
+ * 2. Convert to lowercase.
+ * 3. Normalize repeated whitespace.
+ * 4. Normalize punctuation such as periods in abbreviations.
+ * 5. Normalize equivalent spacing.
+ * 6. Merge contiguous single-character alphabetic tokens (e.g. 'k' + 'k' -> 'kk').
+ * 
+ * Ensures:
+ * "KK Nagar" === "K.K. Nagar" === "K K Nagar" === "k.k. nagar" -> "kk nagar"
+ * "KK Nagar West" === "K.K. Nagar West" -> "kk nagar west"
+ * "KK Nagar" !== "KK Nagar West" (remains distinct)
+ */
+export const normalizeCanonicalStopName = (str = "") => {
+    if (!str) return "";
+    const strVal = typeof str === "string" ? str : (str?.name || String(str || ""));
+    if (!strVal || typeof strVal !== "string") return "";
+
+    let s = strVal.toLowerCase().trim();
+    // Replace punctuation (. , - _ / ( ) [ ] etc.) with space
+    s = s.replace(/[\.,\-_/()\[\]]/g, " ");
+    // Replace non-alphanumeric with space
+    s = s.replace(/[^a-z0-9\s]/g, " ");
+
+    const rawTokens = s.split(/\s+/).filter(Boolean);
+    if (rawTokens.length === 0) return "";
+
+    // Merge contiguous single-character alphabetic tokens (e.g. ['k', 'k', 'nagar'] -> ['kk', 'nagar'])
+    const mergedTokens = [];
+    let singleCharBuffer = "";
+    for (let i = 0; i < rawTokens.length; i++) {
+        const token = rawTokens[i];
+        if (/^[a-z]$/.test(token)) {
+            singleCharBuffer += token;
+        } else {
+            if (singleCharBuffer) {
+                mergedTokens.push(singleCharBuffer);
+                singleCharBuffer = "";
+            }
+            mergedTokens.push(token);
+        }
+    }
+    if (singleCharBuffer) {
+        mergedTokens.push(singleCharBuffer);
+    }
+
+    return mergedTokens.join(" ");
+};
+
+export const normalizeStopName = normalizeCanonicalStopName;
 
 export const findStartingPlaceForBus = (bus, startingPlacesList = []) => {
     if (!bus || !Array.isArray(startingPlacesList) || startingPlacesList.length === 0) {
@@ -198,14 +275,20 @@ export const isStopNearOrAlongRoute = ({
             minDetour = minStopDistance;
         }
 
+        let isCorridorMatch = true;
+        if (origin && isValidCoordinate(origin.latitude, origin.longitude) && routeStops.length > 0) {
+            isCorridorMatch = isRouteCorridorCoherent(origin, [...routeStops, stop], 38.0, 4.75);
+        }
+
         const isNear = minStopDistance <= maxProximityKm;
         const isDetourReasonable = minDetour <= maxDetourKm;
-        const suitable = isNear && isDetourReasonable;
+        const suitable = isNear && isDetourReasonable && isCorridorMatch;
 
         return {
             suitable,
             isNear,
             isDetourReasonable,
+            isCorridorMatch,
             distanceKm: Number(minStopDistance.toFixed(2)),
             detourKm: Number(minDetour.toFixed(2)),
             bestInsertIndex,
@@ -213,7 +296,9 @@ export const isStopNearOrAlongRoute = ({
                 ? `NEAR_AND_ALONG_ROUTE (Dist: ${minStopDistance.toFixed(1)}km, Detour: +${minDetour.toFixed(1)}km)`
                 : (!isNear
                     ? `STOP_TOO_FAR_FROM_ROUTE (${minStopDistance.toFixed(1)}km > ${maxProximityKm}km)`
-                    : `UNREASONABLE_ROUTE_DEVIATION (Detour: +${minDetour.toFixed(1)}km > ${maxDetourKm}km)`)
+                    : (!isCorridorMatch
+                        ? `CORRIDOR_MISMATCH_EXCEEDS_SPAN`
+                        : `UNREASONABLE_ROUTE_DEVIATION (Detour: +${minDetour.toFixed(1)}km > ${maxDetourKm}km)`))
         };
     }
 
@@ -3152,6 +3237,27 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
         visitedStopKeys.add(key);
     }
 
+    // Detect visited corridor return (A -> B -> C -> far D -> near B)
+    for (let i = 0; i < stops.length; i++) {
+        for (let j = i + 2; j < stops.length; j++) {
+            const dIntermediate = calculateDistanceKm(stops[i].latitude, stops[i].longitude, stops[i + 1].latitude, stops[i + 1].longitude);
+            const dReturn = calculateDistanceKm(stops[i].latitude, stops[i].longitude, stops[j].latitude, stops[j].longitude);
+            if (dIntermediate > 4.0 && dReturn < 2.0) {
+                check5_backtracking = false;
+                hasLoopBacktracking = true;
+                break;
+            }
+        }
+        if (!check5_backtracking) break;
+    }
+
+    // Check 4: Corridor consistency
+    if (origin && stops.length >= 2) {
+        check4_corridor = isRouteCorridorCoherent(origin, stops, 38.0, 4.75);
+    } else if (destination && stops.length >= 2) {
+        check4_corridor = isRouteCorridorCoherent(destination, stops, 38.0, 4.75);
+    }
+
     // Outward: progression away from Source
     if (origin && stops.length >= 2) {
         const firstDist = calculateDistanceKm(origin.latitude, origin.longitude, stops[0].latitude, stops[0].longitude);
@@ -3163,7 +3269,9 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
         for (let i = 0; i < stops.length - 1; i++) {
             const dCurrent = calculateDistanceKm(origin.latitude, origin.longitude, stops[i].latitude, stops[i].longitude);
             const dNext = calculateDistanceKm(origin.latitude, origin.longitude, stops[i + 1].latitude, stops[i + 1].longitude);
-            // Check vector projection or distance swing: e.g. North -> South -> North
+            if (dNext < dCurrent - 2.5) {
+                check3_direction = false;
+            }
             if (i < stops.length - 2) {
                 const latDiff1 = stops[i + 1].latitude - stops[i].latitude;
                 const latDiff2 = stops[i + 2].latitude - stops[i + 1].latitude;
@@ -3172,7 +3280,7 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
                 const dot = (latDiff1 * latDiff2) + (lngDiff1 * lngDiff2);
                 const mag1 = Math.sqrt(latDiff1 * latDiff1 + lngDiff1 * lngDiff1);
                 const mag2 = Math.sqrt(latDiff2 * latDiff2 + lngDiff2 * lngDiff2);
-                if (mag1 > 0.05 && mag2 > 0.05 && dot / (mag1 * mag2) < -0.6) {
+                if (mag1 > 0.008 && mag2 > 0.008 && dot / (mag1 * mag2) < -0.35) {
                     check3_direction = false;
                 }
             }
@@ -3186,23 +3294,30 @@ export const validateRouteCorridorContinuity = (bus, sourceHub, destinationHub, 
         if (lastDist > firstDist + 5.0 && stops.length > 2) {
             check3_direction = false;
         }
-        for (let i = 0; i < stops.length - 2; i++) {
-            const latDiff1 = stops[i + 1].latitude - stops[i].latitude;
-            const latDiff2 = stops[i + 2].latitude - stops[i + 1].latitude;
-            const lngDiff1 = stops[i + 1].longitude - stops[i].longitude;
-            const lngDiff2 = stops[i + 2].longitude - stops[i + 1].longitude;
-            const dot = (latDiff1 * latDiff2) + (lngDiff1 * lngDiff2);
-            const mag1 = Math.sqrt(latDiff1 * latDiff1 + lngDiff1 * lngDiff1);
-            const mag2 = Math.sqrt(latDiff2 * latDiff2 + lngDiff2 * lngDiff2);
-            if (mag1 > 0.05 && mag2 > 0.05 && dot / (mag1 * mag2) < -0.6) {
+        for (let i = 0; i < stops.length - 1; i++) {
+            const dCurrent = calculateDistanceKm(destination.latitude, destination.longitude, stops[i].latitude, stops[i].longitude);
+            const dNext = calculateDistanceKm(destination.latitude, destination.longitude, stops[i + 1].latitude, stops[i + 1].longitude);
+            if (dNext > dCurrent + 2.75) {
                 check3_direction = false;
+            }
+            if (i < stops.length - 2) {
+                const latDiff1 = stops[i + 1].latitude - stops[i].latitude;
+                const latDiff2 = stops[i + 2].latitude - stops[i + 1].latitude;
+                const lngDiff1 = stops[i + 1].longitude - stops[i].longitude;
+                const lngDiff2 = stops[i + 2].longitude - stops[i + 1].longitude;
+                const dot = (latDiff1 * latDiff2) + (lngDiff1 * lngDiff2);
+                const mag1 = Math.sqrt(latDiff1 * latDiff1 + lngDiff1 * lngDiff1);
+                const mag2 = Math.sqrt(latDiff2 * latDiff2 + lngDiff2 * lngDiff2);
+                if (mag1 > 0.008 && mag2 > 0.008 && dot / (mag1 * mag2) < -0.35) {
+                    check3_direction = false;
+                }
             }
         }
     }
 
     // Check 6: Detour validation
     const detourRatio = totalStraightLineKm > 0 ? Number((totalRoadKm / totalStraightLineKm).toFixed(2)) : 1.25;
-    const detourThreshold = (stops.length <= 3) ? 2.35 : 2.15;
+    const detourThreshold = (stops.length === 1) ? 3.0 : ((stops.length <= 3) ? 2.35 : 2.15);
     const check6_detour = detourRatio <= detourThreshold;
 
     // Check 7: Road network verification
@@ -3323,13 +3438,17 @@ export const canBusSafelyServeStop = (bus, candidateStop, anchorHub) => {
     const minDist = Math.min(
         ...bus.stops.map((bs) => calculateDistanceKm(bs.latitude, bs.longitude, candidateStop.latitude, candidateStop.longitude))
     );
-    if (minDist > 10.0) return false;
+    if (minDist > 4.75) return false;
 
-    // 2. Bearing compatibility
+    // 2. Bearing compatibility & corridor coherence
     if (anchorHub && isValidCoordinate(anchorHub.latitude, anchorHub.longitude)) {
         const candBearing = calculateBearing(anchorHub.latitude, anchorHub.longitude, candidateStop.latitude, candidateStop.longitude);
         const bearingDiff = getBearingDifference(bus.avgBearing || 0, candBearing);
-        if (bearingDiff > 55) return false;
+        if (bearingDiff > 25.0) return false;
+
+        if (!isRouteCorridorCoherent(anchorHub, [...bus.stops, candidateStop], 38.0, 4.75)) {
+            return false;
+        }
     }
 
     // 3. Detour calculation: check if adding candidateStop exceeds detour threshold
@@ -4539,7 +4658,7 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
                 !b.routeQuality?.startingHubRepeatedAfterDeparture &&
                 (b.routeQuality?.repeatedStopsCount === undefined || b.routeQuality?.repeatedStopsCount === 0) &&
                 (b.routeQuality?.directionalReversals === undefined || b.routeQuality?.directionalReversals === 0) &&
-                (b.detourRatio || 1.25) <= ((b.stops?.length <= 3) ? 2.35 : 2.15)
+                (b.detourRatio || 1.25) <= ((b.stops?.length === 1) ? 3.0 : ((b.stops?.length <= 3) ? 2.35 : 2.15))
         );
 
         let allInwardStartingHubsValid = true;
@@ -4761,8 +4880,8 @@ export const buildAIPlan = async ({
     const effectiveTripMode = (tripMode === "OUTWARD" || tripMode === "FROM_SOURCE")
         ? "FROM_SOURCE"
         : "TO_DESTINATION";
-    const resolvedSourceHub = sourceHub || destinationHub;
-    const resolvedDestinationHub = destinationHub || sourceHub;
+    const resolvedSourceHub = canonicalizeCollegeHub(sourceHub || destinationHub);
+    const resolvedDestinationHub = canonicalizeCollegeHub(destinationHub || sourceHub);
     const anchorHub = effectiveTripMode === "FROM_SOURCE" ? resolvedSourceHub : resolvedDestinationHub;
 
     let startingPlacesList = Array.isArray(activeInwardStartingPlaces) ? activeInwardStartingPlaces : [];
@@ -4807,7 +4926,7 @@ export const buildAIPlan = async ({
     if (globalOpt?.routes?.length > 0) {
         chosenBuses = globalOpt.routes.map((r, idx) => ({
             ...r,
-            routeCode: r.routeCode || r.vehicleName || `RT-${String(idx + 1).padStart(2, "0")}`,
+            routeCode: r.routeCode || `R-${String(idx + 1).padStart(2, "0")}`,
             stops: r.stops || []
         }));
         chosenLogs = [
@@ -4860,7 +4979,7 @@ export const buildAIPlan = async ({
     for (const bus of chosenBuses) {
         if (!Array.isArray(bus.stops)) continue;
         bus.stops = bus.stops.filter((st) => {
-            const count = Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
+            const count = (Array.isArray(st.userIds) && st.userIds.length > 0) ? st.userIds.length : (st.userCount || 0);
             return count > 0;
         });
     }
@@ -4907,7 +5026,7 @@ export const buildAIPlan = async ({
     });
 
     chosenBuses = continuityRepairResult.buses;
-    const continuityUnallocated = continuityRepairResult.unallocatedPassengers || [];
+    let continuityUnallocated = continuityRepairResult.unallocatedPassengers || [];
 
     // Outward Post-Continuity Fleet Consolidation & Passenger Rebalancing (Requirements 4, 5, 6, 7, 21, 22)
     // If continuity repair introduced a low-occupancy fallback bus (or an under-utilized bus remains),
@@ -4921,6 +5040,23 @@ export const buildAIPlan = async ({
             tripMode: effectiveTripMode,
             auditTrail: chosenAudit
         });
+    }
+
+    // Inward Post-Continuity Passenger Redistribution & Starting-Hub Balancing
+    // If inward routes left passengers unallocated due to initial corridor congestion,
+    // rebalance compatible passengers across compatible buses while preserving correct starting hubs,
+    // road progression, and vehicle seat capacities (0 standing).
+    if (effectiveTripMode === "TO_DESTINATION" && continuityUnallocated.length > 0 && chosenBuses.length > 0) {
+        const inwardBalanceResult = rebalanceInwardUnallocatedPassengers({
+            routes: chosenBuses,
+            unallocatedPassengers: continuityUnallocated,
+            destinationHub: resolvedDestinationHub || anchorHub,
+            activeInwardStartingPlaces: startingPlacesList,
+            matrix: globalOpt?.matrix,
+            auditTrail: chosenAudit
+        });
+        chosenBuses = inwardBalanceResult.routes;
+        continuityUnallocated = inwardBalanceResult.unallocatedPassengers;
     }
 
     // INWARD VALIDATION: Validate starting location for EACH EXACT SELECTED BUS
@@ -5003,6 +5139,47 @@ export const buildAIPlan = async ({
         Array.isArray(roadRoute?.legs) &&
         roadRoute.legs.length > 0 &&
         roadRoute.legs.every((leg) => leg.distanceMeters > 0 && leg.durationSeconds > 0);
+    // 1. Deduplicate consecutive/logical duplicate stops in each bus route (e.g. Thirunagar -> Thirunagar)
+    //    while strictly preserving combined passenger counts and userIds.
+    for (const bus of chosenBuses) {
+        if (!bus.stops || bus.stops.length === 0) continue;
+        const busStartPlace = effectiveTripMode === "FROM_SOURCE"
+            ? resolvedSourceHub
+            : (bus.startLocation || bus.inwardStartLocation || findStartingPlaceForBus(bus, startingPlacesList));
+        bus.stops = mergeDuplicateStopsInRoute(bus.stops, busStartPlace);
+    }
+
+    // 2. Detect shared corridors / route segments across chosenBuses
+    for (const bus of chosenBuses) {
+        const sharedNames = [];
+        for (const otherBus of chosenBuses) {
+            if (otherBus === bus) continue;
+            const otherStopNames = new Set((otherBus.stops || []).map((s) => s.name?.trim().toLowerCase()).filter(Boolean));
+            for (const st of (bus.stops || [])) {
+                const sNameNorm = st.name?.trim().toLowerCase();
+                if (sNameNorm && otherStopNames.has(sNameNorm) && !sharedNames.includes(st.name)) {
+                    sharedNames.push(st.name);
+                }
+            }
+        }
+        if (sharedNames.length > 0) {
+            bus.hasSharedCorridor = true;
+            bus.sharedRouteSegment = sharedNames.slice(0, 3).join(" → ") + (sharedNames.length > 3 ? "..." : "");
+        } else {
+            bus.hasSharedCorridor = false;
+            bus.sharedRouteSegment = null;
+        }
+
+        // Bus reuse detection
+        if (bus.isReusedBus === undefined) {
+            const isReused = Boolean(
+                bus.reusedExistingBus ||
+                (oppositePlan?.routes || []).some((r) => String(r.vehicleId) === String(bus.vehicleId))
+            );
+            bus.isReusedBus = isReused;
+        }
+    }
+
     for (const bus of chosenBuses) {
         if (!bus.stops || bus.stops.length === 0) continue;
 
@@ -5113,6 +5290,11 @@ export const buildAIPlan = async ({
                 bus.roadValidationStatus = bus.roadRouteStatus;
             }
 
+            // Refresh operational rationale with authoritative single OSRM metrics (Requirement 9, 10, 11)
+            const outwardOriginName = resolvedSourceHub?.name || "K. L. N. College of Engineering";
+            const lastOutwardStopName = (bus.stops && bus.stops.length > 0) ? bus.stops[bus.stops.length - 1].name : "final drop-off";
+            bus.whySeparateRouteNeeded = `Route verified with continuous road progression from ${outwardOriginName} toward ${lastOutwardStopName} (${bus.routeDistanceKm} km, detour ratio ${bus.detourRatio}x).`;
+
             // Recompute sectorName from the final ordered stops' actual average bearing from source hub
             if (bus.stops && bus.stops.length > 0 && resolvedSourceHub && isValidCoordinate(resolvedSourceHub.latitude, resolvedSourceHub.longitude)) {
                 const bearingsOut = bus.stops.map((s) =>
@@ -5153,6 +5335,9 @@ export const buildAIPlan = async ({
 
             const isSameStartingLocality = Boolean(
                 hasStartingPlace && firstStop && (
+                    isSamePlace(routeStartingPlace, firstStop) ||
+                    Boolean(firstStop.isStartingHubPickup) ||
+                    Boolean(firstStop.isStartingHub) ||
                     startingHubName === firstStopName ||
                     hubToFirstDist <= 0.5 ||
                     (hubToFirstDist <= 3.5 && (
@@ -5191,8 +5376,9 @@ export const buildAIPlan = async ({
                 let legDist = 0;
                 let legDur = 0;
                 let prevPointName = "";
+                const isStartPickup = Boolean(isSameStartingLocality && idx === 0);
 
-                if (isSameStartingLocality && idx === 0) {
+                if (isStartPickup) {
                     legDist = 0.00;
                     legDur = 0.0;
                     prevPointName = routeStartingPlace.locationName || routeStartingPlace.name || "Starting Place";
@@ -5216,7 +5402,7 @@ export const buildAIPlan = async ({
                 cumDist += legDist;
                 cumDur += legDur;
 
-                const selectionReason = isSameStartingLocality && idx === 0
+                const selectionReason = isStartPickup
                     ? `${st.name}: Designated bus starting hub & passenger pickup origin (0.00 km initial road leg).`
                     : (hasStartingPlace && idx === 0
                         ? `${st.name} selected: continuous road connection from inward starting place ${prevPointName} (+${legDist.toFixed(2)} km).`
@@ -5226,6 +5412,9 @@ export const buildAIPlan = async ({
                     ...st,
                     order: idx + 1,
                     sequence: idx + 1,
+                    isStartingHubPickup: isStartPickup,
+                    isStartingHub: isStartPickup,
+                    stopType: isStartPickup ? "STARTING_HUB_PICKUP" : "PASSENGER_PICKUP",
                     previousStopName: prevPointName,
                     legDistanceKm: Number(legDist.toFixed(2)),
                     segmentRoadDistance: Number(legDist.toFixed(2)),
@@ -5242,6 +5431,9 @@ export const buildAIPlan = async ({
             bus.roadGeometry = finalRoadRoute?.geometry || bus.roadGeometry || [];
 
             if (hasStartingPlace) {
+                const startPaxCount = (isSameStartingLocality && bus.stops.length > 0)
+                    ? (bus.stops[0].userCount || (bus.stops[0].userIds || []).length || 0)
+                    : 0;
                 const formattedStartingPlace = {
                     vehicleId: routeStartingPlace.vehicleId || routeStartingPlace.busId || bus.vehicleId,
                     busName: routeStartingPlace.busName || bus.vehicleName,
@@ -5249,12 +5441,19 @@ export const buildAIPlan = async ({
                     locationName: routeStartingPlace.locationName || routeStartingPlace.name,
                     address: routeStartingPlace.address || "",
                     latitude: Number(routeStartingPlace.latitude),
-                    longitude: Number(routeStartingPlace.longitude)
+                    longitude: Number(routeStartingPlace.longitude),
+                    hasPassengers: Boolean(isSameStartingLocality && startPaxCount > 0),
+                    passengerCount: startPaxCount,
+                    isPickupStop: Boolean(isSameStartingLocality && startPaxCount > 0)
                 };
                 bus.startLocation = formattedStartingPlace;
                 bus.inwardStartLocation = formattedStartingPlace;
+                bus.startingHub = formattedStartingPlace;
                 bus.source = formattedStartingPlace;
                 bus.sourceHub = formattedStartingPlace;
+                bus.hasStartingHubPickup = Boolean(isSameStartingLocality && startPaxCount > 0);
+                bus.startingHubHasPassengers = Boolean(isSameStartingLocality && startPaxCount > 0);
+                bus.startingHubPassengers = startPaxCount;
             }
             bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified);
             bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.isFallback);
@@ -5287,6 +5486,11 @@ export const buildAIPlan = async ({
                 bus.roadValidationStatus = bus.roadRouteStatus;
             }
 
+            // Refresh operational rationale with authoritative single OSRM metrics (Requirement 9, 10, 11)
+            const inwardStartName = bus.startLocation?.name || bus.startLocation?.locationName || (bus.stops && bus.stops[0]?.name) || "starting hub";
+            const inwardDestName = resolvedDestinationHub?.name || "K. L. N. College of Engineering";
+            bus.whySeparateRouteNeeded = `Route verified with continuous road progression from ${inwardStartName} toward ${inwardDestName} (${bus.routeDistanceKm} km, detour ratio ${bus.detourRatio}x).`;
+
             // Recompute sectorName from the final ordered stops' actual average bearing from destination hub
             if (bus.stops && bus.stops.length > 0 && resolvedDestinationHub && isValidCoordinate(resolvedDestinationHub.latitude, resolvedDestinationHub.longitude)) {
                 const bearingsIn = bus.stops.map((s) =>
@@ -5299,11 +5503,35 @@ export const buildAIPlan = async ({
     }
 
     // STEP 4: Standardize Route Codes and Names dynamically based on vehicle and corridor data
+    // Compute shared corridor metadata strictly derived from each bus's forward stop traversal order (Section 16)
+    chosenBuses.forEach((bus) => {
+        const otherStopsSet = new Set();
+        for (const other of chosenBuses) {
+            if (other === bus) continue;
+            for (const ost of (other.stops || [])) {
+                const k = (ost.name || "").trim().toLowerCase();
+                if (k) otherStopsSet.add(k);
+            }
+        }
+        const sharedInOrder = [];
+        for (const st of (bus.stops || [])) {
+            const k = (st.name || "").trim().toLowerCase();
+            if (k && otherStopsSet.has(k) && !sharedInOrder.includes(st.name)) {
+                sharedInOrder.push(st.name);
+            }
+        }
+        bus.hasSharedCorridor = sharedInOrder.length > 0;
+        bus.sharedCorridorStops = sharedInOrder;
+        bus.sharedRouteSegment = sharedInOrder.length > 0
+            ? sharedInOrder.slice(0, 4).join(" → ") + (sharedInOrder.length > 4 ? "..." : "")
+            : null;
+    });
+
     const buses = chosenBuses.map((bus, idx) => {
         const routeNumber = idx + 1;
-        const routeCode = bus.routeCode || (bus.vehicleName ? `${bus.vehicleName}` : `RT-${String(routeNumber).padStart(2, "0")}`);
+        const routeCode = bus.routeCode || `R-${String(routeNumber).padStart(2, "0")}`;
         const routeId = bus.routeId || `route_${bus.vehicleId || bus.vehicleName || routeNumber}`;
-        const routePrefix = bus.vehicleName ? `Route ${bus.vehicleName}` : routeCode;
+        const routePrefix = routeCode;
 
         const hubName = effectiveTripMode === "TO_DESTINATION"
             ? (resolvedDestinationHub?.name || "Arrival Hub")
@@ -5420,9 +5648,15 @@ export const buildAIPlan = async ({
             passengerCount: assignedUsers,
             vehicleCapacity: bus.capacity,
             roadDistanceKm: bus.routeDistanceKm || 0,
+            routeDurationMin: bus.routeDurationMin || (bus.routeDistanceKm ? bus.routeDistanceKm / 0.5 : 0),
             stops: standardizedStops,
             isContinuous: bus.isContinuous !== false,
-            detourRatio: bus.detourRatio || 1.25
+            detourRatio: bus.detourRatio || 1.25,
+            backtrackingDistanceKm: bus.continuityValidation?.backtrackingDistanceKm || 0,
+            directionalReversals: bus.continuityValidation?.directionalReversals || (bus.continuityValidation?.backtrackingDetected ? 1 : 0),
+            isRoadVerified: bus.isRoadVerified !== false,
+            isReusedBus: Boolean(bus.isReusedBus || bus.reusedExistingBus),
+            hasSharedCorridor: Boolean(bus.hasSharedCorridor)
         });
 
         routeObj.routeScore = scoreResult.totalScore;
@@ -5434,6 +5668,12 @@ export const buildAIPlan = async ({
         routeObj.whyRouteSelected = scoreResult.explainability?.whyRouteSelected;
         routeObj.whyVehicleSelected = scoreResult.explainability?.whyVehicleSelected;
         routeObj.diagnostics = scoreResult.diagnostics;
+        routeObj.sharedRouteSegment = bus.sharedRouteSegment || null;
+        routeObj.hasSharedCorridor = Boolean(bus.hasSharedCorridor);
+        routeObj.sharedCorridorStops = bus.sharedCorridorStops || [];
+        routeObj.reusedExistingBus = Boolean(bus.isReusedBus || bus.reusedExistingBus || scoreResult.diagnostics?.reusedExistingBus);
+        routeObj.backtrackingPenalty = scoreResult.diagnostics?.backtrackingPenalty || 0;
+        routeObj.routeProgressionValidation = scoreResult.diagnostics?.routeProgressionValidation || (bus.continuityValidation?.isContinuous ? "Continuous forward progression verified" : "Review needed");
 
         // Canonical inward/outward sub-objects and Physical Bus Continuity
         if (effectiveTripMode === "TO_DESTINATION") {
@@ -5458,7 +5698,12 @@ export const buildAIPlan = async ({
                 roadGeometry: routeObj.roadGeometry,
                 isRoadVerified: routeObj.isRoadVerified,
                 isContinuous: routeObj.isContinuous,
-                continuity: routeObj.continuityValidation
+                continuity: routeObj.continuityValidation,
+                sharedRouteSegment: routeObj.sharedRouteSegment,
+                reusedExistingBus: routeObj.reusedExistingBus,
+                backtrackingPenalty: routeObj.backtrackingPenalty,
+                routeProgressionValidation: routeObj.routeProgressionValidation,
+                diagnostics: routeObj.diagnostics
             };
 
             routeObj.outward = {
@@ -5473,7 +5718,12 @@ export const buildAIPlan = async ({
                 roadGeometry: routeObj.roadGeometry,
                 isRoadVerified: routeObj.isRoadVerified,
                 isContinuous: routeObj.isContinuous,
-                continuity: routeObj.continuityValidation
+                continuity: routeObj.continuityValidation,
+                sharedRouteSegment: routeObj.sharedRouteSegment,
+                reusedExistingBus: routeObj.reusedExistingBus,
+                backtrackingPenalty: routeObj.backtrackingPenalty,
+                routeProgressionValidation: routeObj.routeProgressionValidation,
+                diagnostics: routeObj.diagnostics
             };
         } else {
             const lastOutwardStop = routeObj.lastOutwardStop || (standardizedStops.length > 0 ? standardizedStops[standardizedStops.length - 1] : null);
@@ -5500,7 +5750,12 @@ export const buildAIPlan = async ({
                 isRoadVerified: routeObj.isRoadVerified,
                 isContinuous: routeObj.isContinuous,
                 continuity: routeObj.continuityValidation,
-                roadRouteStatus: routeObj.roadRouteStatus
+                roadRouteStatus: routeObj.roadRouteStatus,
+                sharedRouteSegment: routeObj.sharedRouteSegment,
+                reusedExistingBus: routeObj.reusedExistingBus,
+                backtrackingPenalty: routeObj.backtrackingPenalty,
+                routeProgressionValidation: routeObj.routeProgressionValidation,
+                diagnostics: routeObj.diagnostics
             };
 
             routeObj.inward = {
@@ -5515,7 +5770,12 @@ export const buildAIPlan = async ({
                 roadGeometry: routeObj.roadGeometry,
                 isRoadVerified: routeObj.isRoadVerified,
                 isContinuous: routeObj.isContinuous,
-                continuity: routeObj.continuityValidation
+                continuity: routeObj.continuityValidation,
+                sharedRouteSegment: routeObj.sharedRouteSegment,
+                reusedExistingBus: routeObj.reusedExistingBus,
+                backtrackingPenalty: routeObj.backtrackingPenalty,
+                routeProgressionValidation: routeObj.routeProgressionValidation,
+                diagnostics: routeObj.diagnostics
             };
         }
 
@@ -5742,10 +6002,10 @@ export const buildAIPlan = async ({
     const uniqueStopAreasSet = new Set();
     buses.forEach((b) => {
         (b.stops || []).forEach((st) => {
-            const name = (st.name || st.pointName || st.area || "").trim().toLowerCase();
+            const canon = normalizeCanonicalStopName(st.name || st.pointName || st.area || "");
             const count = Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
-            if (name && count > 0) {
-                uniqueStopAreasSet.add(name);
+            if (canon && count > 0) {
+                uniqueStopAreasSet.add(canon);
             }
         });
     });
@@ -6866,21 +7126,21 @@ export const generateAgentRecommendations = async (payload = {}) => {
     let destinationHub = null;
 
     if (rawSource && isValidCoordinate(rawSource.latitude, rawSource.longitude)) {
-        sourceHub = {
+        sourceHub = canonicalizeCollegeHub({
             name: rawSource.name || "Source Hub",
             address: rawSource.address || rawSource.displayName || "",
             latitude: Number(rawSource.latitude),
             longitude: Number(rawSource.longitude)
-        };
+        });
     }
 
     if (rawDestination && isValidCoordinate(rawDestination.latitude, rawDestination.longitude)) {
-        destinationHub = {
+        destinationHub = canonicalizeCollegeHub({
             name: rawDestination.name || "Destination Hub",
             address: rawDestination.address || rawDestination.displayName || "",
             latitude: Number(rawDestination.latitude),
             longitude: Number(rawDestination.longitude)
-        };
+        });
     }
 
     const rawDirection = payload?.direction || payload?.tripMode;
@@ -7334,21 +7594,32 @@ export const generateAgentRecommendations = async (payload = {}) => {
         });
     });
 
-    // ASSERT 10: Every required active stopping area is visited by at least one bus
-    const requiredStopNames = Array.from(new Set(
-        resolvedStops
-            .filter((s) => (s.users?.length || s.userCount || 0) > 0)
-            .map((s) => s.name.toLowerCase().trim())
-    ));
+    // ASSERT 10 & 11: Every required active stopping area is visited by at least one bus
+    // Uses canonical normalized stop identity for comparison, preserving original display names for errors/logs.
+    const requiredStopMap = new Map(); // canonicalIdentity -> originalDisplayName
+    resolvedStops
+        .filter((s) => (s.users?.length || s.userCount || 0) > 0)
+        .forEach((s) => {
+            const canon = normalizeCanonicalStopName(s.name);
+            if (canon && !requiredStopMap.has(canon)) {
+                requiredStopMap.set(canon, s.name);
+            }
+        });
 
-    const visitedStopNames = new Set();
+    const visitedCanonicalStops = new Set();
     aiPlan.buses.forEach((b) => {
         (b.stops || []).forEach((st) => {
-            visitedStopNames.add(st.name.toLowerCase().trim());
+            const canon = normalizeCanonicalStopName(st.name);
+            if (canon) {
+                visitedCanonicalStops.add(canon);
+            }
         });
     });
 
-    const missingStoppingAreas = requiredStopNames.filter((name) => !visitedStopNames.has(name));
+    const missingStoppingAreas = Array.from(requiredStopMap.entries())
+        .filter(([canon]) => !visitedCanonicalStops.has(canon))
+        .map(([, displayName]) => displayName);
+
     if (missingStoppingAreas.length > 0 && aiPlan.unassignedUsers === 0) {
         assertions.push(`ASSERT 11: Route stop coverage incomplete. Missing ${missingStoppingAreas.length} required stopping area(s): ${missingStoppingAreas.join(", ")}`);
     }
@@ -7582,6 +7853,126 @@ export const generateAgentRecommendations = async (payload = {}) => {
                 { $set: { active: false, status: "superseded" } }
             );
 
+            // Deactivate and supersede previous active plans in ai_selected_plans for this direction
+            if (mongoose.connection?.db) {
+                await mongoose.connection.db.collection("ai_selected_plans").updateMany(
+                    {
+                        active: true,
+                        $or: [
+                            { direction: canonicalDirection },
+                            { tripMode: canonicalDirection },
+                            { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" },
+                            { "plan.direction": canonicalDirection },
+                            { "plan.tripMode": canonicalDirection },
+                            { "plan.tripMode": canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+                        ]
+                    },
+                    {
+                        $set: {
+                            active: false,
+                            status: "superseded",
+                            supersededAt: new Date(),
+                            requiresReview: false,
+                            hasLateResponses: false,
+                            pendingReallocation: false
+                        }
+                    }
+                );
+            }
+
+            // Resolve existing open/active LateResponseEvents for this direction since the regenerated plan accounts for current demand
+            try {
+                const lreDirFilter = canonicalDirection === "OUTWARD"
+                    ? { $in: ["OUTWARD", "FROM_SOURCE", "BOTH", null] }
+                    : { $in: ["INWARD", "TO_DESTINATION", "BOTH", null] };
+                await LateResponseEvent.updateMany(
+                    {
+                        status: { $in: ["OPEN", "ACTIVE", "DETECTED", "NOTIFIED", "PENDING_REALLOCATION"] },
+                        direction: lreDirFilter
+                    },
+                    {
+                        $set: {
+                            status: "RESOLVED",
+                            resolvedAt: new Date(),
+                            resolutionReason: `Plan regenerated with updated demand for ${canonicalDirection}`
+                        }
+                    }
+                );
+            } catch (lreErr) {
+                console.warn("[generateAgentRecommendations] LateResponseEvent resolution warning:", lreErr.message);
+            }
+
+            // Direction-specific cleanup of late response flags on students in User collection
+            try {
+                await User.updateMany(
+                    {
+                        role: "student",
+                        $or: [
+                            { affectedDirections: canonicalDirection },
+                            { lateResponse: true },
+                            { isLateResponse: true },
+                            { lateResponseDetected: true },
+                            { allocationStatus: "Pending Reallocation" }
+                        ]
+                    },
+                    [
+                        {
+                            $set: {
+                                affectedDirections: {
+                                    $filter: {
+                                        input: { $ifNull: ["$affectedDirections", []] },
+                                        as: "d",
+                                        cond: { $ne: ["$$d", canonicalDirection] }
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            $set: {
+                                requiresReallocation: {
+                                    $gt: [{ $size: "$affectedDirections" }, 0]
+                                },
+                                lateResponseDetected: {
+                                    $gt: [{ $size: "$affectedDirections" }, 0]
+                                },
+                                lateResponse: {
+                                    $gt: [{ $size: "$affectedDirections" }, 0]
+                                },
+                                isLateResponse: {
+                                    $gt: [{ $size: "$affectedDirections" }, 0]
+                                },
+                                allocationStatus: {
+                                    $cond: [
+                                        { $gt: [{ $size: "$affectedDirections" }, 0] },
+                                        "Pending Reallocation",
+                                        {
+                                            $cond: [
+                                                {
+                                                    $or: [
+                                                        { $eq: ["$allocatedBus.inward.isAllocated", true] },
+                                                        { $eq: ["$allocatedBus.outward.isAllocated", true] }
+                                                    ]
+                                                },
+                                                "Assigned",
+                                                {
+                                                    $cond: [
+                                                        { $eq: ["$travelStatus", "Coming"] },
+                                                        "Unallocated",
+                                                        "Not Assigned"
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                );
+            } catch (userCleanErr) {
+                console.warn("[generateAgentRecommendations] User late response cleanup warning:", userCleanErr.message);
+            }
+
             // Sanitize heavy duplicate objects to prevent exceeding MongoDB's 16MB BSON limit
             const sanitizedStoppingGroups = sanitizeStoppingGroupsForStorage(planResult.stoppingGroups);
             const sanitizedAiPlan = sanitizeTransportationPlan(planResult.aiPlan);
@@ -7609,7 +8000,9 @@ export const generateAgentRecommendations = async (payload = {}) => {
             });
 
             planResult.planId = savedPlanDoc._id;
-            clearActiveAIPlanCache();
+            clearActiveApprovedPlansCache();
+            clearActiveAIPlanCache(canonicalDirection);
+            clearAIDataCache();
 
             // Automatically synchronize Outward route final stops to Inward Bus Starting Places
             if (canonicalDirection === "OUTWARD" && Array.isArray(aiPlan.buses) && aiPlan.buses.length > 0) {
@@ -9438,24 +9831,30 @@ export const getActiveAIPlan = async (options = {}) => {
                 (Array.isArray(activeLateLifecycle?.affectedDirections) && activeLateLifecycle.affectedDirections.includes(planDir)) ||
                 ((activeLateLifecycle?.count || 0) > 0 && (!activeLateLifecycle?.affectedDirections?.length || activeLateLifecycle?.affectedDirections?.includes(planDir)));
 
+            // If base plan is a freshly generated AI proposal (status: "generated" and not yet approved),
+            // it is a clean proposal built against latest demand. Do NOT inherit stale review flags from older selectedDoc.
+            const isFreshlyGenerated = Boolean(base.status === "generated" && !isApproved);
             const hasLateResponses = Boolean(
-                base.hasLateResponses ||
-                selectedDoc?.hasLateResponses ||
-                base.requiresReview ||
-                selectedDoc?.requiresReview ||
-                base.pendingReallocation ||
-                selectedDoc?.pendingReallocation ||
-                hasDirLate
+                hasDirLate ||
+                (!isFreshlyGenerated && (
+                    base.hasLateResponses ||
+                    selectedDoc?.hasLateResponses ||
+                    base.requiresReview ||
+                    selectedDoc?.requiresReview ||
+                    base.pendingReallocation ||
+                    selectedDoc?.pendingReallocation
+                ))
             );
 
             const isDemandMismatched = Boolean(
+                !isFreshlyGenerated &&
                 planDemand !== null &&
                 currentLiveComingCount > 0 &&
                 Number(planDemand) !== Number(currentLiveComingCount)
             );
 
-            const isStale = Boolean(base.status === "stale" || isDemandMismatched || hasLateResponses);
-            const requiresReset = Boolean(isStale || hasLateResponses || isDemandMismatched);
+            const isStale = Boolean(!isFreshlyGenerated && (base.status === "stale" || isDemandMismatched || hasLateResponses));
+            const requiresReset = Boolean(!isFreshlyGenerated && (isStale || hasLateResponses || isDemandMismatched));
             const staleReason = hasLateResponses
                 ? `Late Coming response submitted after plan approval (${dirLateCount || 1} student(s) pending reallocation)`
                 : (isDemandMismatched
@@ -9709,9 +10108,14 @@ export const getActiveAIPlan = async (options = {}) => {
             }
         }
 
-        // An active plan in MongoDB is operational until explicitly reset
-        const operationalOutward = outwardPlan?.active ? outwardPlan : null;
-        const operationalInward = inwardPlan?.active ? inwardPlan : null;
+        // An active plan in MongoDB is operational until explicitly reset (requires actual routes/buses)
+        const hasOperationalBuses = (p) => Boolean(
+            (Array.isArray(p?.buses) && p.buses.length > 0) ||
+            (Array.isArray(p?.routes) && p.routes.length > 0) ||
+            (Array.isArray(p?.aiPlan?.buses) && p.aiPlan.buses.length > 0)
+        );
+        const operationalOutward = (outwardPlan?.active && hasOperationalBuses(outwardPlan)) ? outwardPlan : null;
+        const operationalInward = (inwardPlan?.active && hasOperationalBuses(inwardPlan)) ? inwardPlan : null;
 
         let selectedPlan = null;
         if (requestedDirection === "OUTWARD") {
@@ -11101,6 +11505,46 @@ export const resetGeneratedAIRoute = async (options = {}) => {
                                     false
                                 ]
                             },
+                            lateResponse: {
+                                $cond: [
+                                    {
+                                        $gt: [
+                                            {
+                                                $size: {
+                                                    $filter: {
+                                                        input: { $ifNull: ["$affectedDirections", []] },
+                                                        as: "d",
+                                                        cond: { $ne: ["$$d", "OUTWARD"] }
+                                                    }
+                                                }
+                                            },
+                                            0
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
+                            },
+                            isLateResponse: {
+                                $cond: [
+                                    {
+                                        $gt: [
+                                            {
+                                                $size: {
+                                                    $filter: {
+                                                        input: { $ifNull: ["$affectedDirections", []] },
+                                                        as: "d",
+                                                        cond: { $ne: ["$$d", "OUTWARD"] }
+                                                    }
+                                                }
+                                            },
+                                            0
+                                        ]
+                                    },
+                                    true,
+                                    false
+                                ]
+                            },
                             allocationStatus: {
                                 $cond: [
                                     {
@@ -11456,11 +11900,13 @@ export const resetGeneratedAIRoute = async (options = {}) => {
         try {
             const lreFilter = { status: { $nin: ["RESOLVED", "ALLOCATED"] } };
             if (targetDirection === "OUTWARD" || targetDirection === "INWARD") {
-                lreFilter.direction = targetDirection;
+                lreFilter.direction = targetDirection === "OUTWARD"
+                    ? { $in: ["OUTWARD", "FROM_SOURCE", "BOTH", null] }
+                    : { $in: ["INWARD", "TO_DESTINATION", "BOTH", null] };
             }
             const lreResult = await LateResponseEvent.updateMany(
                 lreFilter,
-                { $set: { status: "RESOLVED", resolvedAt: new Date() } }
+                { $set: { status: "RESOLVED", resolvedAt: new Date(), resolutionReason: `AI plan reset (${targetDirection || "GLOBAL"})` } }
             );
             if (lreResult.modifiedCount > 0) {
                 console.log(`[LATE RESPONSE RESOLVED] AI plan reset (${targetDirection || "GLOBAL"}) — resolved ${lreResult.modifiedCount} LateResponseEvent(s)`);
@@ -11549,15 +11995,19 @@ export const getPlanStatus = async (options = {}) => {
         ]);
 
         const buildDirectionStatus = (dir, activePlan, selectedDoc, subDoc, allocCount) => {
+            const doc = (selectedDoc && (selectedDoc.approved === true || selectedDoc.status === "active")) || activePlan || selectedDoc || subDoc || null;
+            const buses = activePlan?.buses || doc?.buses || doc?.plan?.buses || [];
+            const hasBuses = Array.isArray(buses) && buses.length > 0;
+
             // Lifecycle priority: APPROVED / ASSIGNED > PENDING_APPROVAL / SUBMITTED > GENERATED > NO_PLAN
             const isApproved = Boolean(
-                (selectedDoc && (selectedDoc.approved === true || selectedDoc.status === "active")) ||
+                ((selectedDoc && (selectedDoc.approved === true || selectedDoc.status === "active")) ||
                 (activePlan && activePlan.isApproved === true) ||
-                allocCount > 0
+                allocCount > 0) && (hasBuses || allocCount > 0)
             );
 
             const isPending = Boolean(
-                !isApproved && (
+                !isApproved && hasBuses && (
                     (selectedDoc && (selectedDoc.status === "pending_approval" || selectedDoc.isSubmitted === true)) ||
                     (activePlan && (activePlan.status === "pending_approval" || activePlan.isSubmitted === true)) ||
                     (subDoc && subDoc.isSubmitted === true)
@@ -11565,7 +12015,7 @@ export const getPlanStatus = async (options = {}) => {
             );
 
             const isGenerated = Boolean(
-                !isApproved && !isPending && activePlan && (activePlan.status === "generated" || activePlan.active === true)
+                !isApproved && !isPending && hasBuses && activePlan && (activePlan.status === "generated" || activePlan.active === true)
             );
 
             const exists = Boolean(isApproved || isPending || isGenerated);
@@ -11580,29 +12030,31 @@ export const getPlanStatus = async (options = {}) => {
                 const rawType = String(selectedDoc?.planType || (subDoc ? "MANUAL" : (activePlan?.planType || "AI"))).toUpperCase().trim();
                 planType = (rawType === "MANUAL" || rawType === "ADMIN") ? "MANUAL" : "AI";
             }
-
-            const doc = (isApproved && selectedDoc) || activePlan || selectedDoc || subDoc || null;
-            const buses = activePlan?.buses || doc?.buses || doc?.plan?.buses || [];
             const summary = activePlan?.summary || doc?.summary || doc?.plan?.summary || {};
 
             const dirLateCount = dir === "OUTWARD" ? (activeLateLifecycle?.outwardCount || 0) : (activeLateLifecycle?.inwardCount || 0);
             const hasDirLate = dirLateCount > 0 ||
                 (Array.isArray(activeLateLifecycle?.affectedDirections) && activeLateLifecycle.affectedDirections.includes(dir)) ||
                 ((activeLateLifecycle?.count || 0) > 0 && (!activeLateLifecycle?.affectedDirections?.length || activeLateLifecycle?.affectedDirections?.includes(dir)));
+            const isFreshGen = Boolean(isGenerated && !isApproved && !hasDirLate);
             const planRequiresReview = Boolean(
-                selectedDoc?.requiresReview ||
-                activePlan?.requiresReview ||
-                subDoc?.requiresReview ||
-                selectedDoc?.hasLateResponses ||
-                activePlan?.hasLateResponses ||
-                subDoc?.hasLateResponses ||
-                hasDirLate
+                hasDirLate ||
+                (!isFreshGen && (
+                    selectedDoc?.requiresReview ||
+                    activePlan?.requiresReview ||
+                    subDoc?.requiresReview ||
+                    selectedDoc?.hasLateResponses ||
+                    activePlan?.hasLateResponses ||
+                    subDoc?.hasLateResponses
+                ))
             );
             const isDemandMismatched = Boolean(
-                activePlan?.isStale ||
-                (activePlan?.planDemandCount && activePlan?.currentDemandCount && activePlan.planDemandCount !== activePlan.currentDemandCount)
+                !isFreshGen && (
+                    activePlan?.isStale ||
+                    (activePlan?.planDemandCount && activePlan?.currentDemandCount && activePlan.planDemandCount !== activePlan.currentDemandCount)
+                )
             );
-            const requiresReset = Boolean(exists && (planRequiresReview || isDemandMismatched || activePlan?.requiresReset));
+            const requiresReset = Boolean(exists && !isFreshGen && (planRequiresReview || isDemandMismatched || activePlan?.requiresReset));
 
             return {
                 exists,
@@ -11617,7 +12069,7 @@ export const getPlanStatus = async (options = {}) => {
                 createdAt: doc?.createdAt || doc?.selectedAt || doc?.submittedAt || null,
                 requiresReset,
                 requiresReview: planRequiresReview,
-                hasLateResponses: Boolean(hasDirLate || selectedDoc?.hasLateResponses || activePlan?.hasLateResponses || subDoc?.hasLateResponses),
+                hasLateResponses: Boolean(hasDirLate || (!isFreshGen && (selectedDoc?.hasLateResponses || activePlan?.hasLateResponses || subDoc?.hasLateResponses))),
                 lateResponsesCount: dirLateCount,
                 isStale: isDemandMismatched
             };

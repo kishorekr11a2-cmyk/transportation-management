@@ -1,8 +1,18 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { HiArrowLeft, HiPaperAirplane, HiCheckCircle, HiExclamationCircle } from "react-icons/hi2";
+import {
+    HiArrowLeft,
+    HiPaperAirplane,
+    HiCheckCircle,
+    HiExclamationCircle,
+    HiTruck
+} from "react-icons/hi2";
 import { toast } from "react-hot-toast";
-import { triggerTravelStatusAutomation } from "../services/automationService";
+import {
+    triggerTravelStatusAutomation,
+    getAllocationStatus,
+    triggerAllocationDetailsAutomation
+} from "../services/automationService";
 import "../css/Automation.css";
 
 function Automation() {
@@ -11,11 +21,30 @@ function Automation() {
     // Status state: "ready" | "sending" | "success" | "error"
     const [statusState, setStatusState] = useState("ready");
     const [statusMessage, setStatusMessage] = useState("Ready");
+    const [activeAction, setActiveAction] = useState("");
     const [summary, setSummary] = useState(null);
+    const [allocationReadiness, setAllocationReadiness] = useState(null);
 
+    const fetchAllocationStatus = async () => {
+        try {
+            const res = await getAllocationStatus();
+            if (res?.success) {
+                setAllocationReadiness(res.data);
+            }
+        } catch (err) {
+            console.warn("Could not load allocation readiness:", err);
+        }
+    };
+
+    useEffect(() => {
+        fetchAllocationStatus();
+    }, []);
+
+    // Send Travel Status Notification (Original flow)
     const handleSendTravelStatus = async () => {
         if (statusState === "sending") return;
 
+        setActiveAction("travel-status");
         setStatusState("sending");
         setStatusMessage("Sending travel status notifications...");
 
@@ -46,6 +75,62 @@ function Automation() {
             toast.error(errMsg);
         }
     };
+
+    // Send Allocation Details (Strictly requires Approved + Allocated plan)
+    const handleSendAllocationDetails = async () => {
+        if (statusState === "sending") return;
+
+        setActiveAction("allocation");
+        setStatusState("sending");
+        setStatusMessage(
+            "Sending approved transportation allocation details..."
+        );
+
+        try {
+            const res = await triggerAllocationDetailsAutomation();
+
+            if (res?.success) {
+                const data = res.data || {};
+                setSummary(data);
+                setStatusState("success");
+                setStatusMessage(
+                    "Transportation allocation details sent successfully."
+                );
+                toast.success(
+                    res.message || "Allocation details sent successfully."
+                );
+            } else {
+                const data = res?.data || null;
+                if (data) setSummary(data);
+                setStatusState("error");
+                setStatusMessage(
+                    res?.message || "Failed to send allocation details."
+                );
+                toast.error(
+                    res?.message || "Failed to send allocation details."
+                );
+            }
+
+            fetchAllocationStatus();
+        } catch (error) {
+            console.error("Allocation Details Send Error:", error);
+
+            const errMsg =
+                error?.response?.data?.message ||
+                error?.message ||
+                "Failed to send allocation details.";
+
+            setStatusState("error");
+            setStatusMessage(errMsg);
+            toast.error(errMsg);
+
+            fetchAllocationStatus();
+        }
+    };
+
+    const isAllocationReady = Boolean(
+        allocationReadiness?.canSendAllocation
+    );
 
     return (
         <div className="automation-page">
@@ -96,27 +181,80 @@ function Automation() {
                         </p>
 
                         <div className="automation-card__note">
-                            <strong>Note:</strong> Clicking the button queries registered users, verifies each user's registered phone number, and dispatches individual travel status WhatsApp notifications via n8n.
+                            <strong>Note:</strong> Clicking <strong>Send Travel Status</strong> queries registered users, verifies each user's registered phone number, and dispatches individual travel status WhatsApp notifications via n8n.
                         </div>
                     </div>
 
+                    {/* Actions Area */}
                     <div className="automation-card__actions">
-                        <button
-                            type="button"
-                            className="automation-btn-primary"
-                            id="btn-send-travel-status"
-                            onClick={handleSendTravelStatus}
-                            disabled={statusState === "sending"}
-                        >
-                            {statusState === "sending" ? (
-                                <>
-                                    <span className="automation-spinner" aria-hidden="true" />
-                                    Sending...
-                                </>
-                            ) : (
-                                "Send Travel Status"
-                            )}
-                        </button>
+                        <div className="automation-btn-actions-row">
+                            {/* Original Send Travel Status Button */}
+                            <button
+                                type="button"
+                                className="automation-btn-primary"
+                                id="btn-send-travel-status"
+                                onClick={handleSendTravelStatus}
+                                disabled={statusState === "sending"}
+                            >
+                                {statusState === "sending" && activeAction === "travel-status" ? (
+                                    <>
+                                        <span className="automation-spinner" aria-hidden="true" />
+                                        Sending...
+                                    </>
+                                ) : (
+                                    "Send Travel Status"
+                                )}
+                            </button>
+
+                            {/* Send Allocation Details Button */}
+                            <button
+                                type="button"
+                                className="automation-btn-success"
+                                id="btn-send-allocation-details"
+                                onClick={handleSendAllocationDetails}
+                                disabled={
+                                    statusState === "sending" ||
+                                    !isAllocationReady
+                                }
+                                title={
+                                    !isAllocationReady
+                                        ? "Disabled: Requires an Approved plan with Allocated students"
+                                        : "Send confirmed bus and route details to allocated students"
+                                }
+                            >
+                                {statusState === "sending" &&
+                                    activeAction === "allocation" ? (
+                                    <>
+                                        <span
+                                            className="automation-spinner"
+                                            aria-hidden="true"
+                                        />
+                                        Sending Details...
+                                    </>
+                                ) : (
+                                    <>
+                                        <HiTruck size={18} />
+                                        Send Allocation Details
+                                    </>
+                                )}
+                            </button>
+                        </div>
+
+                        {!isAllocationReady && (
+                            <div className="automation-allocation-hint">
+                                ℹ️{" "}
+                                <strong>Send Allocation Details</strong> is
+                                enabled only when an approved transportation
+                                plan exists and students have actually been
+                                allocated transportation.
+                                {allocationReadiness?.reason && (
+                                    <span>
+                                        {" "}
+                                        ({allocationReadiness.reason})
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Status feedback section */}
@@ -161,6 +299,12 @@ function Automation() {
                                     <span className="automation-stat-label">Total Users</span>
                                     <span className="automation-stat-value">{summary.totalUsers ?? 0}</span>
                                 </div>
+                                {summary.totalAllocated !== undefined && (
+                                    <div className="automation-stat-box">
+                                        <span className="automation-stat-label">Total Allocated</span>
+                                        <span className="automation-stat-value">{summary.totalAllocated}</span>
+                                    </div>
+                                )}
                                 <div className="automation-stat-box automation-stat-box--success">
                                     <span className="automation-stat-label">Messages Sent</span>
                                     <span className="automation-stat-value">{summary.sentCount ?? 0}</span>

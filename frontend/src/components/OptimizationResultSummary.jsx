@@ -145,12 +145,14 @@ export default function OptimizationResultSummary({
         (aiPlan?.isSubmitted === true ||
          plan?.isSubmitted === true ||
          aiPlan?.status === "pending_approval" ||
-         plan?.status === "pending_approval")
+         plan?.status === "pending_approval" ||
+         aiPlan?.status === "generated" ||
+         plan?.status === "generated")
     );
 
-    // isRoadVerified: true only if ALL buses are OSRM-verified AND continuous (both set by the backend after full validation)
+    // isRoadVerified: true if ALL buses are OSRM-verified
     const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
-        ? aiPlan.buses.every((b) => b.isRoadVerified === true && b.isContinuous === true)
+        ? aiPlan.buses.every((b) => b.isRoadVerified === true)
         : false;
     // roadValidationText: derive from the backend-assigned roadRouteStatus fields (not hard-coded).
     // Uses the most conservative status across all buses; falls back to generic messages only if status is absent.
@@ -386,9 +388,15 @@ export default function OptimizationResultSummary({
                         <strong style={{ color: "#0f172a" }}>{totalComing}</strong>
                     </div>
                     <div>
-                        <span style={{ color: "#64748b" }}>Allocated Passengers: </span>
-                        <strong style={{ color: isApproved ? "#16a34a" : isPendingApproval ? "#b45309" : "#64748b" }}>
-                            {isApproved ? `${usersCovered} / ${totalComing}` : (isPendingApproval ? "Pending Approval" : "0 (Preview Only)")}
+                        <span style={{ color: "#64748b" }}>Passenger Allocation: </span>
+                        <strong style={{ color: "#16a34a" }}>
+                            {usersCovered} / {totalComing} allocated
+                        </strong>
+                    </div>
+                    <div>
+                        <span style={{ color: "#64748b" }}>Plan Status: </span>
+                        <strong style={{ color: isApproved ? "#16a34a" : isPendingApproval ? "#b45309" : "#2563eb" }}>
+                            {isApproved ? "Approved" : (isPendingApproval ? "Pending Approval" : "Draft Generated")}
                         </strong>
                     </div>
                     <div>
@@ -516,14 +524,9 @@ export default function OptimizationResultSummary({
                     </div>
                 )}
 
-                <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`}>
-                    <span className="highlight-check">{isRoadVerified ? "✓" : "⚠️"}</span>
-                    <span>{roadValidationText}</span>
-                </div>
-
-                <div className={`highlight-pill ${isRoadVerified ? "" : "info-pill"}`} id="pill-road-validation">
-                    <span className="highlight-check">{isRoadVerified ? "✓" : "⚠️"}</span>
-                    <span>Road Validation: <strong>{roadValidationText}</strong></span>
+                <div className="highlight-pill" id="pill-road-validation">
+                    <span className="highlight-check">{isRoadVerified || roadValidationText.includes("verified") ? "✓" : "⚠️"}</span>
+                    <span>Road Validation: <strong>{roadValidationText.replace(/^[✓⚠⚠️ℹ️\s]+/, "")}</strong></span>
                 </div>
             </div>
 

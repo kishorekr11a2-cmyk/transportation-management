@@ -25,14 +25,15 @@ test("Travel Status Automation: isValidPhoneNumber validation rules", () => {
 test("Travel Status Automation: generateTravelStatusMessage personalization", () => {
     // User with normal name
     const msg1 = generateTravelStatusMessage({ name: "Kishore", userId: "USR1001" });
-    assert.ok(msg1.includes("Hello Kishore,"), "Message should greet by name");
-    assert.ok(msg1.includes("update your travel status"), "Message should mention updating travel status");
+    assert.ok(msg1.includes("Hello KISHORE,"), "Message should greet by name");
+    assert.ok(msg1.includes("Please submit your travel status for today's college transportation:"), "Message should mention submitting travel status");
+    assert.ok(msg1.includes("Note: You can submit your travel response only once per cycle. Once submitted, your response is locked until administrator reset."));
 
-    // User with short name fallback to userId
-    const msg2 = generateTravelStatusMessage({ name: "K", userId: "USR1002" });
-    assert.ok(msg2.includes("Hello USR1002,"), "Short name (< 3 chars) falls back to userId");
+    // User with fallback to userId
+    const msg2 = generateTravelStatusMessage({ name: "", userId: "USR1002" });
+    assert.ok(msg2.includes("Hello USR1002,"), "Empty name falls back to userId");
 
-    // User without name or userId fallback to User
+    // User without name or userId fallback to Student
     const msg3 = generateTravelStatusMessage({});
-    assert.ok(msg3.includes("Hello User,"), "Empty user fallback to User");
+    assert.ok(msg3.includes("Hello STUDENT,"), "Empty user fallback to STUDENT");
 });

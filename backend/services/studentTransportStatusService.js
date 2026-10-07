@@ -880,6 +880,7 @@ export const getCurrentStudentTransportStatus = async (userOrUserId, options = {
         userId: userDoc.userId,
         name: userDoc.name,
         travelStatus: userDoc.travelStatus || "Coming",
+        responseLocked: Boolean(userDoc.responseLocked || (userDoc.travelStatus && userDoc.travelStatus !== "Pending")),
         allocationStatus: isAllocated
             ? (userDoc.allocationStatus === "Re-assigned" ? "Re-assigned" : "Assigned")
             : "Unallocated",
@@ -1109,12 +1110,12 @@ export const calculateStudentTransportStatusSync = (userDoc, rawActivePlans, raw
         lateResponseDetected: isPendingReallocation,
         requiresReallocation: isPendingReallocation,
         affectedDirections,
-        allocatedBus: {
+        allocatedBus: isAllocated ? {
             ...(primaryDir.isAllocated ? primaryDir : {}),
             isAllocated,
             inward: inward.isAllocated ? inward : null,
             outward: outward.isAllocated ? outward : null
-        },
+        } : null,
         planVersion: activePlanVersion,
         planId: primaryDir.approvalEventId || activePlans?.primaryPlan?.planId || null,
         activePlan: activePlanSummary,

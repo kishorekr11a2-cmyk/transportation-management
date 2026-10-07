@@ -17,7 +17,7 @@ import {
     DEFAULT_LOCATION
 } from "../constants/locationConstants";
 import LocationSearchBox from "../components/LocationSearchBox";
-import { confirmManualPlan, getActivePlan } from "../services/aiAgentService";
+import { confirmManualPlan, getActivePlan, resetManualPlanAllocations } from "../services/aiAgentService";
 import { extractPolylineLatLngs } from "../utils/routeGeometry";
 import "../css/RouteManagement.css";
 import "leaflet/dist/leaflet.css";
@@ -1358,10 +1358,31 @@ export default function RouteManagement() {
         }, 250);
     };
 
+    // Reset manual allocations for a given direction (or both)
+    const handleResetManualAllocations = async (direction = "BOTH") => {
+        const label = direction === "BOTH" ? "all" : direction.toLowerCase();
+        if (!window.confirm(`Are you sure you want to reset the ${label} manual allocation? This will clear vehicle assignments from routes.`)) return;
+        try {
+            setPlanActionLoading(true);
+            const res = await resetManualPlanAllocations({ direction });
+            if (res?.success !== false) {
+                toast.success(res?.message || `Manual ${label} allocation reset successfully.`);
+                await loadDataSilently();
+            } else {
+                toast.error(res?.message || "Reset failed.");
+            }
+        } catch (err) {
+            const msg = err?.response?.data?.message || err?.message || "Reset failed.";
+            toast.error(msg);
+        } finally {
+            setPlanActionLoading(false);
+        }
+    };
+
     return (
         <div className={`route-container ${fullscreen ? "route-fullscreen" : ""}`}>
             {!fullscreen && (
-                <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" }}>
                     <button
                         type="button"
                         className="route-back-btn"
@@ -1371,7 +1392,26 @@ export default function RouteManagement() {
                         <HiArrowLeft size={16} />
                         Back
                     </button>
-                    <h2 style={{ margin: 0 }}>🛣️ Route Management</h2>
+                    <h2 style={{ margin: 0, flex: 1 }}>🛣️ Route Management</h2>
+                    <button
+                        type="button"
+                        disabled={planActionLoading}
+                        onClick={() => handleResetManualAllocations("BOTH")}
+                        style={{
+                            padding: "6px 16px",
+                            fontSize: "13px",
+                            fontWeight: "600",
+                            background: "#fef2f2",
+                            color: "#b91c1c",
+                            border: "1px solid #fecaca",
+                            borderRadius: "8px",
+                            cursor: planActionLoading ? "not-allowed" : "pointer",
+                            opacity: planActionLoading ? 0.6 : 1
+                        }}
+                        title="Reset all manual allocations"
+                    >
+                        {planActionLoading ? "⏳ Resetting..." : "🔄 Reset"}
+                    </button>
                 </div>
             )}
 
@@ -1873,98 +1913,7 @@ export default function RouteManagement() {
                                             );
                                         };
 
-                                        // Render persistent AI plan card if an AI plan exists in MongoDB
-                                        const renderAiPlanCard = (plan, dir) => {
-                                            if (!plan) return null;
-                                            const buses = Array.isArray(plan.buses) ? plan.buses : (Array.isArray(plan.aiPlan?.buses) ? plan.aiPlan.buses : []);
-                                            if (buses.length === 0) return null;
 
-                                            const isApproved = Boolean(plan.isApproved || plan.approved || (plan.status === "active" && plan.approvedAt));
-                                            const isPending = !isApproved && Boolean(plan.isSubmitted || plan.status === "pending_approval" || plan.status === "submitted");
-                                            const statusLabel = isApproved ? "Approved & Assigned" : (isPending ? "Pending Approval" : "AI Generated");
-                                            const statusClass = isApproved ? "approved" : (isPending ? "pending" : "generated");
-
-                                            const totalCapacity = buses.reduce((acc, b) => acc + (Number(b.capacity || b.totalCapacity || b.assignedVehicle?.capacity) || 0), 0);
-                                            const allocatedSeats = Number(
-                                                plan.assignedUsers ??
-                                                plan.allocatedUsers ??
-                                                plan.summary?.allocatedSeats ??
-                                                buses.reduce((acc, b) => acc + (Number(b.allocatedCount || b.studentCount || b.assignedStudents?.length || b.students?.length) || 0), 0)
-                                            );
-
-                                            return (
-                                                <div className={`ai-plan-persistent-card ${dir.toLowerCase()}`} key={`ai-plan-${dir}`}>
-                                                    <div className="ai-plan-header">
-                                                        <div className="ai-plan-badge-group">
-                                                            <span style={{ fontSize: "14px", fontWeight: "700", color: "#1e293b" }}>
-                                                                🤖 AI Generated Route Plan ({dir})
-                                                            </span>
-                                                            <span className={`ai-plan-status-tag ${statusClass}`}>
-                                                                {statusLabel}
-                                                            </span>
-                                                            <span style={{ fontSize: "12px", color: "#64748b" }}>
-                                                                ({buses.length} vehicles · {allocatedSeats} / {totalCapacity} seats allocated)
-                                                            </span>
-                                                        </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => navigate(`/plan-confirmation?direction=${dir}&type=AI`)}
-                                                            style={{
-                                                                padding: "5px 12px",
-                                                                fontSize: "12px",
-                                                                fontWeight: "600",
-                                                                background: "#eff6ff",
-                                                                color: "#1d4ed8",
-                                                                border: "1px solid #bfdbfe",
-                                                                borderRadius: "6px",
-                                                                cursor: "pointer"
-                                                            }}
-                                                        >
-                                                            📋 Open in Plan Confirmation →
-                                                        </button>
-                                                    </div>
-                                                    <div className="ai-plan-bus-list">
-                                                        {buses.map((bus, idx) => {
-                                                            const bNum = bus.routeCode || bus.busNumber || bus.vehicleName || bus.vehicleNumber || bus.assignedVehicle?.vehicleName || `Bus ${idx + 1}`;
-                                                            const vName = bus.assignedVehicle?.vehicleName || bus.vehicleName || bus.vehicleNumber || "Vehicle";
-                                                            const passCount = bus.totalAssigned || bus.assignedUsers || bus.studentCount || bus.assignedStudents?.length || (Array.isArray(bus.students) ? bus.students.length : 0);
-                                                            const bCap = bus.capacity || bus.assignedVehicle?.capacity || 0;
-                                                            const isCurrentlyViewing = Boolean(
-                                                                selectedAiRouteId && matchesRouteId(bus, selectedAiRouteId)
-                                                            );
-
-                                                            return (
-                                                                <div className="ai-plan-bus-item" key={getStableRouteId(bus) || idx}>
-                                                                    <div>
-                                                                        <strong style={{ color: "#1e293b" }}>🚌 {bNum}</strong>
-                                                                        <span style={{ color: "#64748b", marginLeft: "6px", fontSize: "13px" }}>({vName})</span>
-                                                                        <span style={{ marginLeft: "12px", fontSize: "12px", color: "#0f766e", fontWeight: "600" }}>
-                                                                            {passCount} passengers ({bCap} seats)
-                                                                        </span>
-                                                                    </div>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => handleSelectAiRoute(bus)}
-                                                                        style={{
-                                                                            padding: "4px 10px",
-                                                                            fontSize: "11px",
-                                                                            fontWeight: "600",
-                                                                            background: isCurrentlyViewing ? "#dcfce7" : "#f1f5f9",
-                                                                            color: isCurrentlyViewing ? "#15803d" : "#334155",
-                                                                            border: `1px solid ${isCurrentlyViewing ? "#86efac" : "#cbd5e1"}`,
-                                                                            borderRadius: "5px",
-                                                                            cursor: "pointer"
-                                                                        }}
-                                                                    >
-                                                                        {isCurrentlyViewing ? "📍 Viewing on Map" : "🗺️ View on Map"}
-                                                                    </button>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            );
-                                        };
 
                                         // Render saved route list based on selected direction tab
                                         if (directionFilter === "OUTWARD") {
@@ -1989,7 +1938,7 @@ export default function RouteManagement() {
                                                         </button>
                                                     </div>
 
-                                                    {renderAiPlanCard(outwardPlan, "OUTWARD")}
+
 
                                                     {outwardRoutes.length === 0 && !outwardPlan ? (
                                                         <div className="no-plan-card">
@@ -2027,7 +1976,7 @@ export default function RouteManagement() {
                                                     </button>
                                                 </div>
 
-                                                {renderAiPlanCard(inwardPlan, "INWARD")}
+
 
                                                 {inwardRoutes.length === 0 && !inwardPlan ? (
                                                     <div className="no-plan-card">

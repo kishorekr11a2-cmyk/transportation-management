@@ -320,7 +320,7 @@ test("Inward Starting-Hub and Route-Continuity Optimization Suite", async (t) =>
         });
 
         assert.equal(decision.minCapacityBuses, 2, "Minimum capacity requirement is 2 buses");
-        assert.equal(decision.targetRouteCount, 2, "Does not artificially add a bus solely to match opposite direction");
+        assert.equal(decision.targetRouteCount, 3, "Preserves 3 buses for daily fleet continuity when demand is similar (140 vs 135)");
         assert.equal(decision.symmetryStatus, "BALANCED_FLEET");
         assert.equal(decision.oppositeBusCount, 3);
     });

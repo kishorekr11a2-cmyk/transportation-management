@@ -936,7 +936,8 @@ export const resetManualPlan = async (req, res) => {
 export const resetManualAllocations = async (req, res) => {
     try {
         const direction = req.body?.direction || req.query?.direction || null;
-        const canonicalDirection = direction ? ((String(direction).toUpperCase().trim() === "OUTWARD") ? "OUTWARD" : "INWARD") : null;
+        const dirUpper = direction ? String(direction).toUpperCase().trim() : null;
+        const canonicalDirection = dirUpper === "OUTWARD" ? "OUTWARD" : dirUpper === "INWARD" ? "INWARD" : null; // null = reset all (BOTH)
 
         // Reset manual user allocations and ai_selected_plans (MANUAL/ADMIN) without deleting Route models or submissions
         const result = await resetGeneratedAIRoute({ direction: canonicalDirection, planType: "MANUAL" });

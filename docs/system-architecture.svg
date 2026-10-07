@@ -1,0 +1,2026 @@
+<svg width="2600" height="1620" viewBox="0 0 2600 1620" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- Marker Arrows -->
+        <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#38bdf8"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#f59e0b"/>
+        </marker>
+        <marker id="arrow-emerald" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#10b981"/>
+        </marker>
+        <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#a855f7"/>
+        </marker>
+        <marker id="arrow-rose" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#f43f5e"/>
+        </marker>
+        
+        <!-- Canvas Grid Pattern -->
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#0c1e3d" stroke-width="0.8" opacity="0.6"/>
+        </pattern>
+    </defs>
+
+    <!-- Master Background -->
+    <rect width="2600" height="1620" fill="#061024"/>
+    <rect width="2600" height="1620" fill="url(#grid)"/>
+
+    <!-- ====================================================================== -->
+    <!-- TOP HEADER BANNER                                                      -->
+    <!-- ====================================================================== -->
+    <g transform="translate(40, 20)">
+        <rect width="2520" height="88" rx="8" fill="#091836" stroke="#1d3b70" stroke-width="1.8"/>
+        
+        <!-- Project Title & Subtitle -->
+        <text x="24" y="38" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" fill="#ffffff" letter-spacing="0.5">AI-BASED TRANSPORTATION MANAGEMENT SYSTEM</text>
+        <text x="24" y="62" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="500" fill="#38bdf8">High-Level System Architecture, Component Topography &amp; Operational Lifecycle | Final Year B.E. Project</text>
+        
+        <!-- System Status Pills -->
+        <g transform="translate(1420, 26)">
+            <!-- Pill 1: Optimization Runtime -->
+            <rect x="0" y="0" width="310" height="34" rx="6" fill="#062922" stroke="#059669" stroke-width="1.2"/>
+            <circle cx="16" cy="17" r="5" fill="#10b981"/>
+            <text x="30" y="21.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700" fill="#34d399">MODE: DETERMINISTIC_HEURISTIC_OPTIMIZER</text>
+            
+            <!-- Pill 2: Mathematical Safety -->
+            <rect x="325" y="0" width="235" height="34" rx="6" fill="#2d1c03" stroke="#d97706" stroke-width="1.2"/>
+            <circle cx="341" cy="17" r="5" fill="#f59e0b"/>
+            <text x="355" y="21.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700" fill="#fbbf24">ZERO PASSENGER LOSS SAFE</text>
+
+            <!-- Pill 3: Direct WhatsApp -->
+            <rect x="575" y="0" width="225" height="34" rx="6" fill="#062922" stroke="#10b981" stroke-width="1.2"/>
+            <circle cx="591" cy="17" r="5" fill="#34d399"/>
+            <text x="605" y="21.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700" fill="#6ee7b7">DIRECT BAILEYS WEBSOCKET</text>
+
+            <!-- Pill 4: Road Matrix Engine -->
+            <rect x="815" y="0" width="265" height="34" rx="6" fill="#1e1438" stroke="#7c3aed" stroke-width="1.2"/>
+            <circle cx="831" cy="17" r="5" fill="#a78bfa"/>
+            <text x="845" y="21.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700" fill="#c4b5fd">OSRM ROAD NETWORK MATRIX</text>
+        </g>
+    </g>
+
+    <!-- ====================================================================== -->
+    <!-- ROW 1: SECTION 1 (USERS) & SECTION 2 (FRONTEND)                        -->
+    <!-- ====================================================================== -->
+
+    <!-- SECTION 1: USERS & ACTORS -->
+    
+    <!-- Panel: Section 01 -->
+    <g transform="translate(40, 120)">
+        <rect width="340" height="365" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 330 0 Q 340 0 340 10 L 340 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="340" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">01</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">USERS &amp; ACTORS</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">Primary human stakeholders &amp; role-based portals</text>
+    </g>
+
+    
+    <!-- Card: Administrator / Transport Lead -->
+    <g transform="translate(60, 175)">
+        <!-- Card Background -->
+        <rect width="300" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 292 0 Q 300 0 300 8 L 300 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4zm-7 15a7 7 0 0 1 14 0v1H5v-1zm9.5-12.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="#2563eb"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Administrator / Transport Lead</text>
+        
+        <rect x="46" y="28" width="215.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ROLE: ADMIN | JWT AUTHENTICATED</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Oversees fleet capacities &amp; inward starting depots</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Generates AI optimization plans &amp; reviews proposals</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Activates live plans, manages late queue &amp; broadcasts</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Student / Daily Commuter -->
+    <g transform="translate(60, 328)">
+        <!-- Card Background -->
+        <rect width="300" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 292 0 Q 300 0 300 8 L 300 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zm0 8.5L4.5 8 12 4.14 19.5 8 12 11.5zM6 13.5v3.67C7.6 18.23 9.7 19 12 19s4.4-.77 6-1.83v-3.67c-1.6 1.06-3.7 1.83-6 1.83s-4.4-.77-6-1.83z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Student / Daily Commuter</text>
+        
+        <rect x="46" y="28" width="222" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#0284c7">ROLE: STUDENT | ID &amp; PHONE LOGIN</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#0284c7"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Daily travel status submission (Coming / Not Coming)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#0284c7"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Views allocated bus number, designated stop &amp; time</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#0284c7"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Receives WhatsApp boarding alerts &amp; live notifications</text>
+            
+        </g>
+    </g>
+
+    <!-- SECTION 2: FRONTEND PRESENTATION LAYER (REACT 18 + VITE) -->
+    
+    <!-- Panel: Section 02 -->
+    <g transform="translate(400, 120)">
+        <rect width="2160" height="365" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 2150 0 Q 2160 0 2160 10 L 2160 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="2160" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">02</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">FRONTEND PRESENTATION LAYER (REACT 18 + VITE)</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">Single Page Application (SPA), React Router v6, Axios REST client, Leaflet Map engine, and Hot Toast notifications</text>
+    </g>
+
+    <!-- Row A: 6 Cards -->
+    
+    <!-- Card: Authentication &amp; Role Router -->
+    <g transform="translate(425, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm0-8c5.52 0 10 2.24 10 5s-4.48 5-10 5S2 9.76 2 7s4.48-5 10-5zm0 14c-5.52 0-10-2.24-10-5s4.48-5 10-5 10 2.24 10 5-4.48 5-10 5z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Authentication &amp; Role Router</text>
+        
+        <rect x="46" y="28" width="228.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">AdminLogin.jsx | StudentLogin.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">JWT bearer token storage &amp; state persistence</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Role-based route guarding (Admin vs Student)</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Public landing hub &amp; session expiry interceptors</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Admin Operations Dashboard -->
+    <g transform="translate(780, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" fill="#2563eb"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Admin Operations Dashboard</text>
+        
+        <rect x="46" y="28" width="131" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">AdminDashboard.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#0284c7"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Real-time fleet KPI metrics &amp; active vehicles</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#0284c7"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Confirmed commuter count vs fleet capacity</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#0284c7"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Live unallocated student indicator &amp; quick links</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: User Management Module -->
+    <g transform="translate(1135, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4zm-7 15a7 7 0 0 1 14 0v1H5v-1zm9.5-12.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="#2563eb"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">User Management Module</text>
+        
+        <rect x="46" y="28" width="131" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">UserManagement.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Student &amp; faculty directory with CRUD controls</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Real-time travelStatus monitor (Coming / Not)</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Registered phone verification for WhatsApp</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Vehicle Fleet Management -->
+    <g transform="translate(1490, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4 16c0 1.1.9 2 2 2v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h6v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1c1.1 0 2-.9 2-2V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z" fill="#d97706"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Vehicle Fleet Management</text>
+        
+        <rect x="46" y="28" width="150.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">VehicleManagement.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#d97706"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Bus inventory, seating capacity (Cap_v) &amp; status</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#d97706"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Vehicle availability toggles for active scheduling</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#d97706"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Driver credentials &amp; registration assignment</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Route Management &amp; Polyline -->
+    <g transform="translate(1845, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M19 15.18V7c0-2.21-1.79-4-4-4s-4 1.79-4 4v10c0 1.1-.9 2-2 2s-2-.9-2-2V8.82C8.16 8.4 9 7.3 9 6c0-1.66-1.34-3-3-3S3 4.34 3 6c0 1.3.84 2.4 2 2.82V17c0 2.21 1.79 4 4 4s4-1.79 4-4V7c0-1.1.9-2 2-2s2 .9 2 2v8.18c-1.16.41-2 1.51-2 2.82 0 1.66 1.34 3 3 3s3-1.34 3-3c0-1.3-.84-2.4-2-2.82z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Route Management &amp; Polyline</text>
+        
+        <rect x="46" y="28" width="137.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">RouteManagement.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Interactive Leaflet &amp; OpenStreetMap visualizer</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Stops ordering, drag-and-drop waypoint sequence</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Road polylines, direction selector (INWARD/OUTWARD)</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Schedule &amp; Shift Timetables -->
+    <g transform="translate(2200, 175)">
+        <!-- Card Background -->
+        <rect width="335" height="140" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#7c3aed"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z" fill="#7c3aed"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Schedule &amp; Shift Timetables</text>
+        
+        <rect x="46" y="28" width="157" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ScheduleManagement.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#7c3aed"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Morning pickup shifts &amp; evening return departure times</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#7c3aed"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Operational time windows &amp; shift configurations</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#7c3aed"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Calendar date scheduling &amp; active shift toggles</text>
+            
+        </g>
+    </g>
+
+    <!-- Row B: 6 Cards -->
+    
+    <!-- Card: AI Agent Optimization Studio -->
+    <g transform="translate(425, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#4f46e5"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9c0 3.6 2.1 6.7 5.2 8.1l.8-1.8C6.3 17.2 4.6 14.8 4.6 12a7.4 7.4 0 0 1 7.4-7.4c4.1 0 7.4 3.3 7.4 7.4 0 2.8-1.7 5.2-4.4 6.3l.8 1.8c3.1-1.4 5.2-4.5 5.2-8.1a9 9 0 0 0-9-9zm-1 5v4.6l3.5 2.1.8-1.3-2.8-1.7V8h-1.5z" fill="#4f46e5"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">AI Agent Optimization Studio</text>
+        
+        <rect x="46" y="28" width="85.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">AIAgent.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#4f46e5"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Multi-objective combinatorial parameter tuning</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#4f46e5"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Dry-run optimization preview with road metrics</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#4f46e5"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Direction-specific plan reset &amp; diagnostic logs</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Plan Confirmation &amp; Activation -->
+    <g transform="translate(780, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Plan Confirmation &amp; Activation</text>
+        
+        <rect x="46" y="28" width="144" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">PlanConfirmation.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Side-by-side proposed bus route inspection</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Detailed passenger manifest per vehicle</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">One-click &apos;Approve &amp; Activate&apos; atomic execution</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Admin Manual Plan Editor -->
+    <g transform="translate(1135, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="#2563eb"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Admin Manual Plan Editor</text>
+        
+        <rect x="46" y="28" width="137.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">AdminManualPlan.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Administrative manual route configuration</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">AI vehicle suitability &amp; capacity guidance</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Deterministic zero-passenger-loss validation</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Student Commuter Dashboard -->
+    <g transform="translate(1490, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zm0 8.5L4.5 8 12 4.14 19.5 8 12 11.5zM6 13.5v3.67C7.6 18.23 9.7 19 12 19s4.4-.77 6-1.83v-3.67c-1.6 1.06-3.7 1.83-6 1.83s-4.4-.77-6-1.83z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Student Commuter Dashboard</text>
+        
+        <rect x="46" y="28" width="144" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">StudentDashboard.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#0284c7"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Instant daily travel status toggle (Coming / Not)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#0284c7"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Assigned bus number, stop location &amp; timetable</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#0284c7"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Late responder status notice: WAITING FOR REVIEW</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Excel Bulk Ingestion Portal -->
+    <g transform="translate(1845, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 8h4.5L14 4.5V10zm-6.2 8.5L7.3 16l1.5-2.5h1.6l-2.2 3.2 2.3 3.3H8.8l-1.5-2.5z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Excel Bulk Ingestion Portal</text>
+        
+        <rect x="46" y="28" width="228.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ExcelUpload.jsx | ImportExcel.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Drag-and-drop .xlsx/.xls workbook batch parsing</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Multi-column student &amp; stop record mapping</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Instantaneous database upsert of 400+ commuters</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Automation &amp; WhatsApp Hub -->
+    <g transform="translate(2200, 328)">
+        <!-- Card Background -->
+        <rect width="335" height="142" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 327 0 Q 335 0 335 8 L 335 4 L 0 4 Z" fill="#7c3aed"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Automation &amp; WhatsApp Hub</text>
+        
+        <rect x="46" y="28" width="105" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">Automation.jsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#7c3aed"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Triggers travel status reminder broadcasts</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#7c3aed"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Monitors n8n webhook status &amp; Baileys socket</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#7c3aed"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Execution summary: Sent, Skipped, and Failed</text>
+            
+        </g>
+    </g>
+
+    <!-- ====================================================================== -->
+    <!-- ROW 2: SECTION 3 (BACKEND), SECTION 4 (AI ENGINE), SECTION 6 (SERVICES)-->
+    <!-- ====================================================================== -->
+
+    <!-- SECTION 3: BACKEND APPLICATION LAYER (NODE.JS + EXPRESS 5) -->
+    
+    <!-- Panel: Section 03 -->
+    <g transform="translate(40, 500)">
+        <rect width="800" height="395" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 790 0 Q 800 0 800 10 L 800 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="800" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">03</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">BACKEND APPLICATION &amp; API LAYER (NODE.JS + EXPRESS 5)</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">REST API Gateway, Performance Timing, Controllers, and Service Orchestration</text>
+    </g>
+
+    <!-- Backend Row A: 3 Cards -->
+    
+    <!-- Card: Express 5 REST API Gateway -->
+    <g transform="translate(65, 555)">
+        <!-- Card Background -->
+        <rect width="236" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4 4h16v4H4V4zm0 6h16v4H4v-4zm0 6h16v4H4v-4zm2-10h2V6H6V6zm0 6h2v-2H6v2zm0 6h2v-2H6v2z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Express 5 REST API Gateway</text>
+        
+        <rect x="46" y="28" width="176.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">server.js | authRoutes.js</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">JWT verification &amp; RBAC middleware</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Performance timing for key endpoints</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Cache-Control: no-store on all APIs</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Resource Controllers -->
+    <g transform="translate(322, 555)">
+        <!-- Card Background -->
+        <rect width="236" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65A.488.488 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Resource Controllers</text>
+        
+        <rect x="46" y="28" width="181" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">userRoutes, vehicleRoutes, etc.</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#0284c7"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">CRUD operations for core domain models</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#0284c7"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Travel-status toggle endpoint handler</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#0284c7"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Inward starting depot configuration</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Excel Ingestion Engine -->
+    <g transform="translate(579, 555)">
+        <!-- Card Background -->
+        <rect width="236" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 8h4.5L14 4.5V10zm-6.2 8.5L7.3 16l1.5-2.5h1.6l-2.2 3.2 2.3 3.3H8.8l-1.5-2.5z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Excel Ingestion Engine</text>
+        
+        <rect x="46" y="28" width="181" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">excelRoutes.js | Multer + xlsx</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">In-memory multipart spreadsheet buffer</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Validates columns, coordinates &amp; phones</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Atomic batch insertion into MongoDB</text>
+            
+        </g>
+    </g>
+
+    <!-- Backend Row B: 3 Cards -->
+    
+    <!-- Card: AI Agent Orchestrator -->
+    <g transform="translate(65, 720)">
+        <!-- Card Background -->
+        <rect width="236" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#4f46e5"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9c0 3.6 2.1 6.7 5.2 8.1l.8-1.8C6.3 17.2 4.6 14.8 4.6 12a7.4 7.4 0 0 1 7.4-7.4c4.1 0 7.4 3.3 7.4 7.4 0 2.8-1.7 5.2-4.4 6.3l.8 1.8c3.1-1.4 5.2-4.5 5.2-8.1a9 9 0 0 0-9-9zm-1 5v4.6l3.5 2.1.8-1.3-2.8-1.7V8h-1.5z" fill="#4f46e5"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">AI Agent Orchestrator</text>
+        
+        <rect x="46" y="28" width="124.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">aiAgentService.js</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#4f46e5"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Demand aggregation for Coming riders</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#4f46e5"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Coordinates dry-run routing pipeline</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#4f46e5"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Directional filtering (INWARD/OUTWARD)</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Plan Activation Engine -->
+    <g transform="translate(322, 720)">
+        <!-- Card Background -->
+        <rect width="236" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Plan Activation Engine</text>
+        
+        <rect x="46" y="28" width="150.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">activate_live_plan.js</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Transitions AiPlan: draft -&gt; active</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Atomic update of User.assignedBus</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Writes telemetry to RoutePerformance</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Late-Response Controller -->
+    <g transform="translate(579, 720)">
+        <!-- Card Background -->
+        <rect width="236" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 228 0 Q 236 0 236 8 L 236 4 L 0 4 Z" fill="#e11d48"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="#0284c7"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Late-Response Controller</text>
+        
+        <rect x="46" y="28" width="181" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#e11d48">lateResponseLifecycleService.js</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#e11d48"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Detects late status change post-approval</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#e11d48"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Logs quarantined LateResponseEvent</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#e11d48"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">lateResponseRegenerationService.js</text>
+            
+        </g>
+    </g>
+
+    <!-- SECTION 4: AI COMBINATORIAL ROUTE OPTIMIZATION ENGINE -->
+    
+    <!-- Panel: Section 04 -->
+    <g transform="translate(860, 500)">
+        <rect width="1140" height="395" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 1130 0 Q 1140 0 1140 10 L 1140 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="1140" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">04</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">AI COMBINATORIAL ROUTE OPTIMIZATION ENGINE</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">Multi-objective combinatorial heuristics, OSRM road matrices, Clarke-Wright savings, and 2-opt local search</text>
+    </g>
+
+    <!-- Row A: 4 Pipeline Cards -->
+    
+    <!-- Card: 1. Confirmed Demand Filter -->
+    <g transform="translate(885, 555)">
+        <!-- Card Background -->
+        <rect width="255" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 247 0 Q 255 0 255 8 L 255 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="#2563eb"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">1. Confirmed Demand Filter</text>
+        
+        <rect x="46" y="28" width="163.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">STRICT STATUS ISOLATION</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Extracts users with travelStatus == &apos;Coming&apos;</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Ignores Not Coming &amp; Pending students</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Resolves boarding stop WGS-84 coordinates</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: 2. Fleet Capacity Validation -->
+    <g transform="translate(1160, 555)">
+        <!-- Card Background -->
+        <rect width="255" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 247 0 Q 255 0 255 8 L 255 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4 16c0 1.1.9 2 2 2v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h6v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1c1.1 0 2-.9 2-2V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z" fill="#d97706"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">2. Fleet Capacity Validation</text>
+        
+        <rect x="46" y="28" width="157" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">BOUNDS &amp; DEPOT ANCHORS</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#d97706"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Queries available fleet &amp; capacities (Cap_v)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#d97706"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Retrieves inward starting depot per bus</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#d97706"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Verifies total seat capacity &gt;= demand</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: 3. Road Distance Matrix -->
+    <g transform="translate(1435, 555)">
+        <!-- Card Background -->
+        <rect width="255" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 247 0 Q 255 0 255 8 L 255 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z" fill="#d97706"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">3. Road Distance Matrix</text>
+        
+        <rect x="46" y="28" width="157" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">OSRM TABLE API + CACHE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#0284c7"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Real-world driving distance &amp; travel time</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#0284c7"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Asymmetric road network calculations</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#0284c7"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Two-tier TTL cache eliminates latency</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: 4. Geocoding Resolution -->
+    <g transform="translate(1710, 555)">
+        <!-- Card Background -->
+        <rect width="265" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 257 0 Q 265 0 265 8 L 265 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M19 15.18V7c0-2.21-1.79-4-4-4s-4 1.79-4 4v10c0 1.1-.9 2-2 2s-2-.9-2-2V8.82C8.16 8.4 9 7.3 9 6c0-1.66-1.34-3-3-3S3 4.34 3 6c0 1.3.84 2.4 2 2.82V17c0 2.21 1.79 4 4 4s4-1.79 4-4V7c0-1.1.9-2 2-2s2 .9 2 2v8.18c-1.16.41-2 1.51-2 2.82 0 1.66 1.34 3 3 3s3-1.34 3-3c0-1.3-.84-2.4-2-2.82z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">4. Geocoding Resolution</text>
+        
+        <rect x="46" y="28" width="144" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">NOMINATIM OSM ENGINE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Forward &amp; reverse geocoding of stops</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Normalizes landmarks to exact lat/lon</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">MongoDB mapLocation caching layer</text>
+            
+        </g>
+    </g>
+
+    <!-- Pipeline connecting arrows in Section 4 Row A -->
+    <path d="M 1140 630 L 1155 630" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <path d="M 1415 630 L 1430 630" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <path d="M 1690 630 L 1705 630" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <path d="M 1975 690 L 1985 690 L 1985 712 L 872 712 L 872 795 L 880 795" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="3,2" marker-end="url(#arrow-amber)"/>
+
+    <!-- Row B: 3 Optimization Cards -->
+    
+    <!-- Card: 5. Clarke-Wright Road Savings -->
+    <g transform="translate(885, 720)">
+        <!-- Card Background -->
+        <rect width="350" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 342 0 Q 350 0 350 8 L 350 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8H7z" fill="#f59e0b"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">5. Clarke-Wright Road Savings</text>
+        
+        <rect x="46" y="28" width="222" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">MIN-HEAP PRIORITY QUEUE O(log K)</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#d97706"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Calculates road savings: S_ij = C_0i + C_0j - C_ij</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#d97706"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Fastest extraction of top savings pairs via Min-Heap</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#d97706"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Greedy clustering constrained by vehicle capacity (Cap_v)</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: 6. 2-Opt Road Sequence Search -->
+    <g transform="translate(1255, 720)">
+        <!-- Card Background -->
+        <rect width="360" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 352 0 Q 360 0 360 8 L 360 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M19 15.18V7c0-2.21-1.79-4-4-4s-4 1.79-4 4v10c0 1.1-.9 2-2 2s-2-.9-2-2V8.82C8.16 8.4 9 7.3 9 6c0-1.66-1.34-3-3-3S3 4.34 3 6c0 1.3.84 2.4 2 2.82V17c0 2.21 1.79 4 4 4s4-1.79 4-4V7c0-1.1.9-2 2-2s2 .9 2 2v8.18c-1.16.41-2 1.51-2 2.82 0 1.66 1.34 3 3 3s3-1.34 3-3c0-1.3-.84-2.4-2-2.82z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">6. 2-Opt Road Sequence Search</text>
+        
+        <rect x="46" y="28" width="170" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">EDGE-EXCHANGE UNTANGLING</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Swaps non-adjacent road segments whenever delta &lt; 0</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Eliminates zig-zags, backtracking, and road loops</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Inter-route operators: Relocate, Exchange, and Or-opt</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: 7. Scoring &amp; Deterministic Zero-Loss -->
+    <g transform="translate(1635, 720)">
+        <!-- Card Background -->
+        <rect width="340" height="160" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 332 0 Q 340 0 340 8 L 340 4 L 0 4 Z" fill="#4f46e5"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">7. Scoring &amp; Deterministic Zero-Loss</text>
+        
+        <rect x="46" y="28" width="202.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">MATHEMATICAL SAFETY ASSURANCE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#4f46e5"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Scoring: Utilization (85-100%) + Jaccard Co-occurrence</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#4f46e5"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Zero passenger loss: All Coming commuters routed</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#4f46e5"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Delayed fleet-wide assignment matches ideal bus capacity</text>
+            
+        </g>
+    </g>
+
+    <!-- Pipeline connecting arrows in Section 4 Row B -->
+    <path d="M 1235 795 L 1250 795" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <path d="M 1615 795 L 1630 795" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+
+    <!-- SECTION 6: EXTERNAL SERVICES & INTEGRATIONS -->
+    
+    <!-- Panel: Section 06 -->
+    <g transform="translate(2020, 500)">
+        <rect width="540" height="395" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 530 0 Q 540 0 540 10 L 540 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="540" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">06</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">EXTERNAL SERVICES &amp; INTEGRATIONS</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">GIS routing engines, geocoders, messaging sockets, and automation webhooks</text>
+    </g>
+
+    
+    <!-- Card: OSRM Routing Engine (Open Source Routing Machine) -->
+    <g transform="translate(2045, 552)">
+        <!-- Card Background -->
+        <rect width="490" height="77" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 482 0 Q 490 0 490 8 L 490 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 10)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z" fill="#d97706"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="20" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#0f172a">OSRM Routing Engine (Open Source Routing Machine)</text>
+        
+        <rect x="46" y="25" width="163.5" height="14" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="35.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="#2563eb">HTTP TABLE &amp; ROUTE APIs</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 45)">
+            
+            <circle cx="2" cy="3" r="2" fill="#0284c7"/>
+            <text x="10" y="6.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">Table API: duration &amp; distance matrix | Route API: road polylines</text>
+            
+            
+            <circle cx="2" cy="17" r="2" fill="#0284c7"/>
+            <text x="10" y="20.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">High-performance C++ driving profile routing daemon</text>
+            
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Nominatim Geocoding API (OpenStreetMap) -->
+    <g transform="translate(2045, 634)">
+        <!-- Card Background -->
+        <rect width="490" height="77" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 482 0 Q 490 0 490 8 L 490 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 10)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M19 15.18V7c0-2.21-1.79-4-4-4s-4 1.79-4 4v10c0 1.1-.9 2-2 2s-2-.9-2-2V8.82C8.16 8.4 9 7.3 9 6c0-1.66-1.34-3-3-3S3 4.34 3 6c0 1.3.84 2.4 2 2.82V17c0 2.21 1.79 4 4 4s4-1.79 4-4V7c0-1.1.9-2 2-2s2 .9 2 2v8.18c-1.16.41-2 1.51-2 2.82 0 1.66 1.34 3 3 3s3-1.34 3-3c0-1.3-.84-2.4-2-2.82z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="20" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#0f172a">Nominatim Geocoding API (OpenStreetMap)</text>
+        
+        <rect x="46" y="25" width="150.5" height="14" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="35.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="#2563eb">OSM GEOCODING SERVICE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 45)">
+            
+            <circle cx="2" cy="3" r="2" fill="#059669"/>
+            <text x="10" y="6.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">Resolves institution stop names and addresses to WGS-84 coordinates</text>
+            
+            
+            <circle cx="2" cy="17" r="2" fill="#059669"/>
+            <text x="10" y="20.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">Provides geographic polygon boundaries &amp; reverse geocode lookup</text>
+            
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: WhatsApp Multi-Device Engine (@whiskeysockets/baileys) -->
+    <g transform="translate(2045, 716)">
+        <!-- Card Background -->
+        <rect width="490" height="77" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 482 0 Q 490 0 490 8 L 490 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 10)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M16.75 13.96c.25.13.41.2.46.3.06.11.04.61-.21 1.18-.25.56-.96 1.09-1.63 1.25-.56.13-1.19.16-3.41-.62-2.31-.81-4.04-2.88-4.22-3.11-.19-.23-1.42-1.89-1.42-3.6 0-1.72.9-2.57 1.22-2.92.32-.36.71-.45.95-.45.24 0 .48 0 .69.01.23.01.53-.09.83.63.31.74 1.06 2.58 1.15 2.77.1.19.16.42.04.66-.13.23-.2.37-.39.6-.19.23-.41.51-.58.69-.2.2-.4.42-.18.8.23.38 1.01 1.67 2.18 2.7 1.5 1.34 2.76 1.75 3.16 1.95.4.19.63.16.86-.1.23-.27.99-1.15 1.25-1.55.26-.4.52-.33.87-.2zM12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="20" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#0f172a">WhatsApp Multi-Device Engine (@whiskeysockets/baileys)</text>
+        
+        <rect x="46" y="25" width="176.5" height="14" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="35.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="#2563eb">EMBEDDED WEBSOCKET SOCKET</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 45)">
+            
+            <circle cx="2" cy="3" r="2" fill="#059669"/>
+            <text x="10" y="6.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">Direct connection to WhatsApp servers without paid third-party APIs</text>
+            
+            
+            <circle cx="2" cy="17" r="2" fill="#059669"/>
+            <text x="10" y="20.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">QR terminal auth, auto-reconnect backoff &amp; E.164 phone normalization</text>
+            
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Spreadsheet Parser (xlsx) &amp; n8n Automation Webhook -->
+    <g transform="translate(2045, 798)">
+        <!-- Card Background -->
+        <rect width="490" height="77" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 482 0 Q 490 0 490 8 L 490 4 L 0 4 Z" fill="#7c3aed"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 10)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 8h4.5L14 4.5V10zm-6.2 8.5L7.3 16l1.5-2.5h1.6l-2.2 3.2 2.3 3.3H8.8l-1.5-2.5z" fill="#059669"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="20" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#0f172a">Spreadsheet Parser (xlsx) &amp; n8n Automation Webhook</text>
+        
+        <rect x="46" y="25" width="313" height="14" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="35.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="#2563eb">XLSX PARSER | OPTIONAL n8n RUNNER AT PORT 5678</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 45)">
+            
+            <circle cx="2" cy="3" r="2" fill="#7c3aed"/>
+            <text x="10" y="6.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">xlsx: Fast in-memory parsing of commuter spreadsheets via Multer</text>
+            
+            
+            <circle cx="2" cy="17" r="2" fill="#7c3aed"/>
+            <text x="10" y="20.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.6" fill="#334155">n8n Webhook: Optional scheduled batch runner calling /api/whatsapp/send</text>
+            
+            
+        </g>
+    </g>
+
+    <!-- ====================================================================== -->
+    <!-- ROW 3: SECTION 7 (PLAN LIFECYCLE) & SECTION 5 (MONGODB PERSISTENCE)    -->
+    <!-- ====================================================================== -->
+
+    <!-- SECTION 7: TRANSPORTATION PLAN LIFECYCLE & OPERATIONAL WORKFLOW -->
+    
+    <!-- Panel: Section 07 -->
+    <g transform="translate(40, 915)">
+        <rect width="1510" height="565" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 1500 0 Q 1510 0 1510 10 L 1510 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="1510" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">07</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">TRANSPORTATION PLAN LIFECYCLE &amp; OPERATIONAL WORKFLOW</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">Verified end-to-end operational lifecycle: from daily status submission to approval, late isolation, and regeneration</text>
+    </g>
+
+    <!-- 9 Sequential Steps arranged in a clean 3x3 layout -->
+    <!-- Row 1 of Lifecycle -->
+    
+    <g transform="translate(65, 970)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#2563eb"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">1</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Student Travel-Status Submission</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ACTOR: STUDENT COMMUTER</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Commuters toggle travelStatus (&apos;Coming&apos; / &apos;Not Coming&apos;) via Student Dashboard before the operational cutoff window.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Updates User.travelStatus; resets old bus allocation.</text>
+    </g>
+
+    
+    <g transform="translate(560, 970)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#0284c7"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#0284c7"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">2</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Demand Snapshot &amp; Confirmed Filtering</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#0284c7">ACTOR: BACKEND AI ORCHESTRATOR</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">System filters active students where travelStatus == &apos;Coming&apos;. Non-traveling and pending students are safely excluded.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Stops are resolved, geocoded, and aggregated into demand clusters.</text>
+    </g>
+
+    
+    <g transform="translate(1055, 970)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#d97706"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">3</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">AI Route Optimization (Dry-Run)</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#d97706">ACTOR: COMBINATORIAL OPTIMIZATION ENGINE</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Executes OSRM road matrix lookup, Clarke-Wright savings, and 2-opt untangling. Generates draft plan proposal in memory.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Zero live database assignments modified during preview mode.</text>
+    </g>
+
+    <!-- Lifecycle Sequence Arrows: Row 1 -->
+    <path d="M 530 1045 L 555 1045" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <path d="M 1025 1045 L 1050 1045" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <path d="M 1520 1045 L 1535 1045 L 1535 1130 L 50 1130 L 50 1210 L 60 1210" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
+
+    <!-- Row 2 of Lifecycle -->
+    
+    <g transform="translate(65, 1135)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#7c3aed"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#7c3aed"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">4</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Administrator Review &amp; Approval</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#7c3aed">ACTOR: TRANSPORT ADMINISTRATOR</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Admin inspects proposed routes, stop sequences, vehicle utilization, and manifests in Plan Confirmation. Approves proposal.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">AiPlan status transitions from &apos;draft&apos; to &apos;approved&apos;.</text>
+    </g>
+
+    
+    <g transform="translate(560, 1135)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#059669"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">5</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Plan Live Activation &amp; Seat Allocation</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#059669">ACTOR: PLAN ACTIVATION ENGINE (activate_live_plan.js)</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Atomic database transaction sets User.assignedBus, generates boarding manifests, and writes telemetry to RoutePerformance.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">AiPlan marked active; institutional fleet schedule goes live.</text>
+    </g>
+
+    
+    <g transform="translate(1055, 1135)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#2563eb"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">6</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Live Student Dashboard Display</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ACTOR: COMMUTER / WHATSAPP SOCKET</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Student Dashboard immediately reflects allocated bus number, designated stop, and schedule. WhatsApp alerts dispatched.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Commuters receive real-time bus number &amp; boarding timetable.</text>
+    </g>
+
+    <!-- Lifecycle Sequence Arrows: Row 2 -->
+    <path d="M 530 1210 L 555 1210" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <path d="M 1025 1210 L 1050 1210" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <path d="M 1520 1210 L 1535 1210 L 1535 1295 L 50 1295 L 50 1375 L 60 1375" fill="none" stroke="#d97706" stroke-width="1.8" stroke-dasharray="4,3" marker-end="url(#arrow-amber)"/>
+
+    <!-- Row 3 of Lifecycle -->
+    
+    <g transform="translate(65, 1300)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#e11d48"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#e11d48"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">7</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Late Coming Response Quarantine</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#e11d48">ACTOR: LATE-RESPONSE CONTROLLER</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">If student submits &apos;Coming&apos; after plan approval, student is NOT injected into running route. Quarantined in LateResponseEvent.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Student marked &apos;UNALLOCATED / WAITING&apos;; event status = &apos;PENDING&apos;.</text>
+    </g>
+
+    
+    <g transform="translate(560, 1300)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#d97706"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">8</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">AI Regeneration &amp; Re-Approval</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#d97706">ACTOR: REGENERATION SERVICE &amp; ADMIN</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Admin inspects late queue. Triggers AI regeneration which checks vehicle spare seats, proposes revised plan, and admin re-approves.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">LateResponseEvent marked &apos;RESOLVED&apos;; late student allocated.</text>
+    </g>
+
+    
+    <g transform="translate(1055, 1300)">
+        <rect width="465" height="150" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <path d="M 0 8 Q 0 0 8 0 L 457 0 Q 465 0 465 8 L 465 4 L 0 4 Z" fill="#4f46e5"/>
+        
+        <!-- Step Number Badge -->
+        <rect x="12" y="12" width="28" height="24" rx="4" fill="#4f46e5"/>
+        <text x="26" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">9</text>
+        
+        <!-- Title & Actor -->
+        <text x="48" y="22" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Direction-Specific Plan Reset</text>
+        <text x="48" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#4f46e5">ACTOR: TRANSPORT ADMINISTRATOR</text>
+
+        <!-- Description & Note -->
+        <text x="14" y="58" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Allows independent resetting of INWARD (morning pickup) or OUTWARD (evening drop) routes without wiping the counter direction.</text>
+        <text x="14" y="73" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="500" fill="#64748b">Ensures operational flexibility across independent daily shifts.</text>
+    </g>
+
+    <!-- Lifecycle Sequence Arrows: Row 3 -->
+    <path d="M 530 1375 L 555 1375" fill="none" stroke="#d97706" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <path d="M 1025 1375 L 1050 1375" fill="none" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+
+    <!-- SECTION 5: PERSISTENCE & CACHE LAYER (MONGODB ATLAS) -->
+    
+    <!-- Panel: Section 05 -->
+    <g transform="translate(1570, 915)">
+        <rect width="990" height="565" rx="10" ry="10" fill="#0b1b38" stroke="#1e3a6a" stroke-width="1.6"/>
+        <!-- Panel Header -->
+        <path d="M 0 10 Q 0 0 10 0 L 980 0 Q 990 0 990 10 L 990 42 L 0 42 Z" fill="#11264c"/>
+        <line x1="0" y1="42" x2="990" y2="42" stroke="#1e3a6a" stroke-width="1.2"/>
+        
+        <!-- Number Pill -->
+        <rect x="14" y="10" width="30" height="22" rx="4" fill="#2563eb"/>
+        <text x="29" y="25" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">05</text>
+        
+        <!-- Header Text -->
+        <text x="52" y="23" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14.5" font-weight="700" fill="#60a5fa">PERSISTENCE &amp; CACHE LAYER (MONGODB ATLAS)</text>
+        <text x="52" y="36" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.5" fill="#94a3b8">Document collections, TTL caching, operational event stores, and telemetry models</text>
+    </g>
+
+    <!-- 8 MongoDB Cards in 2 columns x 4 rows -->
+    
+    <!-- Card: Users Collection (User.js) -->
+    <g transform="translate(1595, 970)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Users Collection (User.js)</text>
+        
+        <rect x="46" y="28" width="215.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">CORE COMMUTER &amp; AUTH REPOSITORY</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Auth credentials, role (&apos;admin&apos; / &apos;student&apos;)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">travelStatus (&apos;Coming&apos;, &apos;Not Coming&apos;, &apos;Pending&apos;)</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">assignedBus, stopName, and E.164 phone number</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Vehicles Collection (Vehicle.js) -->
+    <g transform="translate(2075, 970)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Vehicles Collection (Vehicle.js)</text>
+        
+        <rect x="46" y="28" width="202.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">INSTITUTIONAL FLEET INVENTORY</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Bus registration number, seating capacity (Cap_v)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Vehicle availability &amp; maintenance flags</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Assigned driver details &amp; operational status</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Routes &amp; Stops (Route.js | Stop.js) -->
+    <g transform="translate(1595, 1095)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Routes &amp; Stops (Route.js | Stop.js)</text>
+        
+        <rect x="46" y="28" width="202.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">GIS WAYPOINTS &amp; PATH GEOMETRY</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Stop names, WGS-84 coordinates (lat/lon)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Ordered stop sequences &amp; turn-by-turn polylines</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Direction flag (INWARD pickup / OUTWARD drop)</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Schedules Collection (Schedule.js) -->
+    <g transform="translate(2075, 1095)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#059669"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Schedules Collection (Schedule.js)</text>
+        
+        <rect x="46" y="28" width="202.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">TIMETABLE &amp; SHIFT DEFINITIONS</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#059669"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Morning pickup shifts &amp; evening return departure times</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#059669"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Operational time windows &amp; shift configurations</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#059669"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Active timetable flags &amp; academic calendar links</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: AI Plans Collection (AiPlan.js) -->
+    <g transform="translate(1595, 1220)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#2563eb"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">AI Plans Collection (AiPlan.js)</text>
+        
+        <rect x="46" y="28" width="228.5" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">ai_selected_plans (AUTHORITATIVE)</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#2563eb"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Plan ID, version number, direction (INWARD/OUTWARD)</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#2563eb"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Status lifecycle: &apos;draft&apos; -&gt; &apos;approved&apos; -&gt; &apos;active&apos;</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#2563eb"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Assigned vehicles, passenger manifests &amp; road polylines</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Late-Response Events (LateResponseEvent.js) -->
+    <g transform="translate(2075, 1220)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#e11d48"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Late-Response Events (LateResponseEvent.js)</text>
+        
+        <rect x="46" y="28" width="222" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#e11d48">QUARANTINED LATE RESPONDER QUEUE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#e11d48"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Deduplicated eventKey: lr_&lt;userId&gt;_&lt;dir&gt;_&lt;time&gt;</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#e11d48"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Student ID, plan approval ID, response timestamp</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#e11d48"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Status: &apos;PENDING&apos; -&gt; &apos;RESOLVED&apos; / &apos;REJECTED&apos;</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Road Matrix Cache (RoadMatrixCache.js) -->
+    <g transform="translate(1595, 1345)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#d97706"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Road Matrix Cache (RoadMatrixCache.js)</text>
+        
+        <rect x="46" y="28" width="209" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">TWO-TIER HIGH-SPEED OSRM CACHE</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#d97706"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Stores road distances &amp; durations between coordinate pairs</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#d97706"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">Automatic TTL expiration (14 days) eliminates re-queries</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#d97706"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">In-memory LRU map handles hot repeat queries</text>
+            
+        </g>
+    </g>
+
+    
+    <!-- Card: Telemetry &amp; Locations (HistoricalRoute.js) -->
+    <g transform="translate(2075, 1345)">
+        <!-- Card Background -->
+        <rect width="460" height="110" rx="8" ry="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.15))"/>
+        <!-- Top Accent Bar -->
+        <path d="M 0 8 Q 0 0 8 0 L 452 0 Q 460 0 460 8 L 460 4 L 0 4 Z" fill="#7c3aed"/>
+        
+        <!-- Icon Container -->
+        <g transform="translate(12, 14)">
+            <rect width="26" height="26" rx="5" ry="5" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+            <g transform="translate(1, 1) scale(1)">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.01 2 6.5v11C2 19.99 6.48 22 12 22s10-2.01 10-4.5v-11C22 4.01 17.52 2 12 2zm0 2c4.42 0 8 1.57 8 2.5S16.42 9 12 9s-8-1.57-8-2.5S7.58 4 12 4zm8 13.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V14.8c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7v2.7zm0-4.5c0 .93-3.58 2.5-8 2.5s-8-1.57-8-2.5V10.3c1.9 1.1 4.8 1.7 8 1.7s6.1-.6 8-1.7V13z" fill="#10b981"/></svg>
+            </g>
+        </g>
+        
+        <!-- Title & Badge -->
+        <text x="46" y="24" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5" font-weight="700" fill="#0f172a">Telemetry &amp; Locations (HistoricalRoute.js)</text>
+        
+        <rect x="46" y="28" width="352" height="15" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.8"/>
+        <text x="53" y="39" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">InwardStartingPlace | mapLocation | RoutePerformance</text>
+        
+
+        <!-- Bullets -->
+        <g transform="translate(14, 55)">
+            
+            <circle cx="2" cy="4" r="2" fill="#7c3aed"/>
+            <text x="10" y="7.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">InwardStartingPlace: Starting depot lat/lon per bus</text>
+            
+            
+            <circle cx="2" cy="19" r="2" fill="#7c3aed"/>
+            <text x="10" y="22.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10.2" fill="#334155">mapLocation: OpenStreetMap Nominatim geocode cache</text>
+            
+            
+            <circle cx="2" cy="34" r="2" fill="#7c3aed"/>
+            <text x="10" y="37.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">RoutePerformance: Planned vs actual mileage &amp; fill ratio</text>
+            
+        </g>
+    </g>
+
+    <!-- ====================================================================== -->
+    <!-- DIRECTIONAL CONNECTOR LINES & LABELS                                   -->
+    <!-- ====================================================================== -->
+    
+    <!-- User to Frontend Connectors -->
+    <path d="M 360 245 L 420 245" fill="none" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-blue)"/>
+    <text x="390" y="238" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#38bdf8" text-anchor="middle">HTTPS</text>
+
+    <path d="M 360 398 L 420 398" fill="none" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-blue)"/>
+    <text x="390" y="391" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#38bdf8" text-anchor="middle">HTTPS</text>
+
+    <!-- Frontend to Backend REST Connector -->
+    <path d="M 590 470 L 590 550" fill="none" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <rect x="525" y="495" width="130" height="18" rx="4" fill="#0c1e3d" stroke="#38bdf8" stroke-width="1"/>
+    <text x="590" y="507" font-family="system-ui, sans-serif" font-size="9.5" font-weight="700" fill="#38bdf8" text-anchor="middle">REST API / JWT</text>
+
+    <!-- Backend to AI Optimization Pipeline Connector -->
+    <path d="M 800 795 L 880 795" fill="none" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrow-amber)"/>
+    <rect x="815" y="775" width="55" height="18" rx="4" fill="#0c1e3d" stroke="#f59e0b" stroke-width="1"/>
+    <text x="842" y="787" font-family="system-ui, sans-serif" font-size="9.5" font-weight="700" fill="#f59e0b" text-anchor="middle">DEMAND</text>
+
+    <!-- AI Optimization to OSRM / External Services Connector -->
+    <path d="M 1975 630 L 2040 630" fill="none" stroke="#a855f7" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+    <rect x="1985" y="612" width="48" height="18" rx="4" fill="#0c1e3d" stroke="#a855f7" stroke-width="1"/>
+    <text x="2009" y="624" font-family="system-ui, sans-serif" font-size="9.5" font-weight="700" fill="#a855f7" text-anchor="middle">OSRM</text>
+
+    <!-- Backend Services to MongoDB Persistence Connector -->
+    <path d="M 697 880 L 697 905 L 1570 905 L 1570 965" fill="none" stroke="#10b981" stroke-width="2.2" marker-end="url(#arrow-emerald)"/>
+    <rect x="1100" y="896" width="135" height="18" rx="4" fill="#0c1e3d" stroke="#10b981" stroke-width="1"/>
+    <text x="1167" y="908" font-family="system-ui, sans-serif" font-size="9.5" font-weight="700" fill="#10b981" text-anchor="middle">MONGOOSE ODM</text>
+
+    <!-- Late Response Flow Connector (Red Arrow) routed along outer margin -->
+    <rect x="617" y="882" width="160" height="18" rx="4" fill="#0c1e3d" stroke="#f43f5e" stroke-width="1"/>
+    <text x="697" y="894" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#f43f5e" text-anchor="middle">LATE RESPONSE QUARANTINE</text>
+    <path d="M 697 900 L 697 905 L 25 905 L 25 1375 L 60 1375" fill="none" stroke="#f43f5e" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow-rose)"/>
+
+    <!-- ====================================================================== -->
+    <!-- FOOTER BAR: LEGEND & ACADEMIC CREDENTIALS                              -->
+    <!-- ====================================================================== -->
+    <g transform="translate(40, 1495)">
+        <rect width="2520" height="100" rx="8" fill="#091836" stroke="#1d3b70" stroke-width="1.8"/>
+
+        <!-- Legend Block (Left) -->
+        <g transform="translate(24, 20)">
+            <text x="0" y="16" font-family="system-ui, sans-serif" font-size="12" font-weight="800" fill="#ffffff">COMMUNICATION LEGEND:</text>
+            
+            <!-- Item 1: REST -->
+            <line x1="170" y1="12" x2="205" y2="12" stroke="#38bdf8" stroke-width="3" marker-end="url(#arrow-blue)"/>
+            <text x="215" y="16" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#38bdf8">REST API / HTTPS</text>
+            
+            <!-- Item 2: Optimization -->
+            <line x1="360" y1="12" x2="395" y2="12" stroke="#f59e0b" stroke-width="3" marker-end="url(#arrow-amber)"/>
+            <text x="405" y="16" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#f59e0b">Optimization Pipeline</text>
+            
+            <!-- Item 3: MongoDB -->
+            <line x1="560" y1="12" x2="595" y2="12" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-emerald)"/>
+            <text x="605" y="16" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#10b981">Database CRUD / TTL</text>
+
+            <!-- Item 4: External Services -->
+            <line x1="770" y1="12" x2="805" y2="12" stroke="#a855f7" stroke-width="3" marker-end="url(#arrow-purple)"/>
+            <text x="815" y="16" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#c084fc">External APIs / Baileys</text>
+
+            <!-- Item 5: Late Response -->
+            <line x1="990" y1="12" x2="1025" y2="12" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="4,3" marker-end="url(#arrow-rose)"/>
+            <text x="1035" y="16" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#fb7185">Late Quarantine Flow</text>
+
+            <!-- Secondary Subtext -->
+            <text x="0" y="44" font-family="system-ui, sans-serif" font-size="10.5" fill="#94a3b8">All inter-service calls use typed payloads, structured error boundaries, and explicit transaction locks during live plan activation.</text>
+        </g>
+
+        <!-- Project Meta & Verification (Right) -->
+        <g transform="translate(1620, 20)">
+            <text x="0" y="16" font-family="system-ui, sans-serif" font-size="12" font-weight="800" fill="#ffffff">TECHNICAL INTEGRITY &amp; OPERATIONAL REALITY:</text>
+            <text x="0" y="36" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8">• Runtime Engine: Production runs in <tspan fill="#34d399" font-weight="700">DETERMINISTIC_HEURISTIC_OPTIMIZER</tspan> mode (Clarke-Wright, 2-Opt &amp; Co-occurrence).</text>
+            <text x="0" y="52" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8">• Machine Learning: Standalone Python training pipeline (<tspan fill="#60a5fa">train_model.py</tspan>) exists offline; runtime operates on verified heuristics.</text>
+            <text x="0" y="68" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8">• WhatsApp: Direct embedded <tspan fill="#6ee7b7">Baileys WebSocket</tspan> socket active natively; optional n8n webhook configured for scheduled reminders.</text>
+        </g>
+    </g>
+
+</svg>

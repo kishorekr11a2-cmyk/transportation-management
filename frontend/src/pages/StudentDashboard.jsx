@@ -91,6 +91,11 @@ const StudentDashboard = () => {
             return;
         }
 
+        if (effectiveTravelStatus === "Coming" || effectiveTravelStatus === "Not Coming") {
+            toast.error(`Your travel response is already recorded as "${effectiveTravelStatus}". Response is locked until administrator reset.`);
+            return;
+        }
+
         if (status === "Coming" && (student?.travelStatus === "Not Coming" || effectiveTravelStatus === "Not Coming")) {
             toast.error("You cannot change from Not Coming to Coming. Please contact the administrator.");
             return;
@@ -284,6 +289,8 @@ const StudentDashboard = () => {
     const isLocked = Boolean(
         isAllocated ||
         isLate ||
+        effectiveTravelStatus === "Coming" ||
+        effectiveTravelStatus === "Not Coming" ||
         student.submissionLocked ||
         student.isSubmissionLocked ||
         student.responseLocked
@@ -546,7 +553,7 @@ const StudentDashboard = () => {
                             } ${
                                 updating && submittingStatus === "Coming" ? "is-submitting" : ""
                             } ${
-                                isLocked || effectiveTravelStatus === "Not Coming" ? "is-locked" : ""
+                                isLocked || effectiveTravelStatus === "Coming" || effectiveTravelStatus === "Not Coming" ? "is-locked" : ""
                             }`}
                             onClick={() => handleTravelStatus("Coming")}
                             disabled={updating || isSubmittingRef.current || isLocked || effectiveTravelStatus === "Coming" || effectiveTravelStatus === "Not Coming"}
@@ -591,10 +598,10 @@ const StudentDashboard = () => {
                             } ${
                                 updating && submittingStatus === "Not Coming" ? "is-submitting" : ""
                             } ${
-                                isLocked ? "is-locked" : ""
+                                isLocked || effectiveTravelStatus === "Coming" || effectiveTravelStatus === "Not Coming" ? "is-locked" : ""
                             }`}
                             onClick={() => handleTravelStatus("Not Coming")}
-                            disabled={updating || isSubmittingRef.current || isLocked || effectiveTravelStatus === "Not Coming"}
+                            disabled={updating || isSubmittingRef.current || isLocked || effectiveTravelStatus === "Coming" || effectiveTravelStatus === "Not Coming"}
                             aria-pressed={effectiveTravelStatus === "Not Coming"}
                             aria-busy={updating && submittingStatus === "Not Coming"}
                         >
@@ -676,8 +683,8 @@ const StudentDashboard = () => {
                                     <span className="lock-icon">{effectiveTravelStatus === "Coming" ? "✓" : "ℹ️"}</span>
                                     <span>
                                         {effectiveTravelStatus === "Coming"
-                                            ? "Your response is confirmed as Coming Today. You can change your status to Not Coming if your plans change."
-                                            : "Your response is recorded as Not Coming. You cannot change from Not Coming to Coming. Please contact the administrator."}
+                                            ? "Your response is confirmed as Coming Today. Your response is locked until administrator reset."
+                                            : "Your response is recorded as Not Coming. Your response is locked until administrator reset."}
                                     </span>
                                 </div>
                             ) : null}
