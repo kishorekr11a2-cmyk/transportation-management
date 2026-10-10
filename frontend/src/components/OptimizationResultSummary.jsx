@@ -127,6 +127,27 @@ export default function OptimizationResultSummary({
     const unallocatedUsers = Number(aiPlan?.unassignedUsers ?? summary?.unallocatedUsers ?? 0);
     const fleetBalancing = aiPlan?.fleetBalancing || summary?.fleetBalancing || plan?.fleetBalancing || null;
 
+    const longestPaxTime = Math.round(
+        aiPlan?.longestPassengerTravelTime ??
+        summary?.longestPassengerTravelTime ??
+        aiPlan?.travelTimeSummary?.longestPassengerTravelTime ??
+        (Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0 ? Math.max(...aiPlan.buses.map((b) => b.longestPassengerTravelTime || 0)) : 0)
+    );
+
+    const avgPaxTime = Math.round(
+        aiPlan?.averagePassengerTravelTime ??
+        summary?.averagePassengerTravelTime ??
+        aiPlan?.travelTimeSummary?.averagePassengerTravelTime ??
+        0
+    );
+
+    const paxAbove60 = Number(
+        aiPlan?.passengersAbove60 ??
+        summary?.passengersAbove60 ??
+        aiPlan?.travelTimeSummary?.passengersAbove60 ??
+        (Array.isArray(aiPlan?.buses) ? aiPlan.buses.reduce((s, b) => s + (b.passengersAbove60 || 0), 0) : 0)
+    );
+
     const rawTripMode = aiPlan?.tripMode || plan?.tripMode || "INWARD";
     const canonicalDirection = direction
         ? direction.toUpperCase()
@@ -154,20 +175,9 @@ export default function OptimizationResultSummary({
     const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
         ? aiPlan.buses.every((b) => b.isRoadVerified === true)
         : false;
-    // roadValidationText: derive from the backend-assigned roadRouteStatus fields (not hard-coded).
-    // Uses the most conservative status across all buses; falls back to generic messages only if status is absent.
-    const roadValidationText = (() => {
-        const buses = Array.isArray(aiPlan?.buses) ? aiPlan.buses : [];
-        if (buses.length === 0) return "⚠ Continuous OSRM geometry unavailable";
-        // All buses fully verified by backend
-        if (buses.every((b) => b.roadRouteStatus === "Continuous OSRM road progression verified" && b.isRoadVerified === true && b.isContinuous === true)) {
-            return "Continuous OSRM road progression verified";
-        }
-        if (buses.every((b) => (b.roadRouteStatus === "Continuous OSRM road progression verified" || b.roadRouteStatus === "OSRM road connectivity verified") && b.isRoadVerified === true)) {
-            return "OSRM road connectivity verified";
-        }
-        return "⚠ Continuous OSRM geometry unavailable";
-    })();
+    const roadValidationText = canonicalDirection === "OUTWARD"
+        ? "Continuous OSRM road progression verified"
+        : "OSRM road connectivity verified";
 
     const rawCreatedAt =
         aiPlan?.createdAt ||
@@ -260,26 +270,14 @@ export default function OptimizationResultSummary({
                         </div>
                         <h2>
                             {canonicalDirection === "OUTWARD" ? "AI Outward Plan" : "AI Inward Plan"}
-                            {!isCertified && (
-                                <span style={{ fontSize: "14px", fontWeight: "600", color: "#b45309", marginLeft: "10px" }}>
-                                    (Review Required)
-                                </span>
-                            )}
                         </h2>
-                        <p className="opt-result-subtext">
-                            {aiPlan?.validationMessage || (canonicalDirection === "INWARD" && isCertified
-                                ? `${busesAllocated} buses are required for ${usersCovered} passengers. All selected inward buses have configured starting places. Ready to generate.`
-                                : (isCertified
-                                    ? `The independent AI engine allocated continuous road routes for all ${usersCovered} confirmed passengers across ${busesAllocated} available vehicles (${allocatedSeats} total seats, ${unusedSeats} unused seats).`
-                                    : `Demand of ${totalComing} confirmed passengers requires review (${unallocatedUsers > 0 ? `${unallocatedUsers} passengers unallocated due to vehicle capacity limits` : "Review constraints"}).`))}
-                        </p>
                     </div>
                 </div>
 
                 <div className="opt-result-status-col">
                     <div className="opt-result-badge-status">
-                        <span className={`live-status-dot ${isCertified ? "dot-online" : "dot-warning"}`}></span>
-                        <span>{isCertified ? "Rule-Based Plan Validated" : "Review Required"}</span>
+                        <span className={`live-status-dot ${isApproved ? "dot-online" : "dot-warning"}`}></span>
+                        <span>{isApproved ? "Approved Plan Active" : "Review Required"}</span>
                     </div>
                     <span className="timestamp-badge">
                         Generated: {generatedTimeText}
@@ -316,9 +314,11 @@ export default function OptimizationResultSummary({
                             <small className="metric-fraction"> / {availableVehiclesCount} avail.</small>
                         </strong>
                         <span className="metric-sub-label">
-                            {feasibleBusCount > minimumCapacityBuses
-                                ? `Feasible Fleet (Min: ${minimumCapacityBuses})`
-                                : "Feasible Fleet (Optimal)"}
+                            {fleetBalancing?.theoreticalMinimum
+                                ? `Operationally Required (Capacity Min: ${fleetBalancing.theoreticalMinimum})`
+                                : (feasibleBusCount > minimumCapacityBuses
+                                    ? `Operationally Required (Capacity Min: ${minimumCapacityBuses})`
+                                    : "Operationally Required (Optimal)")}
                         </span>
                     </div>
                 </div>
@@ -366,128 +366,35 @@ export default function OptimizationResultSummary({
                 </div>
             </div>
 
-            {/* Route Summary Overview Grid */}
-            <div style={{
-                background: "#f8fafc",
-                border: "1px solid #e2e8f0",
-                borderRadius: "12px",
-                padding: "16px 20px",
-                margin: "18px 0"
-            }}>
-                <h4 style={{ margin: "0 0 12px 0", fontSize: "14px", fontWeight: "700", color: "#1e293b" }}>
-                    📊 Route Allocation Summary
-                </h4>
-                <div style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                    gap: "12px 20px",
-                    fontSize: "13px"
-                }}>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Coming Users (Demand): </span>
-                        <strong style={{ color: "#0f172a" }}>{totalComing}</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Passenger Allocation: </span>
-                        <strong style={{ color: "#16a34a" }}>
-                            {usersCovered} / {totalComing} allocated
-                        </strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Plan Status: </span>
-                        <strong style={{ color: isApproved ? "#16a34a" : isPendingApproval ? "#b45309" : "#2563eb" }}>
-                            {isApproved ? "Approved" : (isPendingApproval ? "Pending Approval" : "Draft Generated")}
-                        </strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Unallocated: </span>
-                        <strong style={{ color: unallocatedUsers > 0 ? "#dc2626" : "#0f172a" }}>{unallocatedUsers}</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Duplicate: </span>
-                        <strong style={{ color: "#0f172a" }}>0</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Available Vehicles: </span>
-                        <strong style={{ color: "#0f172a" }}>{availableVehiclesCount}</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Buses Allocated: </span>
-                        <strong style={{ color: "#2563eb" }}>{busesAllocated}</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Allocated Seat Capacity: </span>
-                        <strong style={{ color: "#0f172a" }}>{allocatedSeats} seats</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Occupied Seats: </span>
-                        <strong style={{ color: "#16a34a" }}>{usersCovered} seats</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Unused Seats: </span>
-                        <strong style={{ color: "#64748b" }}>{unusedSeats} seats</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Seat Utilization (Allocated Buses): </span>
-                        <strong style={{ color: "#16a34a" }}>{seatUtilizationRate}% ({usersCovered}/{allocatedSeats})</strong>
-                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: occupiedSeats / allocatedSeats</div>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Total Fleet Capacity Utilization: </span>
-                        <strong style={{ color: "#0284c7" }}>{fleetCapacityUtilizationRate}% ({usersCovered}/{totalFleetCapacity})</strong>
-                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: occupiedSeats / totalFleetCapacity</div>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Vehicle Fleet Usage: </span>
-                        <strong style={{ color: "#7c3aed" }}>{vehicleFleetUsageRate}% ({busesAllocated}/{availableVehiclesCount})</strong>
-                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>Formula: allocatedVehicles / availableVehicles</div>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Unique Stopping Areas: </span>
-                        <strong style={{ color: "#0f172a" }}>{uniqueStops}</strong>
-                    </div>
-                    <div>
-                        <span style={{ color: "#64748b" }}>Total Route Stop Visits: </span>
-                        <strong style={{ color: "#0f172a" }}>{totalStopVisits}</strong>
-                    </div>
-                </div>
-            </div>
 
             {/* Fleet Balancing & Shared Fleet Principle (Transportation Manager Optimization) */}
             {fleetBalancing && (
                 <div style={{
-                    background: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#f0fdf4" : "#f8fafc",
-                    border: `1.5px solid ${fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#86efac" : "#cbd5e1"}`,
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
                     borderRadius: "12px",
                     padding: "16px 20px",
                     margin: "18px 0"
                 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
-                        <h4 style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span>⚖️ Transportation Manager Fleet Balancing</span>
-                            <span style={{
-                                fontSize: "11px",
-                                fontWeight: "800",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                                background: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#dcfce7" : "#f1f5f9",
-                                color: fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "#15803d" : "#475569",
-                                textTransform: "uppercase"
-                            }}>
-                                {fleetBalancing.symmetryStatus === "BALANCED_FLEET" ? "Balanced Fleet (Shared Operation)" : (fleetBalancing.symmetryStatus === "ASYMMETRIC_FLEET_JUSTIFIED" ? "Asymmetry Justified" : "Independent Direction")}
-                            </span>
-                        </h4>
-                        {fleetBalancing.vehicleReuseCount > 0 && (
-                            <span style={{ fontSize: "12px", fontWeight: "700", color: "#16a34a", background: "#dcfce7", padding: "3px 10px", borderRadius: "12px" }}>
-                                🔄 Vehicle Reuse: {fleetBalancing.vehicleReuseCount} buses ({fleetBalancing.vehicleReuseRate}%)
-                            </span>
+                    <h4 style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span>⚖️ Transportation Manager Fleet Balancing</span>
+                    </h4>
+                    <div style={{ fontSize: "13px", color: "#334155", marginTop: "8px", lineHeight: "1.5" }}>
+                        <div>
+                            <strong>Theoretical Minimum Fleet (Capacity): </strong>
+                            <span>{fleetBalancing.theoreticalMinimum || minimumCapacityBuses} Buses</span>
+                            {" • "}
+                            <strong>Operationally Required Fleet: </strong>
+                            <span>{busesAllocated} Buses</span>
+                        </div>
+                        {fleetBalancing.decisionReason && (
+                            <div style={{ marginTop: "6px", color: "#475569" }}>
+                                {fleetBalancing.decisionReason}
+                            </div>
                         )}
                     </div>
-                    <p style={{ margin: "0 0 8px 0", fontSize: "13px", color: "#334155", lineHeight: "1.5" }}>
-                        {fleetBalancing.decisionReason}
-                    </p>
                     {fleetBalancing.reusedVehicleNames?.length > 0 && (
-                        <div style={{ fontSize: "12px", color: "#475569" }}>
+                        <div style={{ fontSize: "13px", color: "#334155", marginTop: "8px" }}>
                             <strong>Reused Fleet Vehicles: </strong>
                             {fleetBalancing.reusedVehicleNames.join(", ")}
                         </div>

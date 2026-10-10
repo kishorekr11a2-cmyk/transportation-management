@@ -1468,6 +1468,26 @@ export default function AIAgent() {
     );
 
     const aiPlan = planData?.aiPlan || (Array.isArray(planData?.buses) ? planData : null);
+    const hasActivePlan = Boolean(aiPlan || planData?.buses?.length > 0 || (planData?.summary && planData.summary.allocatedSeats > 0));
+
+    const theoreticalMinBuses = Number(
+        data?.requiredBusesCount ??
+        summary?.requiredBusesCount ??
+        aiPlan?.theoreticalMinimum ??
+        aiPlan?.minimumCapacityBuses ??
+        (summary?.confirmedUsers > 0
+            ? Math.max(1, Math.ceil(summary.confirmedUsers / (data?.vehicles?.[0]?.capacity || 65)))
+            : 1)
+    );
+
+    const feasibleBusesCount = Number(
+        aiPlan?.feasibleBusCount ??
+        aiPlan?.buses?.length ??
+        theoreticalMinBuses
+    );
+
+    const activeStartingPlacesCount = inwardStartingPlaces.filter((sp) => sp.active).length;
+    const hasSufficientStartingPlaces = activeStartingPlacesCount >= (hasActivePlan ? feasibleBusesCount : theoreticalMinBuses);
 
     const aiAssigned =
         Number(aiPlan?.assignedUsers || 0);
@@ -1514,7 +1534,6 @@ export default function AIAgent() {
     );
     const stalePlanForCurrentDir = planDirectionTab === "OUTWARD" ? stalePlanInfo?.outward : stalePlanInfo?.inward;
     const planDemandCount = planData?.summary?.confirmedUsers ?? planData?.comingUsers ?? stalePlanForCurrentDir?.planDemandCount ?? null;
-    const hasActivePlan = Boolean(aiPlan || planData?.buses?.length > 0 || (planData?.summary && planData.summary.allocatedSeats > 0));
 
     // Directional late response checks
     const inwardLateCount = Number(
@@ -2052,8 +2071,8 @@ export default function AIAgent() {
                         <div className="live-req-item">
                             <span className="live-req-icon">🚍</span>
                             <div>
-                                <small> Minimum Required Buses</small>
-                                <strong>{data?.requiredBusesCount ?? summary?.requiredBusesCount ?? Math.max(1, Math.ceil((data?.confirmedUserCount ?? 0) / 70))}</strong>
+                                <small>Theoretical Min Buses (Capacity)</small>
+                                <strong>{theoreticalMinBuses}</strong>
                             </div>
                         </div>
                     </div>
@@ -2145,23 +2164,25 @@ export default function AIAgent() {
                                     <div style={{
                                         marginTop: "8px",
                                         padding: "8px 12px",
-                                        background: inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70)
+                                        background: hasSufficientStartingPlaces
                                             ? "rgba(16, 185, 129, 0.1)"
                                             : "rgba(245, 158, 11, 0.1)",
-                                        border: `1px solid ${inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)"}`,
+                                        border: `1px solid ${hasSufficientStartingPlaces ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)"}`,
                                         borderRadius: "6px",
-                                        color: inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "#065f46" : "#92400e",
+                                        color: hasSufficientStartingPlaces ? "#065f46" : "#92400e",
                                         fontSize: "13px",
                                         fontWeight: "500",
                                         display: "inline-flex",
                                         alignItems: "center",
                                         gap: "6px"
                                     }}>
-                                        <span>{inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70) ? "✓" : "⚠️"}</span>
+                                        <span>{hasSufficientStartingPlaces ? "✓" : "⚠️"}</span>
                                         <span>
-                                            {inwardStartingPlaces.filter((sp) => sp.active).length >= Math.ceil(summary.confirmedUsers / 70)
-                                                ? `${Math.ceil(summary.confirmedUsers / 70)} buses are required for ${summary.confirmedUsers} passengers. All selected inward buses have configured starting places. Ready to generate.`
-                                                : `${Math.ceil(summary.confirmedUsers / 70)} buses are required for ${summary.confirmedUsers} passengers. Starting locations configured for ${inwardStartingPlaces.filter((sp) => sp.active).length} buses.`}
+                                            {hasSufficientStartingPlaces
+                                                ? (hasActivePlan && feasibleBusesCount !== theoreticalMinBuses
+                                                    ? `${feasibleBusesCount} buses operationally required for ${summary.confirmedUsers} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses, operationally required fleet: ${feasibleBusesCount} buses). All selected inward buses have configured starting places. Ready to generate.`
+                                                    : `${feasibleBusesCount || theoreticalMinBuses} buses operationally required for ${summary.confirmedUsers} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses). All selected inward buses have configured starting places. Ready to generate.`)
+                                                : `Theoretical capacity minimum: ${theoreticalMinBuses} buses for ${summary.confirmedUsers} passengers. Starting locations configured for ${activeStartingPlacesCount} buses.`}
                                         </span>
                                     </div>
                                 )}
@@ -2714,22 +2735,21 @@ export default function AIAgent() {
 
                                                         <div>
                                                             <span className="bus-number">
-                                                                {bus.routeCode ||
-                                                                    `R-${busIndex + 1}`}
+                                                                {bus.vehicleName ||
+                                                                    getBusName(bus, busIndex)}
                                                             </span>
 
                                                             <div>
                                                                 <small>
-                                                                    {bus.sectorName ||
-                                                                        "INSTITUTIONAL TRANSIT LINE"}
+                                                                    {(bus.sectorName || "INSTITUTIONAL TRANSIT LINE")
+                                                                        .replace(/\s*\((North|South|East|West|North-East|North-West|South-East|South-West|NE|NW|SE|SW)[^)]*\)\s*$/i, "")
+                                                                        .trim()}
                                                                 </small>
 
                                                                 <h3>
-                                                                    {bus.routeName ||
-                                                                        getBusName(
-                                                                            bus,
-                                                                            busIndex
-                                                                        )}
+                                                                    {(bus.routeName || getBusName(bus, busIndex))
+                                                                        .replace(/\s*\((North|South|East|West|North-East|North-West|South-East|South-West|NE|NW|SE|SW)[^)]*\)\s*$/i, "")
+                                                                        .trim()}
                                                                 </h3>
                                                             </div>
                                                         </div>
@@ -2739,7 +2759,7 @@ export default function AIAgent() {
                                                         >
                                                             🚌{" "}
                                                             {
-                                                                bus.vehicleName
+                                                                bus.vehicleName || getBusName(bus, busIndex)
                                                             }{" "}
                                                             •{" "}
                                                             {
@@ -2750,37 +2770,29 @@ export default function AIAgent() {
                                                                 capacity
                                                             }{" "}
                                                             passengers
-                                                            {(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0))
-                                                                ? ` ⚠️ (+${bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)} standing)`
-                                                                : (remaining > 0
-                                                                    ? ` · 💺 ${remaining} seats available`
-                                                                    : " · 💺 Full capacity")
-                                                            }
+                                                            {Boolean(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) ? (
+                                                                ` ⚠️ (+${bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)} standing)`
+                                                            ) : null}
                                                         </span>
-
                                                     </div>
 
                                                     <div className="bus-stats">
 
-                                                        {remaining > 0 && (
+                                                        {remaining > 0 ? (
                                                             <span style={{ color: "#16a34a", fontWeight: "600" }}>
-                                                                💺 <b>{remaining}</b> seats available
+                                                                💺 <b>{remaining}</b> {remaining === 1 ? "seat available" : "seats available"}
                                                             </span>
-                                                        )}
+                                                        ) : (!bus.isOverCapacity && (
+                                                            <span style={{ color: "#475467", fontWeight: "600" }}>
+                                                                💺 <b>Full capacity</b>
+                                                            </span>
+                                                        ))}
 
                                                         {bus.standingPassengers > 0 && (
                                                             <span style={{ color: "#dc2626", fontWeight: "600" }}>
                                                                 🚶 <b>{bus.standingPassengers}</b> standing
                                                             </span>
                                                         )}
-
-                                                        <span>
-                                                            👥{" "}
-                                                            <b>{assigned}</b>{" "}
-                                                            {(bus.direction === "OUTWARD" || bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planDirectionTab === "OUTWARD")
-                                                                ? "passengers dropped off"
-                                                                : "passengers boarding"}
-                                                        </span>
 
                                                         <span>
                                                             📍{" "}
@@ -2800,100 +2812,24 @@ export default function AIAgent() {
                                                             </span>
                                                         )}
 
-                                                        <span
-                                                            className={`status-pill ${bus.isRoadVerified && (bus.roadRouteStatus === "Continuous OSRM road progression verified" || bus.roadRouteStatus === "OSRM road connectivity verified")
-                                                                ? "continuous"
-                                                                : "warning"
-                                                                }`}
-                                                        >
-                                                            {bus.isRoadVerified && bus.isContinuous && !bus.continuityValidation?.directionalInversionDetected && bus.roadRouteStatus === "Continuous OSRM road progression verified"
-                                                                ? "✓ Continuous OSRM road progression verified"
-                                                                : (bus.roadRouteStatus === "OSRM road connectivity verified"
-                                                                    ? "✓ OSRM road connectivity verified"
-                                                                    : (bus.roadRouteStatus || "⚠ Continuous OSRM geometry unavailable"))}
-                                                        </span>
+                                                        {(() => {
+                                                            const totalDuration = bus.routeDurationMin ?? bus.totalRouteDurationMin ?? bus.totalRouteDuration;
+                                                            if (totalDuration != null && totalDuration > 0) {
+                                                                return (
+                                                                    <span>
+                                                                        ⏱️{" "}
+                                                                        <b>~{Math.round(totalDuration)} min</b>{" "}
+                                                                        total travel time
+                                                                    </span>
+                                                                );
+                                                            }
+                                                            return null;
+                                                        })()}
 
-                                                        {bus.whySeparateRouteNeeded && (
-                                                            <div style={{ width: "100%", fontSize: "11px", color: "#374151", background: "#f8fafc", padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
-                                                                <span>ℹ️</span>
-                                                                <span><strong>Operational Rationale:</strong> {bus.whySeparateRouteNeeded}</span>
-                                                            </div>
-                                                        )}
-
-                                                        {bus.isConsolidated && (
-                                                            <span
-                                                                style={{
-                                                                    background:
-                                                                        "#e0e7ff",
-                                                                    color:
-                                                                        "#3730a3",
-                                                                    fontSize:
-                                                                        "11px",
-                                                                    fontWeight:
-                                                                        "700",
-                                                                    padding:
-                                                                        "3px 8px",
-                                                                    borderRadius:
-                                                                        "12px"
-                                                                }}
-                                                            >
-                                                                ✨
-                                                                Consolidated
-                                                                Line
-                                                            </span>
-                                                        )}
-
-                                                        {(bus.routeScore !== undefined || bus.mlScore !== undefined) && (
-                                                            <span
-                                                                style={{
-                                                                    background: "#ecfdf5",
-                                                                    color: "#065f46",
-                                                                    fontSize: "11px",
-                                                                    fontWeight: "700",
-                                                                    padding: "3px 8px",
-                                                                    borderRadius: "12px"
-                                                                }}
-                                                            >
-                                                                🧠 Route Score: {(((bus.routeScore ?? bus.mlScore) || 0.85) * 100).toFixed(0)}%
-                                                            </span>
-                                                        )}
-
-                                                        {(bus.reusedExistingBus || bus.diagnostics?.reusedExistingBus) && (
-                                                            <span
-                                                                style={{
-                                                                    background: "#eff6ff",
-                                                                    color: "#1d4ed8",
-                                                                    fontSize: "11px",
-                                                                    fontWeight: "700",
-                                                                    padding: "3px 8px",
-                                                                    borderRadius: "12px",
-                                                                    border: "1px solid #bfdbfe"
-                                                                }}
-                                                            >
-                                                                ♻️ Reused Fleet Bus
-                                                            </span>
-                                                        )}
-
-                                                        {(bus.sharedRouteSegment || bus.diagnostics?.sharedRouteSegment) && (
-                                                            <span
-                                                                style={{
-                                                                    background: "#fdf4ff",
-                                                                    color: "#86198f",
-                                                                    fontSize: "11px",
-                                                                    fontWeight: "700",
-                                                                    padding: "3px 8px",
-                                                                    borderRadius: "12px",
-                                                                    border: "1px solid #f5d0fe"
-                                                                }}
-                                                                title={`Corridor segment: ${typeof bus.sharedRouteSegment === 'string' ? bus.sharedRouteSegment : 'Shared'}`}
-                                                            >
-                                                                🤝 Shared Corridor{typeof bus.sharedRouteSegment === 'string' ? `: ${bus.sharedRouteSegment}` : ''}
-                                                            </span>
-                                                        )}
                                                     </div>
 
                                                     {/* Over-Capacity Breakdown: shown for any over-capacity bus (Inward or Outward) */}
-                                                    {(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) && (
+                                                    {Boolean(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) ? (
                                                         <div className="overcapacity-breakdown">
                                                             <span className="overcapacity-row">
                                                                 🪑 <b>Seated:</b>{" "}
@@ -2908,152 +2844,7 @@ export default function AIAgent() {
                                                                 {bus.overCapacityCount ?? bus.standingPassengers ?? Math.max(0, assigned - capacity)} extra passengers will travel standing
                                                             </span>
                                                         </div>
-                                                    )}
-
-                                                    {bus.explanations?.whyRouteSelected && (
-                                                        <div
-                                                            style={{
-                                                                margin: "8px 0 10px",
-                                                                fontSize: "12px",
-                                                                color: "#1e293b",
-                                                                background: "#f8fafc",
-                                                                padding: "8px 12px",
-                                                                borderRadius: "6px",
-                                                                borderLeft: "3px solid #3b82f6"
-                                                            }}
-                                                        >
-                                                            <div style={{ fontWeight: "600", color: "#1d4ed8", marginBottom: "2px" }}>
-                                                                🤖 AI Route &amp; Vehicle Rationale:
-                                                            </div>
-                                                            <div>{bus.explanations.whyRouteSelected}</div>
-                                                            {bus.explanations.whyVehicleSelected && (
-                                                                <div style={{ marginTop: "4px", color: "#475569" }}>
-                                                                    🚍 {bus.explanations.whyVehicleSelected}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {bus.consolidationNote && (
-                                                        <div
-                                                            style={{
-                                                                margin:
-                                                                    "6px 0 10px",
-                                                                fontSize:
-                                                                    "12px",
-                                                                color:
-                                                                    "#1e40af",
-                                                                background:
-                                                                    "#eff6ff",
-                                                                padding:
-                                                                    "6px 10px",
-                                                                borderRadius:
-                                                                    "6px"
-                                                            }}
-                                                        >
-                                                            💡{" "}
-                                                            {
-                                                                bus.consolidationNote
-                                                            }
-                                                        </div>
-                                                    )}
-
-                                                    {bus.lowUtilizationNote && (
-                                                        <div
-                                                            style={{
-                                                                margin:
-                                                                    "6px 0 10px",
-                                                                fontSize:
-                                                                    "12px",
-                                                                color:
-                                                                    "#854d0e",
-                                                                background:
-                                                                    "#fefce8",
-                                                                padding:
-                                                                    "6px 10px",
-                                                                borderRadius:
-                                                                    "6px"
-                                                            }}
-                                                        >
-                                                            ℹ️{" "}
-                                                            {
-                                                                bus.lowUtilizationNote
-                                                            }
-                                                        </div>
-                                                    )}
-
-                                                    {bus.corridorOverlapNote && (
-                                                        <div
-                                                            style={{
-                                                                margin:
-                                                                    "6px 0 10px",
-                                                                fontSize:
-                                                                    "12px",
-                                                                color:
-                                                                    "#b45309",
-                                                                background:
-                                                                    "#fffbeb",
-                                                                padding:
-                                                                    "6px 10px",
-                                                                borderRadius:
-                                                                    "6px",
-                                                                borderLeft:
-                                                                    "3px solid #f59e0b"
-                                                            }}
-                                                        >
-                                                            🔀{" "}
-                                                            {
-                                                                bus.corridorOverlapNote
-                                                            }
-                                                        </div>
-                                                    )}
-
-                                                    {bus.detourRatio !=
-                                                        null && (
-                                                            <div
-                                                                style={{
-                                                                    margin:
-                                                                        "4px 0 8px",
-                                                                    fontSize:
-                                                                        "11px",
-                                                                    color:
-                                                                        bus.isDetour
-                                                                            ? "#b91c1c"
-                                                                            : "#15803d",
-                                                                    background:
-                                                                        bus.isDetour
-                                                                            ? "#fef2f2"
-                                                                            : "#f0fdf4",
-                                                                    padding:
-                                                                        "4px 10px",
-                                                                    borderRadius:
-                                                                        "6px"
-                                                                }}
-                                                            >
-                                                                🛣️ Detour
-                                                                ratio:{" "}
-                                                                <b>
-                                                                    {
-                                                                        bus.detourRatio
-                                                                    }
-                                                                    ×
-                                                                </b>{" "}
-                                                                road vs
-                                                                straight-line{" "}
-                                                                <span
-                                                                    style={{
-                                                                        color:
-                                                                            "#64748b"
-                                                                    }}
-                                                                >
-                                                                    (
-                                                                    {bus.isDetour
-                                                                        ? `Exceeds ${bus.detourThreshold || "2.2"}× threshold`
-                                                                        : `Within ${bus.detourThreshold || "2.2"}× threshold — acceptable`}
-                                                                    )
-                                                                </span>
-                                                            </div>
-                                                        )}
+                                                    ) : null}
 
                                                     {/* Route Timeline */}
                                                     <div className="route-timeline">
@@ -3065,8 +2856,9 @@ export default function AIAgent() {
                                                             <div className="timeline-start source-terminal-hub">
 
                                                                 <span className="timeline-dot source-dot"></span>
+                                                                <span className="timeline-number">0</span>
 
-                                                                <div>
+                                                                <div className="timeline-stop-content">
                                                                     <strong>
                                                                         🚩{" "}
                                                                         {bus.sourceHub?.name ||
@@ -3074,52 +2866,24 @@ export default function AIAgent() {
                                                                                 ?.source
                                                                                 ?.name ||
                                                                             sourceLocation?.name ||
-                                                                            "Departure Hub"}
+                                                                            "K. L. N. College of Engineering"}
                                                                     </strong>
 
-                                                                    <small>
-                                                                        Departure point ·{" "}
-                                                                        {
-                                                                            assigned
-                                                                        }{" "}
-                                                                        passengers board here
-                                                                    </small>
+                                                                    <small>Departure point</small>
                                                                 </div>
 
                                                             </div>
                                                         ) : (() => {
-                                                            const startHub = bus.inwardStartLocation || bus.startLocation;
-                                                            if (!startHub) return null;
                                                             const firstStop = Array.isArray(bus.stops) && bus.stops[0];
-                                                            const sHubName = (startHub.name || startHub.locationName || "").toLowerCase().trim();
-                                                            const fStopName = (firstStop?.name || "").toLowerCase().trim();
-                                                            const isSameFirstLocality = Boolean(
-                                                                firstStop && (
-                                                                    bus.hasStartingHubPickup ||
-                                                                    firstStop.isStartingHubPickup ||
-                                                                    firstStop.isStartingHub ||
-                                                                    sHubName === fStopName ||
-                                                                    sHubName.includes(fStopName) ||
-                                                                    fStopName.includes(sHubName)
-                                                                )
-                                                            );
+                                                            const startingHubName = firstStop?.name || bus.inwardStartLocation?.name || bus.inwardStartLocation?.locationName || bus.startLocation?.name || bus.startLocation?.locationName || "Starting Hub";
 
-                                                            // RULE 1 & RULE 3: If students belong to the bus's configured Starting Hub,
-                                                            // that Starting Hub MUST appear as passenger pickup stop #1 below.
-                                                            // Do NOT render a separate depot-only block here to avoid duplication!
-                                                            if (isSameFirstLocality) {
-                                                                return null;
-                                                            }
-
-                                                            // RULE 2: If NO students are assigned to the Starting Hub,
-                                                            // the hub remains only the vehicle's departure origin (depot origin, 0 passengers),
-                                                            // and should NOT be counted as a passenger pickup stop.
                                                             return (
                                                                 <div className="timeline-start source-terminal-hub" style={{ borderLeftColor: "#10b981", background: "rgba(16, 185, 129, 0.04)", padding: "8px 12px", borderRadius: "8px", marginBottom: "8px" }}>
                                                                     <span className="timeline-dot" style={{ background: "#10b981", boxShadow: "0 0 8px rgba(16, 185, 129, 0.5)" }}></span>
-                                                                    <div>
+                                                                    <span className="timeline-number">0</span>
+                                                                    <div className="timeline-stop-content">
                                                                         <strong style={{ fontSize: "13px", color: "#065f46" }}>
-                                                                            🚩 Starting Hub: {startHub.name || startHub.locationName || "Inward Starting Place"}
+                                                                            🚩 Starting Hub: {startingHubName}
                                                                         </strong>
                                                                         <small style={{ color: "#059669", display: "block", fontWeight: "600" }}>
                                                                             Vehicle Starting Hub · Depot Origin (Bus Departs Here)
@@ -3144,23 +2908,6 @@ export default function AIAgent() {
                                                                         bus.tripMode === "FROM_SOURCE" ||
                                                                         planDirectionTab === "OUTWARD";
 
-                                                                    const userCount =
-                                                                        getAIStopUsers(
-                                                                            stop
-                                                                        );
-
-                                                                    const startHub = bus.inwardStartLocation || bus.startLocation;
-                                                                    const sHubName = (startHub?.name || startHub?.locationName || "").toLowerCase().trim();
-                                                                    const fStopName = (stop.name || "").toLowerCase().trim();
-                                                                    const isFirstStopSameAsHub = Boolean(
-                                                                        !isOutward && stopIndex === 0 && (
-                                                                            bus.hasStartingHubPickup ||
-                                                                            stop.isStartingHubPickup ||
-                                                                            stop.isStartingHub ||
-                                                                            (startHub && (sHubName === fStopName || sHubName.includes(fStopName) || fStopName.includes(sHubName)))
-                                                                        )
-                                                                    );
-
                                                                     return (
                                                                         <div
                                                                             className="timeline-stop"
@@ -3174,23 +2921,14 @@ export default function AIAgent() {
 
                                                                             <div className="timeline-stop-content">
 
-                                                                                <div className="stop-title-row" style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                                                                                <div className="stop-title-row" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
 
                                                                                     <strong>
                                                                                         👥 {stop.name}
                                                                                     </strong>
 
-                                                                                    {isFirstStopSameAsHub ? (
-                                                                                        <span style={{ fontSize: "11px", fontWeight: "700", color: "#065f46", background: "#d1fae5", padding: "2px 8px", borderRadius: "12px", border: "1px solid #a7f3d0" }}>
-                                                                                            Starting Hub + Passenger Pickup Stop
-                                                                                        </span>
-                                                                                    ) : (
-                                                                                        <span style={{ fontSize: "10px", fontWeight: "700", color: "#374151", background: "#f3f4f6", padding: "2px 6px", borderRadius: "10px", border: "1px solid #d1d5db" }}>
-                                                                                            {isOutward ? "Passenger Drop-off Stop" : "Passenger Pickup Stop"}
-                                                                                        </span>
-                                                                                    )}
-
-                                                                                    {!isFirstStopSameAsHub && stop.legDistanceKm !==
+                                                                                    {(isOutward || stopIndex > 0) &&
+                                                                                        stop.legDistanceKm !==
                                                                                         undefined &&
                                                                                         stop.legDistanceKm >
                                                                                         0 && (
@@ -3209,103 +2947,7 @@ export default function AIAgent() {
                                                                                             </span>
                                                                                         )}
 
-                                                                                    {stop.isSharedCorridor && (
-                                                                                        <span className="shared-badge">
-                                                                                            🔀
-                                                                                            Shared
-                                                                                            Corridor
-                                                                                        </span>
-                                                                                    )}
-
                                                                                 </div>
-
-                                                                                <div>
-                                                                                    {isOutward ? (
-                                                                                        <>
-                                                                                            <span>
-                                                                                                👥{" "}
-                                                                                                <b>
-                                                                                                    {stop.passengersDropped ||
-                                                                                                        userCount}
-                                                                                                </b>{" "}
-                                                                                                passengers dropped off
-                                                                                            </span>
-
-                                                                                            {stop.passengersRemaining !==
-                                                                                                undefined && (
-                                                                                                    <span>
-                                                                                                        {" "}
-                                                                                                        ·{" "}
-                                                                                                        <b>
-                                                                                                            {
-                                                                                                                stop.passengersRemaining
-                                                                                                            }
-                                                                                                        </b>{" "}
-                                                                                                        remaining on bus
-                                                                                                    </span>
-                                                                                                )}
-                                                                                        </>
-                                                                                    ) : (
-                                                                                        <>
-                                                                                            <span>
-                                                                                                👥{" "}
-                                                                                                <b>
-                                                                                                    {
-                                                                                                        userCount
-                                                                                                    }
-                                                                                                </b>{" "}
-                                                                                                passengers boarding
-                                                                                                ·{" "}
-                                                                                                <b>
-                                                                                                    {stop.cumulativePassengers ||
-                                                                                                        userCount}
-                                                                                                </b>{" "}
-                                                                                                on board
-                                                                                            </span>
-
-                                                                                            {stop.standbySeatsAtStop !==
-                                                                                                undefined &&
-                                                                                                stop.standbySeatsAtStop >
-                                                                                                0 && (
-                                                                                                    <span>
-                                                                                                        {" "}
-                                                                                                        ·{" "}
-                                                                                                        {
-                                                                                                            stop.standbySeatsAtStop
-                                                                                                        }{" "}
-                                                                                                        seats free
-                                                                                                    </span>
-                                                                                                )}
-                                                                                        </>
-                                                                                    )}
-                                                                                </div>
-
-                                                                                {stop.selectionReason && (
-                                                                                    <div
-                                                                                        style={{
-                                                                                            fontSize:
-                                                                                                "11px",
-                                                                                            color:
-                                                                                                "#475569",
-                                                                                            marginTop:
-                                                                                                "3px",
-                                                                                            fontStyle:
-                                                                                                "italic",
-                                                                                            background:
-                                                                                                "#f8fafc",
-                                                                                            padding:
-                                                                                                "2px 6px",
-                                                                                            borderRadius:
-                                                                                                "4px"
-                                                                                        }}
-                                                                                    >
-                                                                                        💡{" "}
-                                                                                        {
-                                                                                            stop.selectionReason
-                                                                                        }
-                                                                                    </div>
-                                                                                )}
-
                                                                             </div>
                                                                         </div>
                                                                     );
@@ -3331,19 +2973,10 @@ export default function AIAgent() {
                                                                                 planData
                                                                                     ?.startingPoint
                                                                                     ?.name ||
-                                                                                "Arrival Destination"}
+                                                                                "K. L. N. College of Engineering"}
                                                                         </strong>
 
-                                                                        <small>
-                                                                            Final
-                                                                            destination
-                                                                            · All{" "}
-                                                                            {
-                                                                                assigned
-                                                                            }{" "}
-                                                                            students
-                                                                            arrive
-                                                                        </small>
+                                                                        <small>Final destination</small>
                                                                     </div>
 
                                                                 </div>

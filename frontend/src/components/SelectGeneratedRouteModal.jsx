@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FiX, FiMap, FiTruck, FiUsers, FiMapPin, FiNavigation } from "react-icons/fi";
+import { FiX, FiMap, FiTruck, FiUsers, FiMapPin, FiNavigation, FiClock } from "react-icons/fi";
 
 const getRouteKey = (route, idx = 0) => {
     if (!route) return "";
@@ -192,6 +192,15 @@ export default function SelectGeneratedRouteModal({
                                                     <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                                                         <FiNavigation style={{ color: "#8b5cf6" }} />
                                                         <span>{route.routeDistanceKm} km</span>
+                                                    </span>
+                                                )}
+                                                {(route.longestPassengerTravelTime || route.routeDurationMin) && (
+                                                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                                                        <FiClock style={{ color: (route.passengersAbove60 > 0) ? "#d97706" : "#059669" }} />
+                                                        <span>
+                                                            Max: <b>{Math.round(route.longestPassengerTravelTime ?? route.routeDurationMin)} min</b>
+                                                            {(route.passengersAbove60 > 0) ? ` (⚠ ${route.passengersAbove60} > 60m)` : " (✓ ≤ 60m)"}
+                                                        </span>
                                                     </span>
                                                 )}
                                             </div>

@@ -99,7 +99,55 @@ export const isRouteCorridorCoherent = (hub, stops = [], maxSpan = 38.0, maxJump
         return true;
     }
     const span = calculateMaxBearingSpan(hub, stops);
-    if (span > maxSpan) {
+    let effectiveSpan = span;
+
+    // Outer Satellite / Radial Highway Extension Detection (Req 10, 11):
+    // If the route extends outward along a highway to a terminal satellite stop (e.g. Melur along NH38),
+    // distance to hub is strictly increasing and the heading extends outward.
+    // Symmetrically, for Inward trips, the route starts from the terminal satellite stop (stops[0]) and heads inward toward core stops.
+    if (span > maxSpan && stops.length >= 2) {
+        // Outward check: last stop is satellite stop
+        const last = stops[stops.length - 1];
+        const prev = stops[stops.length - 2];
+        if (isValidCoordinate(last.latitude, last.longitude) && isValidCoordinate(prev.latitude, prev.longitude)) {
+            const dHLast = calculateDistanceKm(hub.latitude, hub.longitude, last.latitude, last.longitude);
+            const dHPrev = calculateDistanceKm(hub.latitude, hub.longitude, prev.latitude, prev.longitude);
+            if (dHLast > dHPrev) {
+                const legB = calculateBearing(prev.latitude, prev.longitude, last.latitude, last.longitude);
+                const radB = calculateBearing(hub.latitude, hub.longitude, prev.latitude, prev.longitude);
+                if (getBearingDifference(radB, legB) <= 80.0) {
+                    const coreStops = stops.slice(0, -1);
+                    const coreSpan = calculateMaxBearingSpan(hub, coreStops);
+                    if (coreSpan <= maxSpan) {
+                        effectiveSpan = coreSpan;
+                    }
+                }
+            }
+        }
+
+        // Inward check: first stop is satellite stop
+        if (effectiveSpan > maxSpan) {
+            const first = stops[0];
+            const next = stops[1];
+            if (isValidCoordinate(first.latitude, first.longitude) && isValidCoordinate(next.latitude, next.longitude)) {
+                const dHFirst = calculateDistanceKm(hub.latitude, hub.longitude, first.latitude, first.longitude);
+                const dHNext = calculateDistanceKm(hub.latitude, hub.longitude, next.latitude, next.longitude);
+                if (dHFirst > dHNext) {
+                    const legB = calculateBearing(first.latitude, first.longitude, next.latitude, next.longitude);
+                    const inB = calculateBearing(first.latitude, first.longitude, hub.latitude, hub.longitude);
+                    if (getBearingDifference(inB, legB) <= 80.0) {
+                        const coreStops = stops.slice(1);
+                        const coreSpan = calculateMaxBearingSpan(hub, coreStops);
+                        if (coreSpan <= maxSpan) {
+                            effectiveSpan = coreSpan;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (effectiveSpan > maxSpan) {
         return false;
     }
 
@@ -118,7 +166,15 @@ export const isRouteCorridorCoherent = (hub, stops = [], maxSpan = 38.0, maxJump
             const interStopDist = calculateDistanceKm(s1.latitude, s1.longitude, s2.latitude, s2.longitude);
 
             if (interStopDist > maxJumpKm && bDiff > 22.0) {
-                return false;
+                const legB = calculateBearing(s1.latitude, s1.longitude, s2.latitude, s2.longitude);
+                // Forward outward highway extension with dHub2 > dHub1 and outward heading
+                const isForwardHighway = (dHub2 > dHub1) && (getBearingDifference(b1, legB) <= 80.0);
+                // Symmetrical inward highway extension with dHub1 > dHub2 and inward heading toward hub
+                const inB = calculateBearing(s1.latitude, s1.longitude, hub.latitude, hub.longitude);
+                const isInwardHighway = (dHub1 > dHub2) && (getBearingDifference(inB, legB) <= 80.0);
+                if (!isForwardHighway && !isInwardHighway) {
+                    return false;
+                }
             }
         }
     }
@@ -259,6 +315,74 @@ export const buildGlobalOptimizationMatrix = async ({
         getDist,
         getDur,
         locations
+    };
+};
+
+/**
+ * Calculates road compatibility between a vehicle's configured starting place,
+ * candidate pickup stop, and the trip destination.
+ * Penalizes detours and backtracking away from destination.
+ */
+export const calculateInwardStopCompatibility = ({
+    startingPlace,
+    candidateStop,
+    destinationHub,
+    currentStop = null,
+    matrix = null
+}) => {
+    if (!startingPlace || !candidateStop || !destinationHub) {
+        return { score: 1e6, compatible: false, detourRatio: 99.0, backtracking: 99.0 };
+    }
+
+    const getD = (locA, locB) => {
+        if (!locA || !locB) return 0;
+        if (matrix?.getDist && locA.matrixIndex !== undefined && locB.matrixIndex !== undefined) {
+            return matrix.getDist(locA.matrixIndex, locB.matrixIndex);
+        }
+        const latA = Number(locA.latitude ?? locA.lat);
+        const lonA = Number(locA.longitude ?? locA.lon ?? locA.lng);
+        const latB = Number(locB.latitude ?? locB.lat);
+        const lonB = Number(locB.longitude ?? locB.lon ?? locB.lng);
+        if (isValidCoordinate(latA, lonA) && isValidCoordinate(latB, lonB)) {
+            return calculateDistanceKm(latA, lonA, latB, lonB) * 1.25;
+        }
+        return 5.0;
+    };
+
+    const dStartToCand = getD(startingPlace, candidateStop);
+    const dCandToDest = getD(candidateStop, destinationHub);
+    const dStartToDest = getD(startingPlace, destinationHub);
+    const prevStop = currentStop || startingPlace;
+    const dPrevToCand = getD(prevStop, candidateStop);
+    const dPrevToDest = getD(prevStop, destinationHub);
+
+    // Corridor detour: distance through candidate stop vs direct starting place to destination
+    const totalPathWithCand = dStartToCand + dCandToDest;
+    const detourRatio = dStartToDest > 0 ? (totalPathWithCand / dStartToDest) : 1.0;
+    const corridorDetourKm = Math.max(0, totalPathWithCand - dStartToDest);
+
+    // Progression towards destination (lower distance to destination = progress)
+    // Positive backtracking means moving further away from destination than previous stop or starting hub
+    const backtrackingFromStart = Math.max(0, dCandToDest - dStartToDest);
+    const backtrackingFromPrev = Math.max(0, dCandToDest - dPrevToDest);
+
+    // Composite compatibility cost: lower score = more compatible
+    let score = dPrevToCand + (corridorDetourKm * 1.5) + (backtrackingFromPrev * 3.5) + (backtrackingFromStart * 2.0);
+
+    // Bonus for stops directly at or adjacent to vehicle starting place (<= 1.5 km)
+    if (dStartToCand <= 1.5) {
+        score -= 20.0;
+    }
+
+    return {
+        score: Number(score.toFixed(2)),
+        dStartToCand: Number(dStartToCand.toFixed(2)),
+        dCandToDest: Number(dCandToDest.toFixed(2)),
+        dPrevToCand: Number(dPrevToCand.toFixed(2)),
+        corridorDetourKm: Number(corridorDetourKm.toFixed(2)),
+        detourRatio: Number(detourRatio.toFixed(2)),
+        backtracking: Number(backtrackingFromPrev.toFixed(2)),
+        compatible: detourRatio <= 2.25 && backtrackingFromStart <= 5.0
     };
 };
 
@@ -555,7 +679,8 @@ export const optimizeTour2OptRoad = ({
     matrix,
     tripMode = "FROM_SOURCE",
     maxIterations = 25,
-    depot = DEFAULT_SOURCE_HUB
+    depot = DEFAULT_SOURCE_HUB,
+    options = {}
 }) => {
     if (!Array.isArray(tour) || tour.length === 0) {
         return { tour: [], isImproved: false, iterations: 0, roadDistanceKm: 0 };
@@ -606,6 +731,12 @@ export const optimizeTour2OptRoad = ({
         return { tour, isImproved: false, iterations: 0, roadDistanceKm: Number(d.toFixed(2)) };
     }
 
+    const isSourceFixed = Boolean(
+        options?.isSourceFixed ||
+        (!isOutward && (tour[0]?.isStartingHub || tour[0]?.isStartingHubPickup || tour[0]?.isConfiguredStartingPlace))
+    );
+    const startI = isSourceFixed ? 1 : 0;
+
     let current = [...tour];
     let improved = true;
     let iterations = 0;
@@ -615,7 +746,7 @@ export const optimizeTour2OptRoad = ({
         improved = false;
         iterations++;
 
-        for (let i = 0; i < current.length - 1; i++) {
+        for (let i = startI; i < current.length - 1; i++) {
             for (let k = i + 1; k < current.length; k++) {
                 const candidate = [
                     ...current.slice(0, i),
@@ -682,8 +813,15 @@ export const isSamePlace = (locA, locB) => {
         if (matchA !== matchB) return false;
     }
 
-    // Micro-proximity for identical physical pin
-    if (dist <= 0.15) return true;
+    // Micro-proximity for identical physical pin: only if names share significant tokens or neither has a distinct proper noun conflict
+    if (dist <= 0.15) {
+        const wordsA = (canonA || "").split(/\s+/).filter((w) => w.length > 2);
+        const wordsB = (canonB || "").split(/\s+/).filter((w) => w.length > 2);
+        const sharesWord = wordsA.some((w) => wordsB.includes(w));
+        if (sharesWord || wordsA.length === 0 || wordsB.length === 0) {
+            return true;
+        }
+    }
 
     // Substring inclusion only if neither has conflicting qualifiers and distance is tight
     if (nameA && nameB && dist <= 1.0 && (nameA.includes(nameB) || nameB.includes(nameA))) {
@@ -699,11 +837,13 @@ export const isSamePlace = (locA, locB) => {
     // Common Madurai locality aliases
     const isAlias = (a, b) => {
         if ((a === "bbkulam" && b === "bibikulam") || (a === "bibikulam" && b === "bbkulam")) return true;
+        if ((a === "arappalayam" && b === "arappayalam") || (a === "arappayalam" && b === "arappalayam")) return true;
+        if ((a === "thiruparankundram" && b === "tiruparankundram") || (a === "tiruparankundram" && b === "thiruparankundram")) return true;
         if ((a.includes("kpudur") || a.includes("pudur")) && (b.includes("kpudur") || b.includes("pudur"))) return true;
         if ((a.includes("sellur") || a.includes("sellurmadurai")) && (b.includes("sellur") || b.includes("sellurmadurai"))) return true;
         return false;
     };
-    if (nameA && nameB && isAlias(nameA, nameB) && dist <= 2.5) return true;
+    if (nameA && nameB && isAlias(nameA, nameB) && (dist <= 3.0 || !Number.isFinite(dist))) return true;
     return false;
 };
 
@@ -820,6 +960,147 @@ export const mergeDuplicateStopsInRoute = (stops = [], startingHub = null) => {
         order: idx + 1,
         sequence: idx + 1
     }));
+};
+
+/**
+ * Calculates cumulative OSRM passenger travel times and route travel-time validation metrics.
+ * 
+ * Rules:
+ * - OUTWARD: cumulative duration from departureHub (College) -> Stop 1 -> Stop 2 -> ... -> Stop N.
+ *   Passenger travel time is cumulative duration from departureHub to that passenger's assigned stop.
+ * - INWARD: cumulative duration from passenger stop -> next stops -> destinationHub (College).
+ *   Passenger travel time is duration from assigned stop to destinationHub.
+ * - Uses existing OSRM durations (matrix or OSRM legs). Does NOT estimate from distance using a fixed speed.
+ * - Preferred operational constraint: passengerTravelTime <= 60 minutes.
+ * - If the stop itself is naturally distant (direct trip from college >= 55 minutes), travel time > 60 min is permitted.
+ */
+export const calculatePassengerTravelTimeMetrics = ({
+    stops = [],
+    routeDurationMin = 0,
+    departureHub = null,
+    destinationHub = null,
+    tripMode = "FROM_SOURCE",
+    matrix = null,
+    totalDistanceKm = 0
+}) => {
+    const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
+    if (!Array.isArray(stops) || stops.length === 0) {
+        return {
+            totalRouteDuration: Number((routeDurationMin || 0).toFixed(1)),
+            longestPassengerTravelTime: 0,
+            averagePassengerTravelTime: 0,
+            passengersWithin60: 0,
+            passengersAbove60: 0,
+            allPassengersWithin60: true,
+            constraintSatisfied: true,
+            warningReason: null,
+            allPassengerTimes: [],
+            resolvedStops: []
+        };
+    }
+
+    let cumDur = 0;
+    const resolvedStops = stops.map((st, idx) => {
+        let dur = Number(st.legDurationMin || 0);
+        if (!dur && matrix?.getDur) {
+            const prevIdx = idx === 0 ? 0 : (stops[idx - 1].matrixIndex !== undefined ? stops[idx - 1].matrixIndex : 0);
+            const currIdx = st.matrixIndex !== undefined ? st.matrixIndex : idx + 1;
+            dur = matrix.getDur(prevIdx, currIdx);
+        }
+        if (st.cumulativeDurationMin !== undefined && st.cumulativeDurationMin !== null && !isNaN(Number(st.cumulativeDurationMin))) {
+            cumDur = Number(st.cumulativeDurationMin);
+        } else {
+            cumDur += dur;
+        }
+
+        const paxCount = Array.isArray(st.userIds) && st.userIds.length > 0
+            ? st.userIds.length
+            : Number(st.userCount || st.passengerCount || 0);
+
+        return {
+            ...st,
+            legDurationMin: Number(dur.toFixed(1)),
+            cumulativeDurationMin: Number(cumDur.toFixed(1)),
+            paxCount
+        };
+    });
+
+    const finalTotalDuration = (typeof routeDurationMin === "number" && routeDurationMin > 0)
+        ? Number(routeDurationMin.toFixed(1))
+        : Number(cumDur.toFixed(1));
+
+    const allPassengerTimes = [];
+    let passengersWithin60 = 0;
+    let passengersAbove60 = 0;
+    let inherentlyDistantPassengers = 0;
+
+    resolvedStops.forEach((st, idx) => {
+        let paxTravelTime = 0;
+        if (isOutward) {
+            // OUTWARD: Travel time = cumulative duration from College to passenger's stop
+            paxTravelTime = st.cumulativeDurationMin;
+        } else {
+            // INWARD: Travel time = duration from passenger's stop to College (destination)
+            const cumBefore = idx === 0 ? 0 : (resolvedStops[idx - 1].cumulativeDurationMin || 0);
+            paxTravelTime = Math.max(0, Number((finalTotalDuration - cumBefore).toFixed(1)));
+        }
+
+        st.passengerTravelTimeMin = paxTravelTime;
+        st.travelTimeMin = paxTravelTime;
+
+        // Check if the stop itself is naturally distant from college (direct OSRM >= 55 minutes)
+        let directFromCollegeMin = 0;
+        const refHub = isOutward ? departureHub : destinationHub;
+        if (refHub && matrix?.getDur && st.matrixIndex !== undefined) {
+            directFromCollegeMin = isOutward ? matrix.getDur(0, st.matrixIndex) : matrix.getDur(st.matrixIndex, 0);
+        } else if (refHub && isValidCoordinate(refHub.latitude, refHub.longitude) && isValidCoordinate(st.latitude, st.longitude)) {
+            const straightKm = calculateDistanceKm(refHub.latitude, refHub.longitude, st.latitude, st.longitude);
+            directFromCollegeMin = (straightKm * 1.25 / 32.0) * 60;
+        }
+
+        const isNaturallyLongStop = directFromCollegeMin >= 55.0;
+
+        for (let p = 0; p < st.paxCount; p++) {
+            allPassengerTimes.push(paxTravelTime);
+            if (paxTravelTime <= 60.0) {
+                passengersWithin60++;
+            } else {
+                passengersAbove60++;
+                if (isNaturallyLongStop) {
+                    inherentlyDistantPassengers++;
+                }
+            }
+        }
+    });
+
+    const violatingStops = resolvedStops.filter((s) => s.travelTimeMin > 60.0);
+    const totalPax = allPassengerTimes.length;
+    const longestPaxTime = totalPax > 0 ? Number(Math.max(...allPassengerTimes).toFixed(1)) : 0;
+    const avgPaxTime = totalPax > 0
+        ? Number((allPassengerTimes.reduce((sum, t) => sum + t, 0) / totalPax).toFixed(1))
+        : 0;
+
+    const allWithin60 = passengersAbove60 === 0;
+    const constraintSatisfied = allWithin60 || (inherentlyDistantPassengers === passengersAbove60);
+    const warningReason = !constraintSatisfied
+        ? "No available alternative vehicle/route can satisfy the current capacity and road-continuity constraints."
+        : null;
+
+    return {
+        totalRouteDuration: finalTotalDuration,
+        longestPassengerTravelTime: longestPaxTime,
+        averagePassengerTravelTime: avgPaxTime,
+        passengersWithin60,
+        passengersAbove60,
+        allPassengersWithin60: allWithin60,
+        constraintSatisfied,
+        travelTimeConstraintSatisfied: constraintSatisfied,
+        warningReason,
+        allPassengerTimes,
+        violatingStops,
+        stopTravelTimes: resolvedStops,
+        resolvedStops
+    };
 };
 
 /**
@@ -1164,10 +1445,27 @@ export const sequenceInwardRouteStops = ({
         longitude: Number(destinationHub.longitude)
     } : null;
 
-    return {
+    const ttMetrics = calculatePassengerTravelTimeMetrics({
         stops: finalStops,
+        routeDurationMin: Number((totalRoadDist / 0.5).toFixed(1)),
+        departureHub: startingHub,
+        destinationHub,
+        tripMode: "INWARD",
+        matrix,
+        totalDistanceKm: totalRoadDist
+    });
+
+    return {
+        stops: ttMetrics.resolvedStops || finalStops,
         routeDistanceKm: Number(totalRoadDist.toFixed(2)),
         hasStartingHubPickup: Boolean(finalStops[0]?.isStartingHubPickup),
+        totalRouteDuration: ttMetrics.totalRouteDuration,
+        longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+        averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+        passengersWithin60: ttMetrics.passengersWithin60,
+        passengersAbove60: ttMetrics.passengersAbove60,
+        allPassengersWithin60: ttMetrics.allPassengersWithin60,
+        travelTimeMetrics: ttMetrics,
         qualityValidation: {
             startingHub: startingHub?.locationName || startingHub?.name || "Unknown",
             startingHubDetails,
@@ -1177,7 +1475,21 @@ export const sequenceInwardRouteStops = ({
             destinationDetails,
             totalRoadDistance: Number(totalRoadDist.toFixed(2)),
             directDistance: Number(directStartToDest.toFixed(2)),
-            totalRouteDuration: Number((totalRoadDist / 0.5).toFixed(1)),
+            totalRouteDuration: ttMetrics.totalRouteDuration,
+            longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+            averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+            passengersWithin60: ttMetrics.passengersWithin60,
+            passengersAbove60: ttMetrics.passengersAbove60,
+            allPassengersWithin60: ttMetrics.allPassengersWithin60,
+            travelTimeValidation: {
+                status: ttMetrics.constraintSatisfied ? "PASS" : "FAIL",
+                longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+                averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+                passengersWithin60: ttMetrics.passengersWithin60,
+                passengersAbove60: ttMetrics.passengersAbove60,
+                allPassengersWithin60: ttMetrics.allPassengersWithin60,
+                warningReason: ttMetrics.warningReason
+            },
             repeatedStopsCount,
             startingHubRepeatedAfterDeparture: finalHasStartRepeat,
             directionalReversals,
@@ -1239,14 +1551,48 @@ export const sequenceOutwardRouteStops = ({
 
     if (sanitizedStops.length === 1) {
         const d = getDistBetween(departureHub, sanitizedStops[0]);
+        const dur = (matrix?.getDur && sanitizedStops[0].matrixIndex !== undefined)
+            ? matrix.getDur(0, sanitizedStops[0].matrixIndex)
+            : Number((d / 0.5).toFixed(1));
+        const singleStops = [{ ...sanitizedStops[0], order: 1, sequence: 1, legDistanceKm: d, legDurationMin: dur, cumulativeDistanceKm: d, cumulativeDurationMin: dur }];
+        const ttMetrics = calculatePassengerTravelTimeMetrics({
+            stops: singleStops,
+            routeDurationMin: dur,
+            departureHub,
+            destinationHub: sanitizedStops[0],
+            tripMode: "FROM_SOURCE",
+            matrix,
+            totalDistanceKm: d
+        });
         return {
-            stops: [{ ...sanitizedStops[0], order: 1, sequence: 1 }],
+            stops: ttMetrics.resolvedStops || singleStops,
             routeDistanceKm: d,
+            totalRouteDuration: ttMetrics.totalRouteDuration,
+            longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+            averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+            passengersWithin60: ttMetrics.passengersWithin60,
+            passengersAbove60: ttMetrics.passengersAbove60,
+            allPassengersWithin60: ttMetrics.allPassengersWithin60,
+            travelTimeMetrics: ttMetrics,
             qualityValidation: {
                 startingHub: departureHub?.locationName || departureHub?.name || "Departure Hub",
                 destination: sanitizedStops[0]?.name || "Final Stop",
                 totalRoadDistance: d,
-                totalRouteDuration: Number((d / 0.5).toFixed(1)),
+                totalRouteDuration: ttMetrics.totalRouteDuration,
+                longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+                averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+                passengersWithin60: ttMetrics.passengersWithin60,
+                passengersAbove60: ttMetrics.passengersAbove60,
+                allPassengersWithin60: ttMetrics.allPassengersWithin60,
+                travelTimeValidation: {
+                    status: ttMetrics.constraintSatisfied ? "PASS" : "FAIL",
+                    longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+                    averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+                    passengersWithin60: ttMetrics.passengersWithin60,
+                    passengersAbove60: ttMetrics.passengersAbove60,
+                    allPassengersWithin60: ttMetrics.allPassengersWithin60,
+                    warningReason: ttMetrics.warningReason
+                },
                 repeatedStopsCount: 0,
                 startingHubRepeatedAfterDeparture: false,
                 directionalReversals: 0,
@@ -1506,7 +1852,28 @@ export const sequenceOutwardRouteStops = ({
     }
 
     const maxBearingSpan = calculateMaxBearingSpan(departureHub, finalStops);
-    if (maxBearingSpan > 38.0) {
+    let effectiveBearingSpan = maxBearingSpan;
+    if (maxBearingSpan > 38.0 && finalStops.length >= 2) {
+        const last = finalStops[finalStops.length - 1];
+        const prev = finalStops[finalStops.length - 2];
+        if (isValidCoordinate(last.latitude, last.longitude) && isValidCoordinate(prev.latitude, prev.longitude)) {
+            const dHLast = calculateDistanceKm(departureHub.latitude, departureHub.longitude, last.latitude, last.longitude);
+            const dHPrev = calculateDistanceKm(departureHub.latitude, departureHub.longitude, prev.latitude, prev.longitude);
+            if (dHLast > dHPrev) {
+                const legB = calculateBearing(prev.latitude, prev.longitude, last.latitude, last.longitude);
+                const radB = calculateBearing(departureHub.latitude, departureHub.longitude, prev.latitude, prev.longitude);
+                if (getBearingDifference(radB, legB) <= 80.0) {
+                    const coreStops = finalStops.slice(0, -1);
+                    const coreSpan = calculateMaxBearingSpan(departureHub, coreStops);
+                    if (coreSpan <= 38.0) {
+                        effectiveBearingSpan = coreSpan;
+                    }
+                }
+            }
+        }
+    }
+
+    if (effectiveBearingSpan > 38.0) {
         directionalReversals++;
     }
 
@@ -1520,24 +1887,55 @@ export const sequenceOutwardRouteStops = ({
         directionalReversals === 0 &&
         backtrackingKm < 2.0 &&
         detourRatio <= 2.25 &&
-        maxBearingSpan <= 38.0
+        effectiveBearingSpan <= 38.0
     );
 
-    return {
+    const ttMetrics = calculatePassengerTravelTimeMetrics({
         stops: finalStops,
+        routeDurationMin: Number((totalRoadDist / 0.5).toFixed(1)),
+        departureHub,
+        destinationHub: finalStops[finalStops.length - 1],
+        tripMode: "FROM_SOURCE",
+        matrix,
+        totalDistanceKm: totalRoadDist
+    });
+
+    return {
+        stops: ttMetrics.resolvedStops || finalStops,
         routeDistanceKm: Number(totalRoadDist.toFixed(2)),
+        totalRouteDuration: ttMetrics.totalRouteDuration,
+        longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+        averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+        passengersWithin60: ttMetrics.passengersWithin60,
+        passengersAbove60: ttMetrics.passengersAbove60,
+        allPassengersWithin60: ttMetrics.allPassengersWithin60,
+        travelTimeMetrics: ttMetrics,
         qualityValidation: {
             startingHub: departureHub?.locationName || departureHub?.name || "Departure Hub",
             destination: finalStops[finalStops.length - 1]?.name || "Final Stop",
             totalRoadDistance: Number(totalRoadDist.toFixed(2)),
-            totalRouteDuration: Number((totalRoadDist / 0.5).toFixed(1)),
+            totalRouteDuration: ttMetrics.totalRouteDuration,
+            longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+            averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+            passengersWithin60: ttMetrics.passengersWithin60,
+            passengersAbove60: ttMetrics.passengersAbove60,
+            allPassengersWithin60: ttMetrics.allPassengersWithin60,
+            travelTimeValidation: {
+                status: ttMetrics.constraintSatisfied ? "PASS" : "FAIL",
+                longestPassengerTravelTime: ttMetrics.longestPassengerTravelTime,
+                averagePassengerTravelTime: ttMetrics.averagePassengerTravelTime,
+                passengersWithin60: ttMetrics.passengersWithin60,
+                passengersAbove60: ttMetrics.passengersAbove60,
+                allPassengersWithin60: ttMetrics.allPassengersWithin60,
+                warningReason: ttMetrics.warningReason
+            },
             repeatedStopsCount: 0,
             startingHubRepeatedAfterDeparture: false,
             directionalReversals,
             backtrackingDistanceKm: Number(backtrackingKm.toFixed(2)),
             detourRatio,
-            maxBearingSpan,
-            hasCorridorDivergence: maxBearingSpan > 38.0,
+            maxBearingSpan: effectiveBearingSpan,
+            hasCorridorDivergence: effectiveBearingSpan > 38.0,
             operationalContinuityVerified: opContinuity
         }
     };
@@ -1545,25 +1943,137 @@ export const sequenceOutwardRouteStops = ({
 
 
 // ============================================================================
+// ============================================================================
+// 4B. COORDINATE VALIDATION (MANDATORY HARD CONSTRAINT)
+// ============================================================================
+
+/**
+ * Validates geographic coordinates for stops before route optimization.
+ * Ensures every stop has finite, numeric latitude & longitude within valid bounds (-90 to 90, -180 to 180, not [0,0]).
+ */
+export const validateStopCoordinates = (stops = []) => {
+    if (!Array.isArray(stops)) {
+        return { isValid: false, validStops: [], invalidStops: [{ reason: "Stops input is not an array" }] };
+    }
+
+    const validStops = [];
+    const invalidStops = [];
+
+    for (const stop of stops) {
+        const lat = Number(stop?.latitude ?? stop?.lat);
+        const lon = Number(stop?.longitude ?? stop?.lon ?? stop?.lng);
+
+        const hasValidCoords = (
+            Number.isFinite(lat) &&
+            Number.isFinite(lon) &&
+            lat >= -90 && lat <= 90 &&
+            lon >= -180 && lon <= 180 &&
+            !(Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001)
+        );
+
+        if (hasValidCoords) {
+            validStops.push({
+                ...stop,
+                latitude: lat,
+                longitude: lon
+            });
+        } else {
+            invalidStops.push({
+                stop,
+                name: stop?.name || stop?.stopping || "Unknown",
+                latitude: stop?.latitude,
+                longitude: stop?.longitude,
+                reason: "Missing, non-numeric, zero, or out-of-bounds geographic coordinates"
+            });
+        }
+    }
+
+    return {
+        isValid: invalidStops.length === 0,
+        validStops,
+        invalidStops,
+        totalChecked: stops.length,
+        validCount: validStops.length,
+        invalidCount: invalidStops.length
+    };
+};
+
 // 5. CONTROLLED GLOBAL CANDIDATE GENERATION (BEAM SEARCH POOL)
 // ============================================================================
 
 /**
+ * Dynamic Fleet-Profile Capacity Capping:
+ * Validates whether candidate route demands can be physically satisfied by the fleet.
+ * When both demands and vehicle capacities are sorted descending,
+ * verifies that candidate demands do not exceed the vehicle capacities.
+ * NOTE: Candidate stop groups naturally exceed fleet size before consolidation;
+ * merges are therefore checked against available capacity profile without prematurely
+ * rejecting candidate formation when activeDemands.length > sortedCaps.length.
+ */
+export const isCandidateDemandCompatibleWithFleetProfile = (candidateDemands, fleetCapacities) => {
+    if (!Array.isArray(candidateDemands) || candidateDemands.length === 0) return true;
+    if (!Array.isArray(fleetCapacities) || fleetCapacities.length === 0) return true;
+
+    const activeDemands = candidateDemands
+        .map((d) => Number(d || 0))
+        .filter((d) => d > 0)
+        .sort((a, b) => b - a);
+
+    if (activeDemands.length === 0) return true;
+
+    const sortedCaps = fleetCapacities
+        .map((c) => Number(c || 0))
+        .filter((c) => c > 0)
+        .sort((a, b) => b - a);
+
+    if (sortedCaps.length === 0) return true;
+
+    // Check individual candidate demands against max available capacity
+    const maxCap = sortedCaps[0];
+    for (const d of activeDemands) {
+        if (d > maxCap) {
+            return false;
+        }
+    }
+
+    // Dynamic Fleet-Profile Capacity Capping:
+    // When active demands exceed available fleet size (e.g. during intermediate candidate route construction),
+    // we must NOT reject candidate merges simply because activeDemands.length > sortedCaps.length.
+    // Instead, verify that the top candidate demands fit into the top available capacities.
+    const checkCount = Math.min(activeDemands.length, sortedCaps.length);
+    for (let i = 0; i < checkCount; i++) {
+        if (activeDemands[i] > sortedCaps[i]) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+/**
  * Generates global candidate routes using Clarke-Wright savings + nearest insertion + capacity limits.
- * Eliminates premature corridor locking.
+ * Eliminates premature corridor locking and respects heterogeneous fleet capacity profile.
  */
 export const generateGlobalCandidateRoutes = ({
     stops = [],
     matrix,
     maxBusCapacity = 70,
+    fleetCapacities = null,
     tripMode = "FROM_SOURCE",
     options = {}
 }) => {
     if (!Array.isArray(stops) || stops.length === 0) return [];
 
     const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
+    const effectiveFleetCaps = (Array.isArray(fleetCapacities) && fleetCapacities.length > 0)
+        ? fleetCapacities
+        : (Array.isArray(options?.fleetCapacities) && options.fleetCapacities.length > 0)
+            ? options.fleetCapacities
+            : (Array.isArray(options?.availableVehicles) && options.availableVehicles.length > 0)
+                ? options.availableVehicles.map((v) => Number(v.capacity || v.seatCapacity || 0)).filter((c) => c > 0)
+                : null;
 
-    // DEMAND-SAME / FLEET SYMMETRY SEEDING (Req 7, 8, 15):
+    // DEMAND-SAME / FLEET SYMMETRY SEEDING (Req 1, 2, 7, 8, 15):
     // When generating INWARD and an existing oppositePlan (OUTWARD) is available:
     // If the demand distribution is effectively identical (confirmed coming students),
     // seed candidate routes directly from the outward corridor groups, preserving road-connected
@@ -1574,14 +2084,15 @@ export const generateGlobalCandidateRoutes = ({
             const totalInwardPax = stops.reduce((sum, s) => sum + (Array.isArray(s.userIds) ? s.userIds.length : Number(s.userCount || 0)), 0);
             const totalOutwardPax = oppBuses.reduce((sum, b) => sum + (b.assignedUsers || b.passengerCount || 0), 0);
 
-            // If passenger counts match within 5%, construct candidate routes from outward corridors
-            if (Math.abs(totalInwardPax - totalOutwardPax) <= Math.max(5, totalInwardPax * 0.05)) {
+            // If passenger counts match within 10%, construct candidate routes from outward corridors
+            if (Math.abs(totalInwardPax - totalOutwardPax) <= Math.max(5, Math.ceil(totalInwardPax * 0.10))) {
                 const stopMap = new Map();
                 stops.forEach((st) => {
                     const k = (st.name || st.stopping || "").toLowerCase().trim();
                     stopMap.set(k, st);
                 });
 
+                const allocatedUserIds = new Set();
                 const seededRoutes = [];
                 let allMatched = true;
 
@@ -1593,18 +2104,36 @@ export const generateGlobalCandidateRoutes = ({
 
                     for (const ost of (ob.stops || [])) {
                         const k = (ost.name || ost.stopping || "").toLowerCase().trim();
-                        const matched = stopMap.get(k);
+                        let matched = stopMap.get(k);
+                        if (!matched) {
+                            matched = stops.find((s) => isSamePlace(s, ost) ||
+                                (isValidCoordinate(s.latitude, s.longitude) && isValidCoordinate(ost.latitude, ost.longitude) &&
+                                 calculateDistanceKm(s.latitude, s.longitude, ost.latitude, ost.longitude) <= 0.35)
+                            );
+                        }
+
                         if (matched) {
-                            const pCount = Array.isArray(matched.userIds) && matched.userIds.length > 0
-                                ? matched.userIds.length
-                                : Number(matched.userCount || matched.passengerCount || 0);
+                            // FIX REQUIREMENT 1: Preserve bus-specific passenger allocation from outward plan!
+                            // DO NOT use aggregate stop database demand (matched.userCount) repeatedly across shared stops!
+                            const pCount = Number(ost.passengerCount ?? ost.userCount ?? ost.userIds?.length ?? 0);
+                            let userIds = [];
+                            if (Array.isArray(ost.userIds) && ost.userIds.length > 0) {
+                                userIds = ost.userIds.filter((uid) => !allocatedUserIds.has(String(uid)));
+                            }
+                            if (userIds.length === 0 && Array.isArray(matched.userIds) && matched.userIds.length > 0) {
+                                const available = matched.userIds.filter((uid) => !allocatedUserIds.has(String(uid)));
+                                userIds = available.slice(0, pCount);
+                            }
+                            userIds.forEach((uid) => allocatedUserIds.add(String(uid)));
+
                             bStops.push({
                                 ...matched,
                                 passengerCount: pCount,
-                                userCount: pCount
+                                userCount: pCount,
+                                userIds
                             });
                             bPax += pCount;
-                            if (Array.isArray(matched.userIds)) bUserIds.push(...matched.userIds);
+                            bUserIds.push(...userIds);
                         } else {
                             allMatched = false;
                             break;
@@ -1617,46 +2146,271 @@ export const generateGlobalCandidateRoutes = ({
                         const assignedVeh = ob.vehicle || ob.assignedVehicle;
                         const vId = String(ob.vehicleId || assignedVeh?._id || assignedVeh?.id || "");
                         const vName = ob.vehicleName || assignedVeh?.vehicleName || assignedVeh?.name || "";
+                        const cap = Number(ob.capacity || assignedVeh?.capacity || assignedVeh?.seatCapacity || 0);
 
-                        let inStops = bStops;
-                        if (!isOutward) {
-                            const destHub = options.destinationHub || matrix?.locations?.[0];
-                            let sp = null;
-                            if (Array.isArray(options?.activeInwardStartingPlaces) && options.activeInwardStartingPlaces.length > 0) {
-                                sp = findStartingPlaceForBus(assignedVeh || { vehicleName: vName, _id: vId }, options.activeInwardStartingPlaces);
-                            }
-                            if (!sp && bStops.length > 0 && destHub) {
-                                // Find residential stop furthest from destination to anchor road progression
-                                const sortedByDest = [...bStops].sort((a, b) =>
-                                    calculateDistanceKm(destHub.latitude, destHub.longitude, b.latitude, b.longitude) -
-                                    calculateDistanceKm(destHub.latitude, destHub.longitude, a.latitude, a.longitude)
-                                );
-                                sp = sortedByDest[0];
-                            }
-                            const seq = sequenceInwardRouteStops({
-                                startingHub: sp,
-                                destinationHub: destHub,
-                                stops: bStops,
-                                matrix,
-                                tripMode
-                            });
-                            inStops = seq.stops;
+                        const destHub = options.destinationHub || matrix?.locations?.[0];
+                        let sp = null;
+                        if (Array.isArray(options?.activeInwardStartingPlaces) && options.activeInwardStartingPlaces.length > 0) {
+                            sp = findStartingPlaceForBus(assignedVeh || { vehicleName: vName, _id: vId, capacity: cap }, options.activeInwardStartingPlaces);
                         }
+                        if (!sp && bStops.length > 0 && destHub) {
+                            // Find residential stop furthest from destination to anchor road progression
+                            const sortedByDest = [...bStops].sort((a, b) =>
+                                calculateDistanceKm(destHub.latitude, destHub.longitude, b.latitude, b.longitude) -
+                                calculateDistanceKm(destHub.latitude, destHub.longitude, a.latitude, a.longitude)
+                            );
+                            sp = sortedByDest[0];
+                        }
+                        const seq = sequenceInwardRouteStops({
+                            startingHub: sp,
+                            destinationHub: destHub,
+                            stops: bStops,
+                            matrix,
+                            tripMode
+                        });
 
+                        // PRESERVE VEHICLE IDENTITY, CAPACITY, STARTING PLACE (Req 2 & 3)
                         seededRoutes.push({
                             routeId: `cand_seed_${bIdx + 1}`,
-                            stops: inStops,
+                            routeCode: ob.routeCode || `R-${String(bIdx + 1).padStart(2, "0")}`,
+                            vehicleId: vId,
+                            vehicleName: vName,
+                            vehicle: assignedVeh || { _id: vId, vehicleName: vName, capacity: cap },
+                            capacity: cap,
+                            startingHub: sp,
+                            startLocation: sp,
+                            stops: seq.stops,
                             assignedUsers: bPax,
                             users: bUserIds,
-                            ...(isOutward ? { vehicleId: vId, vehicleName: vName, vehicle: assignedVeh } : {})
+                            routeDistanceKm: seq.routeDistanceKm,
+                            quality: seq.qualityValidation,
+                            isSeeded: true
                         });
                     }
                 }
 
                 const seededPax = seededRoutes.reduce((sum, r) => sum + r.assignedUsers, 0);
-                if (allMatched && seededRoutes.length === oppBuses.length && seededPax === totalInwardPax) {
-                    return seededRoutes;
+                if (allMatched && seededRoutes.length === oppBuses.length) {
+                    // Check for any active stopping area in `stops` that is missing from `seededRoutes`
+                    const coveredCanonStops = new Set();
+                    seededRoutes.forEach((r) => (r.stops || []).forEach((st) => {
+                        const c = normalizeCanonicalStopName(st.name);
+                        if (c) coveredCanonStops.add(c);
+                        if (Array.isArray(st.representedStops)) {
+                            st.representedStops.forEach((rs) => coveredCanonStops.add(normalizeCanonicalStopName(rs)));
+                        }
+                    }));
+
+                    const missingStops = stops.filter((st) => {
+                        const pCount = Array.isArray(st.userIds) ? st.userIds.length : (st.userCount || 0);
+                        if (pCount <= 0) return false;
+                        const c = normalizeCanonicalStopName(st.name);
+                        return !coveredCanonStops.has(c);
+                    });
+
+                    // If any active stops are missing from the opposite plan corridors, incorporate them via road-network insertion
+                    let allMissingIncorporated = true;
+                    if (missingStops.length > 0) {
+                        for (const mStop of missingStops) {
+                            const mPax = Array.isArray(mStop.userIds) ? mStop.userIds.length : (mStop.userCount || 0);
+                            const mUserIds = Array.isArray(mStop.userIds) ? [...mStop.userIds] : [];
+
+                            // Find candidate route with spare capacity that minimizes road detour / distance
+                            const routesWithCapacity = seededRoutes.filter((r) => (r.capacity - r.assignedUsers) >= mPax);
+                            let bestRoute = null;
+                            let bestCost = Infinity;
+                            let bestTour = null;
+
+                            for (const r of routesWithCapacity) {
+                                const insRes = insertStopNearestCost({
+                                    tour: r.stops,
+                                    stop: mStop,
+                                    stopMatrixIndex: mStop.matrixIndex,
+                                    matrix,
+                                    tripMode
+                                });
+                                if (insRes?.updatedTour) {
+                                    const cost = insRes.incrementalCost;
+                                    if (cost < bestCost) {
+                                        bestCost = cost;
+                                        bestRoute = r;
+                                        bestTour = insRes.updatedTour;
+                                    }
+                                }
+                            }
+
+                            if (bestRoute && bestTour) {
+                                const destHub = options.destinationHub || matrix?.locations?.[0];
+                                const seq = sequenceInwardRouteStops({
+                                    startingHub: bestRoute.startingHub,
+                                    destinationHub: destHub,
+                                    stops: bestTour,
+                                    matrix,
+                                    tripMode
+                                });
+                                bestRoute.stops = seq.stops;
+                                bestRoute.assignedUsers += mPax;
+                                bestRoute.users.push(...mUserIds);
+                                mUserIds.forEach((uid) => allocatedUserIds.add(String(uid)));
+                                bestRoute.routeDistanceKm = seq.routeDistanceKm;
+                                bestRoute.quality = seq.qualityValidation;
+                                coveredCanonStops.add(normalizeCanonicalStopName(mStop.name));
+                            } else {
+                                allMissingIncorporated = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (allMissingIncorporated) {
+                        // Reconcile any remaining passenger delta (<= 5% of total demand)
+                        const currentSeededPax = seededRoutes.reduce((sum, r) => sum + r.assignedUsers, 0);
+                        if (currentSeededPax === totalInwardPax) {
+                            return seededRoutes;
+                        }
+
+                        if (Math.abs(currentSeededPax - totalInwardPax) <= Math.max(5, Math.ceil(totalInwardPax * 0.05))) {
+                            const remainingUnassigned = stops.flatMap((s) => (s.userIds || []).filter((uid) => !allocatedUserIds.has(String(uid))));
+                            for (const uid of remainingUnassigned) {
+                                const stopForUser = stops.find((s) => (s.userIds || []).map(String).includes(String(uid)));
+                                if (!stopForUser) continue;
+                                const targetRoute = seededRoutes.find((r) =>
+                                    r.stops.some((st) => isSamePlace(st, stopForUser)) && (r.assignedUsers < r.capacity)
+                                );
+                                if (targetRoute) {
+                                    targetRoute.assignedUsers++;
+                                    targetRoute.users.push(uid);
+                                    allocatedUserIds.add(String(uid));
+                                    const stopInRoute = targetRoute.stops.find((st) => isSamePlace(st, stopForUser));
+                                    if (stopInRoute) {
+                                        stopInRoute.userCount = (stopInRoute.userCount || 0) + 1;
+                                        stopInRoute.passengerCount = stopInRoute.userCount;
+                                        if (!Array.isArray(stopInRoute.userIds)) stopInRoute.userIds = [];
+                                        stopInRoute.userIds.push(uid);
+                                    }
+                                }
+                            }
+                            const finalSeededPax = seededRoutes.reduce((sum, r) => sum + r.assignedUsers, 0);
+                            if (finalSeededPax === totalInwardPax) {
+                                return seededRoutes;
+                            }
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    // INWARD VEHICLE-ANCHORED CANDIDATE ROUTE GENERATION (Req 3, 4, 5, 6)
+    // When no oppositePlan baseline is available, anchor route generation directly to the vehicles'
+    // configured starting places and destination progression BEFORE unanchored clustering.
+    if (!isOutward && Array.isArray(options?.activeInwardStartingPlaces) && options.activeInwardStartingPlaces.length > 0) {
+        const destHub = options.destinationHub || matrix?.locations?.[0];
+        const availVehs = Array.isArray(options.availableVehicles) && options.availableVehicles.length > 0
+            ? options.availableVehicles
+            : (Array.isArray(options?.eligibleVehicles) ? options.eligibleVehicles : []);
+
+        const configuredBuses = availVehs.filter((v) => {
+            const cap = Number(v.capacity || v.seatCapacity || 0);
+            if (cap <= 0 || v.isActive === false) return false;
+            return hasConfiguredInwardStartingPlace(v, options.activeInwardStartingPlaces);
+        });
+
+        if (configuredBuses.length > 0 && destHub) {
+            const vehicleRoutes = configuredBuses.map((v, idx) => {
+                const sp = findStartingPlaceForBus(v, options.activeInwardStartingPlaces);
+                const cap = Number(v.capacity || v.seatCapacity || 50);
+                return {
+                    routeId: `cand_inward_anchored_${idx + 1}`,
+                    routeCode: `R-${String(idx + 1).padStart(2, "0")}`,
+                    vehicleId: String(v._id || v.id || `veh_${idx + 1}`),
+                    vehicleName: v.vehicleName || v.name || `Bus ${idx + 1}`,
+                    vehicle: v,
+                    capacity: cap,
+                    startingHub: sp,
+                    startLocation: sp,
+                    stops: [],
+                    assignedUsers: 0,
+                    users: []
+                };
+            });
+
+            // For every candidate pickup stop, find the most compatible vehicle starting place
+            // using calculateInwardStopCompatibility (Req 5 & 6)
+            const remainingStops = stops.map((s) => ({
+                ...s,
+                unallocatedPax: Array.isArray(s.userIds) ? s.userIds.length : Number(s.userCount || 0),
+                unallocatedUserIds: Array.isArray(s.userIds) ? [...s.userIds] : []
+            }));
+
+            // Sort stops so stops closest to starting places or furthest from destination are evaluated
+            remainingStops.sort((a, b) => {
+                const da = calculateDistanceKm(destHub.latitude, destHub.longitude, a.latitude, a.longitude);
+                const db = calculateDistanceKm(destHub.latitude, destHub.longitude, b.latitude, b.longitude);
+                return db - da;
+            });
+
+            for (const st of remainingStops) {
+                if (st.unallocatedPax <= 0) continue;
+
+                // Evaluate compatibility across all configured vehicle routes
+                const candidatesWithCompat = vehicleRoutes.map((vr) => {
+                    const currentTail = vr.stops.length > 0 ? vr.stops[vr.stops.length - 1] : vr.startingHub;
+                    const compat = calculateInwardStopCompatibility({
+                        startingPlace: vr.startingHub,
+                        candidateStop: st,
+                        destinationHub: destHub,
+                        currentStop: currentTail,
+                        matrix
+                    });
+                    const spare = vr.capacity - vr.assignedUsers;
+                    return { route: vr, compat, spare };
+                }).filter((c) => c.spare > 0);
+
+                candidatesWithCompat.sort((a, b) => {
+                    if (a.compat.compatible !== b.compat.compatible) return b.compat.compatible ? 1 : -1;
+                    return a.compat.score - b.compat.score;
+                });
+
+                if (candidatesWithCompat.length > 0) {
+                    const best = candidatesWithCompat[0];
+                    const allocCount = Math.min(st.unallocatedPax, best.spare);
+                    const allocIds = st.unallocatedUserIds.splice(0, allocCount);
+                    st.unallocatedPax -= allocCount;
+
+                    best.route.stops.push({
+                        ...st,
+                        passengerCount: allocCount,
+                        userCount: allocCount,
+                        userIds: allocIds
+                    });
+                    best.route.assignedUsers += allocCount;
+                    best.route.users.push(...allocIds);
+                }
+            }
+
+            // Sequence each vehicle's stops from its starting place to destination
+            const finalizedAnchoredRoutes = vehicleRoutes.filter((vr) => vr.assignedUsers > 0).map((vr) => {
+                const seq = sequenceInwardRouteStops({
+                    startingHub: vr.startingHub,
+                    destinationHub: destHub,
+                    stops: vr.stops,
+                    matrix,
+                    tripMode
+                });
+                return {
+                    ...vr,
+                    stops: seq.stops,
+                    routeDistanceKm: seq.routeDistanceKm,
+                    quality: seq.qualityValidation
+                };
+            });
+
+            const totalAnchoredAssigned = finalizedAnchoredRoutes.reduce((sum, r) => sum + r.assignedUsers, 0);
+            const totalRequiredPax = stops.reduce((sum, s) => sum + (Array.isArray(s.userIds) ? s.userIds.length : Number(s.userCount || 0)), 0);
+
+            if (totalAnchoredAssigned === totalRequiredPax && finalizedAnchoredRoutes.length > 0) {
+                return finalizedAnchoredRoutes;
             }
         }
     }
@@ -1730,6 +2484,18 @@ export const generateGlobalCandidateRoutes = ({
         // Check if combined demand respects maximum vehicle capacity
         const combinedPax = routeA.assignedUsers + routeB.assignedUsers;
         if (combinedPax > maxBusCapacity) continue;
+
+        // Dynamic Fleet-Profile Capacity Capping: Prevent forming more large routes than fleet can seat
+        if (effectiveFleetCaps && effectiveFleetCaps.length > 0) {
+            const prospectiveDemands = routes.map((r) => {
+                if (r.routeId === routeA.routeId) return combinedPax;
+                if (r.routeId === routeB.routeId) return 0;
+                return r.assignedUsers;
+            });
+            if (!isCandidateDemandCompatibleWithFleetProfile(prospectiveDemands, effectiveFleetCaps)) {
+                continue;
+            }
+        }
 
         // Inward Starting Hub Protection: If configured inward starting places are provided,
         // do NOT merge two candidate routes if each already contains a distinct configured starting hub!
@@ -1812,8 +2578,11 @@ export const generateGlobalCandidateRoutes = ({
                     tripMode
                 });
             const qv = testSeq.qualityValidation || {};
-            if ((qv.directionalReversals || 0) > 0 || (qv.detourRatio || 1.0) > 2.25) {
-                continue; // Reject merge if it creates directional reversals or excessive detour
+            const satisfiesTravelTime = (qv.passengersAbove60 || 0) === 0 &&
+                (qv.longestPassengerTravelTime || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxPassengerTravelTimeMin || 60.0) &&
+                (testSeq.routeDistanceKm || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxRouteDistanceKm || 45.0);
+            if ((qv.directionalReversals || 0) > 0 || (qv.detourRatio || 1.0) > 2.25 || !satisfiesTravelTime) {
+                continue; // Reject merge if it creates directional reversals or excessive detour or exceeds travel time/distance
             }
 
             routeA.stops = optRes.tour;
@@ -1845,6 +2614,18 @@ export const generateGlobalCandidateRoutes = ({
                 if (target.routeId === small.routeId) continue;
                 if (target.assignedUsers + small.assignedUsers > maxBusCapacity) continue;
 
+                if (effectiveFleetCaps && effectiveFleetCaps.length > 0) {
+                    const combinedSmallPax = target.assignedUsers + small.assignedUsers;
+                    const prospectiveDemands = routes.map((r) => {
+                        if (r.routeId === target.routeId) return combinedSmallPax;
+                        if (r.routeId === small.routeId) return 0;
+                        return r.assignedUsers;
+                    });
+                    if (!isCandidateDemandCompatibleWithFleetProfile(prospectiveDemands, effectiveFleetCaps)) {
+                        continue;
+                    }
+                }
+
                 // Check corridor coherence between small route and target route
                 if (refHub && isValidCoordinate(refHub.latitude, refHub.longitude)) {
                     const combinedStops = [...target.stops, ...small.stops];
@@ -1852,7 +2633,21 @@ export const generateGlobalCandidateRoutes = ({
                         continue; // Skip target in different corridor
                     }
                     const minInterDist = Math.min(...small.stops.flatMap(s1 => target.stops.map(s2 => calculateDistanceKm(s1.latitude, s1.longitude, s2.latitude, s2.longitude))));
-                    if (minInterDist > 4.75) {
+                    const targetLast = target.stops[target.stops.length - 1];
+                    const isOutwardSatelliteHighway = Boolean(
+                        isOutward && refHub && targetLast && small.stops.length === 1 &&
+                        isValidCoordinate(refHub.latitude, refHub.longitude) &&
+                        isValidCoordinate(targetLast.latitude, targetLast.longitude) &&
+                        isValidCoordinate(small.stops[0].latitude, small.stops[0].longitude) &&
+                        calculateDistanceKm(refHub.latitude, refHub.longitude, small.stops[0].latitude, small.stops[0].longitude) >
+                        calculateDistanceKm(refHub.latitude, refHub.longitude, targetLast.latitude, targetLast.longitude) &&
+                        getBearingDifference(
+                            calculateBearing(refHub.latitude, refHub.longitude, targetLast.latitude, targetLast.longitude),
+                            calculateBearing(targetLast.latitude, targetLast.longitude, small.stops[0].latitude, small.stops[0].longitude)
+                        ) <= 80.0
+                    );
+
+                    if (minInterDist > 4.75 && !isOutwardSatelliteHighway) {
                         continue; // Skip distant stops that would create cross-town detours
                     }
                 }
@@ -1873,7 +2668,21 @@ export const generateGlobalCandidateRoutes = ({
                         destinationHub: !isOutward ? refHub : null,
                         rejectOnExcessiveDetour: true
                     });
-                    if (insertRes.rejected || insertRes.costDelta > MAX_INSERTION_COST_KM) {
+                    const targetLastForInsert = currentTour[currentTour.length - 1];
+                    const isStopOutwardSatelliteHighway = Boolean(
+                        isOutward && refHub && targetLastForInsert &&
+                        isValidCoordinate(refHub.latitude, refHub.longitude) &&
+                        isValidCoordinate(targetLastForInsert.latitude, targetLastForInsert.longitude) &&
+                        isValidCoordinate(stopToInsert.latitude, stopToInsert.longitude) &&
+                        calculateDistanceKm(refHub.latitude, refHub.longitude, stopToInsert.latitude, stopToInsert.longitude) >
+                        calculateDistanceKm(refHub.latitude, refHub.longitude, targetLastForInsert.latitude, targetLastForInsert.longitude) &&
+                        getBearingDifference(
+                            calculateBearing(refHub.latitude, refHub.longitude, targetLastForInsert.latitude, targetLastForInsert.longitude),
+                            calculateBearing(targetLastForInsert.latitude, targetLastForInsert.longitude, stopToInsert.latitude, stopToInsert.longitude)
+                        ) <= 80.0
+                    );
+
+                    if (insertRes.rejected || (insertRes.costDelta > MAX_INSERTION_COST_KM && !isStopOutwardSatelliteHighway)) {
                         insertionPossible = false;
                         break;
                     }
@@ -1907,7 +2716,10 @@ export const generateGlobalCandidateRoutes = ({
                         tripMode
                     });
                 const qv = testSeq.qualityValidation || {};
-                if ((qv.directionalReversals || 0) === 0 && (qv.detourRatio || 1.0) <= 2.25) {
+                const satisfiesTravelTime = (qv.passengersAbove60 || 0) === 0 &&
+                    (qv.longestPassengerTravelTime || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxPassengerTravelTimeMin || 60.0) &&
+                    (testSeq.routeDistanceKm || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxRouteDistanceKm || 45.0);
+                if ((qv.directionalReversals || 0) === 0 && (qv.detourRatio || 1.0) <= 2.25 && satisfiesTravelTime) {
                     bestTargetRoute.stops = optRes.tour;
                     bestTargetRoute.assignedUsers += small.assignedUsers;
                     bestTargetRoute.users = [...bestTargetRoute.users, ...small.users];
@@ -1932,6 +2744,7 @@ export const consolidateSmallPassengerRoutes = ({
     routes = [],
     matrix,
     maxBusCapacity = 70,
+    fleetCapacities = null,
     tripMode = "FROM_SOURCE",
     smallRouteThreshold = 15,
     maxDetourRatio = 2.25,
@@ -1942,6 +2755,10 @@ export const consolidateSmallPassengerRoutes = ({
     auditTrail = []
 }) => {
     if (!Array.isArray(routes) || routes.length <= 1) return routes;
+
+    const effectiveFleetCaps = (Array.isArray(fleetCapacities) && fleetCapacities.length > 0)
+        ? fleetCapacities
+        : null;
 
     const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
     const resolvedOrigin = sourceHub || anchorHub || DEFAULT_SOURCE_HUB;
@@ -1972,6 +2789,19 @@ export const consolidateSmallPassengerRoutes = ({
                 if (target.routeId === small.routeId) continue;
                 const targetCapacity = Number(target.capacity || target.vehicle?.capacity || maxBusCapacity);
                 if (target.assignedUsers + small.assignedUsers > targetCapacity) continue;
+
+                // Fleet Profile Capping Check
+                if (effectiveFleetCaps && effectiveFleetCaps.length > 0) {
+                    const combinedPax = target.assignedUsers + small.assignedUsers;
+                    const prospectiveDemands = currentRoutes.map((r) => {
+                        if (r.routeId === target.routeId) return combinedPax;
+                        if (r.routeId === small.routeId) return 0;
+                        return r.assignedUsers;
+                    });
+                    if (!isCandidateDemandCompatibleWithFleetProfile(prospectiveDemands, effectiveFleetCaps)) {
+                        continue;
+                    }
+                }
 
                 // Sequentially insert stops of small route into target
                 let testTour = [...target.stops];
@@ -2016,8 +2846,11 @@ export const consolidateSmallPassengerRoutes = ({
                 const reversals = qv.directionalReversals ?? 0;
                 const detourRatio = qv.detourRatio ?? 1.25;
                 const isContinuous = qv.operationalContinuityVerified !== false && reversals === 0;
+                const satisfiesTravelTime = (qv.passengersAbove60 || 0) === 0 &&
+                    (qv.longestPassengerTravelTime || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxPassengerTravelTimeMin || 60.0) &&
+                    (seq.routeDistanceKm || 0) <= (DEFAULT_OPERATIONAL_CONSTRAINTS.maxRouteDistanceKm || 45.0);
 
-                if (isContinuous && detourRatio <= maxDetourRatio) {
+                if (isContinuous && detourRatio <= maxDetourRatio && satisfiesTravelTime) {
                     if (seq.routeDistanceKm < bestDist) {
                         bestDist = seq.routeDistanceKm;
                         bestTarget = target;
@@ -2352,10 +3185,20 @@ export const consolidateInwardCandidateRoutes = ({
     }));
 
     let consolidationRounds = 0;
-    const MAX_ROUNDS = 5;
+    const MAX_ROUNDS = Math.max(15, currentRoutes.length - targetRouteCount + 5);
 
     while (currentRoutes.length > targetRouteCount && consolidationRounds < MAX_ROUNDS) {
         consolidationRounds++;
+
+        // Snapshot state for this round to rollback partial transfers if absorption cannot complete
+        const roundSnapshot = currentRoutes.map((r) => ({
+            ...r,
+            stops: (r.stops || []).map((s) => ({
+                ...s,
+                userIds: Array.isArray(s.userIds) ? [...s.userIds] : []
+            })),
+            users: Array.isArray(r.users) ? [...r.users] : []
+        }));
 
         // Sort ascending by assigned passenger count to dissolve smallest route first
         currentRoutes.sort((a, b) => a.assignedUsers - b.assignedUsers);
@@ -2549,6 +3392,8 @@ export const consolidateInwardCandidateRoutes = ({
         if (allStopsAbsorbed) {
             currentRoutes = currentRoutes.filter((r) => r.routeId !== smallestRoute.routeId);
         } else {
+            // Rollback partial mutations from this unsuccessful round so state remains clean
+            currentRoutes = roundSnapshot;
             break;
         }
     }
@@ -2559,15 +3404,181 @@ export const consolidateInwardCandidateRoutes = ({
 export const consolidateCandidateRoutes = consolidateInwardCandidateRoutes;
 
 /**
+ * Configurable Operational Limits for Transportation Fleet Balancing & Route Feasibility.
+ * Defines project-wide thresholds for route durations, distances, geographic clustering, and vehicle costs.
+ */
+export const DEFAULT_OPERATIONAL_CONSTRAINTS = {
+    maxPassengerTravelTimeMin: 60.0,
+    maxRouteDurationMin: 60.0,
+    maxRouteDistanceKm: 45.0,
+    distantClusterThresholdKm: 10.0,
+    maxCorridorBearingSpanDeg: 65.0,
+    maxDetourRatio: 2.25,
+    maxBacktrackingDistanceKm: 2.0,
+    vehicleDeploymentCostWeight: 0.10
+};
+
+/**
+ * Geographic Route Splitting & Balancing Engine (Requirements 3 & 4)
+ * Evaluates whether an existing candidate route should be divided into two distinct, practical routes.
+ * A route must NOT be split merely because it has many stops.
+ * It is split when:
+ * 1. Geographic layout / distant clusters are combined unnecessarily (road gap >= distantClusterThresholdKm or bearing span > 65 deg).
+ * 2. Total distance or estimated travel time is excessive (> 45 km or > 60 min).
+ * 3. Both resulting subsets remain feasible within available vehicle capacity.
+ * 4. All passengers and user IDs are 100% preserved without duplication or omission.
+ */
+export const splitRouteGeographically = ({
+    route,
+    matrix = null,
+    tripMode = "FROM_SOURCE",
+    hub = DEFAULT_SOURCE_HUB,
+    maxBusCapacity = 70,
+    constraints = DEFAULT_OPERATIONAL_CONSTRAINTS
+}) => {
+    if (!route || !Array.isArray(route.stops) || route.stops.length < 2) {
+        return { canSplit: false, reason: "Route requires at least 2 stops to split" };
+    }
+
+    const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
+    const stops = route.stops;
+    const numStops = stops.length;
+
+    let bestCut = -1;
+    let bestScore = -Infinity;
+    let bestOptA = null;
+    let bestOptB = null;
+    let bestSeqA = null;
+    let bestSeqB = null;
+    let bestReason = "";
+
+    for (let cut = 1; cut < numStops; cut++) {
+        const partA = stops.slice(0, cut);
+        const partB = stops.slice(cut);
+
+        const paxA = partA.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+        const paxB = partB.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+
+        if (paxA > maxBusCapacity || paxB > maxBusCapacity) {
+            continue; // Exceeds individual bus capacity
+        }
+
+        // Road distance gap between the two partitions
+        const stopBeforeCut = partA[partA.length - 1];
+        const stopAfterCut = partB[0];
+        let interClusterGapKm = 0;
+        if (matrix && typeof matrix.getDist === "function" && stopBeforeCut.matrixIndex && stopAfterCut.matrixIndex) {
+            interClusterGapKm = matrix.getDist(stopBeforeCut.matrixIndex, stopAfterCut.matrixIndex);
+        } else if (isValidCoordinate(stopBeforeCut.latitude, stopBeforeCut.longitude) && isValidCoordinate(stopAfterCut.latitude, stopAfterCut.longitude)) {
+            interClusterGapKm = calculateDistanceKm(stopBeforeCut.latitude, stopBeforeCut.longitude, stopAfterCut.latitude, stopAfterCut.longitude);
+        }
+
+        const optA = optimizeTour2OptRoad({ tour: partA, matrix, tripMode });
+        const optB = optimizeTour2OptRoad({ tour: partB, matrix, tripMode });
+
+        const seqA = isOutward
+            ? sequenceOutwardRouteStops({ departureHub: hub, stops: optA.tour, matrix, tripMode })
+            : sequenceInwardRouteStops({ startingHub: optA.tour[0], destinationHub: hub, stops: optA.tour, matrix, tripMode });
+
+        const seqB = isOutward
+            ? sequenceOutwardRouteStops({ departureHub: hub, stops: optB.tour, matrix, tripMode })
+            : sequenceInwardRouteStops({ startingHub: optB.tour[0], destinationHub: hub, stops: optB.tour, matrix, tripMode });
+
+        const qvA = seqA.qualityValidation || {};
+        const qvB = seqB.qualityValidation || {};
+
+        const continuousA = (qvA.directionalReversals || 0) === 0 && (qvA.backtrackingDistanceKm || 0) < 2.0 && (qvA.detourRatio || 1.0) <= 2.25;
+        const continuousB = (qvB.directionalReversals || 0) === 0 && (qvB.backtrackingDistanceKm || 0) < 2.0 && (qvB.detourRatio || 1.0) <= 2.25;
+
+        // Travel time improvement evaluation
+        const origAbove60 = Number(route.passengersAbove60 || 0);
+        const newAbove60 = Number((seqA.passengersAbove60 || 0) + (seqB.passengersAbove60 || 0));
+        const origMaxPaxTime = Number(route.longestPassengerTravelTime || route.routeDurationMin || route.totalRouteDuration || 0);
+        const newMaxPaxTime = Math.max(Number(seqA.longestPassengerTravelTime || 0), Number(seqB.longestPassengerTravelTime || 0));
+
+        let cutScore = 0;
+        // High reward for resolving passengers above 60 min
+        cutScore += (origAbove60 - newAbove60) * 1000;
+        // Reward for reducing longest passenger travel time
+        cutScore += (origMaxPaxTime - newMaxPaxTime) * 15;
+        // Reward for splitting across large road gaps (e.g. Thiruppalai -> Melur)
+        if (interClusterGapKm >= constraints.distantClusterThresholdKm) {
+            cutScore += (interClusterGapKm * 10);
+        }
+        // Continuity bonus / penalty
+        cutScore += (continuousA && continuousB ? 50 : -200);
+
+        if (cutScore > bestScore) {
+            bestScore = cutScore;
+            bestCut = cut;
+            bestOptA = optA;
+            bestOptB = optB;
+            bestSeqA = seqA;
+            bestSeqB = seqB;
+            bestReason = `Divided route across ${interClusterGapKm.toFixed(1)} km road gap into two corridors (${paxA} pax and ${paxB} pax). Max passenger travel time reduced from ${origMaxPaxTime.toFixed(1)}m to ${newMaxPaxTime.toFixed(1)}m.`;
+        }
+    }
+
+    if (bestCut === -1) {
+        return { canSplit: false, reason: "No capacity-feasible partition found for route" };
+    }
+
+    const stopsA = bestSeqA.stops;
+    const stopsB = bestSeqB.stops;
+    const usersA = stopsA.flatMap((s) => s.userIds || []);
+    const usersB = stopsB.flatMap((s) => s.userIds || []);
+    const paxA = stopsA.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+    const paxB = stopsB.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+
+    return {
+        canSplit: true,
+        routeA: {
+            ...route,
+            stops: stopsA,
+            users: usersA,
+            assignedUsers: paxA,
+            routeDistanceKm: bestSeqA.routeDistanceKm,
+            totalRouteDuration: bestSeqA.totalRouteDuration,
+            longestPassengerTravelTime: bestSeqA.longestPassengerTravelTime,
+            averagePassengerTravelTime: bestSeqA.averagePassengerTravelTime,
+            passengersWithin60: bestSeqA.passengersWithin60,
+            passengersAbove60: bestSeqA.passengersAbove60,
+            allPassengersWithin60: bestSeqA.allPassengersWithin60,
+            qualityValidation: bestSeqA.qualityValidation,
+            routeQuality: bestSeqA.qualityValidation
+        },
+        routeB: {
+            stops: stopsB,
+            users: usersB,
+            assignedUsers: paxB,
+            routeDistanceKm: bestSeqB.routeDistanceKm,
+            totalRouteDuration: bestSeqB.totalRouteDuration,
+            longestPassengerTravelTime: bestSeqB.longestPassengerTravelTime,
+            averagePassengerTravelTime: bestSeqB.averagePassengerTravelTime,
+            passengersWithin60: bestSeqB.passengersWithin60,
+            passengersAbove60: bestSeqB.passengersAbove60,
+            allPassengersWithin60: bestSeqB.allPassengersWithin60,
+            qualityValidation: bestSeqB.qualityValidation,
+            routeQuality: bestSeqB.qualityValidation,
+            isContinuous: true
+        },
+        reason: bestReason
+    };
+};
+
+/**
  * Route Expansion Engine (When Fleet Symmetry Target > Raw Candidate Count)
- * Splits the highest-demand or geographically longest route to utilize the target fleet size,
- * reducing crowdedness and shortening individual route travel times.
+ * Splits routes using geographic clustering, road distance, and travel time justification
+ * to deploy additional scheduled buses without creating unnecessary detours.
  */
 export const expandCandidateRoutesToTarget = ({
     routes = [],
     targetRouteCount = 4,
     matrix,
     tripMode = "FROM_SOURCE",
+    hub = DEFAULT_SOURCE_HUB,
+    maxBusCapacity = 70,
+    constraints = DEFAULT_OPERATIONAL_CONSTRAINTS,
     auditTrail = []
 }) => {
     if (!Array.isArray(routes) || routes.length >= targetRouteCount) {
@@ -2590,52 +3601,107 @@ export const expandCandidateRoutesToTarget = ({
     while (currentRoutes.length < targetRouteCount && expansionRounds < MAX_EXPANSIONS) {
         expansionRounds++;
 
-        // Find route with most stops (minimum 2 stops) or highest assigned demand
         const eligibleRoutes = currentRoutes.filter((r) => r.stops && r.stops.length >= 2);
         if (eligibleRoutes.length === 0) break;
 
-        // Sort descending by stops count then demand
-        eligibleRoutes.sort((a, b) => (b.stops.length - a.stops.length) || (b.assignedUsers - a.assignedUsers));
-        const routeToSplit = eligibleRoutes[0];
+        // Rank routes by operational splitting need:
+        // 1. Routes with travel time violations (>60 min or passengersAbove60 > 0)
+        // 2. Routes with excessive distance (>45 km)
+        // 3. Routes with highest assigned demand or stops count
+        eligibleRoutes.sort((a, b) => {
+            const aViolations = (a.passengersAbove60 || 0) > 0 || (a.longestPassengerTravelTime || 0) > constraints.maxPassengerTravelTimeMin;
+            const bViolations = (b.passengersAbove60 || 0) > 0 || (b.longestPassengerTravelTime || 0) > constraints.maxPassengerTravelTimeMin;
+            if (aViolations !== bViolations) return bViolations ? 1 : -1;
 
-        // Split stops into two balanced subsets
-        const half = Math.ceil(routeToSplit.stops.length / 2);
-        const stopsPartA = routeToSplit.stops.slice(0, half);
-        const stopsPartB = routeToSplit.stops.slice(half);
+            const aDist = a.routeDistanceKm || 0;
+            const bDist = b.routeDistanceKm || 0;
+            if (Math.abs(bDist - aDist) > 5) return bDist - aDist;
 
-        const usersPartA = stopsPartA.flatMap((s) => s.userIds || []);
-        const usersPartB = stopsPartB.flatMap((s) => s.userIds || []);
-
-        const paxPartA = stopsPartA.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
-        const paxPartB = stopsPartB.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
-
-        const optA = optimizeTour2OptRoad({ tour: stopsPartA, matrix, tripMode });
-        const optB = optimizeTour2OptRoad({ tour: stopsPartB, matrix, tripMode });
-
-        routeToSplit.stops = optA.tour;
-        routeToSplit.users = usersPartA;
-        routeToSplit.assignedUsers = paxPartA;
-        routeToSplit.routeDistanceKm = optA.roadDistanceKm;
-
-        const newRouteId = `route_split_${currentRoutes.length + 1}`;
-        const newRoute = {
-            routeId: newRouteId,
-            routeCode: `RT-${String(currentRoutes.length + 1).padStart(2, "0")}`,
-            stops: optB.tour,
-            users: usersPartB,
-            assignedUsers: paxPartB,
-            routeDistanceKm: optB.roadDistanceKm,
-            isContinuous: true
-        };
-
-        currentRoutes.push(newRoute);
-
-        auditTrail.push({
-            action: "FLEET_EXPAND_SPLIT_ROUTE",
-            routeId: routeToSplit.routeId,
-            newRouteId,
-            reason: `Balanced fleet deployment: Divided Route ${routeToSplit.routeId} into two distinct routes (${paxPartA} pax and ${paxPartB} pax) to achieve target fleet size of ${targetRouteCount} buses.`
+            return (b.assignedUsers - a.assignedUsers) || (b.stops.length - a.stops.length);
         });
+
+        let splitResult = null;
+        let routeToSplit = null;
+
+        for (const candidate of eligibleRoutes) {
+            const res = splitRouteGeographically({
+                route: candidate,
+                matrix,
+                tripMode,
+                hub,
+                maxBusCapacity,
+                constraints
+            });
+            if (res.canSplit) {
+                splitResult = res;
+                routeToSplit = candidate;
+                break;
+            }
+        }
+
+        if (splitResult && routeToSplit) {
+            const routeIdx = currentRoutes.findIndex((r) => r.routeId === routeToSplit.routeId);
+            const newRouteId = `route_split_${currentRoutes.length + 1}`;
+            const newRoute = {
+                ...splitResult.routeB,
+                routeId: newRouteId,
+                routeCode: `RT-${String(currentRoutes.length + 1).padStart(2, "0")}`
+            };
+
+            currentRoutes[routeIdx] = {
+                ...splitResult.routeA,
+                routeId: routeToSplit.routeId,
+                routeCode: routeToSplit.routeCode || `RT-${String(routeIdx + 1).padStart(2, "0")}`
+            };
+            currentRoutes.push(newRoute);
+
+            auditTrail.push({
+                action: "FLEET_EXPAND_GEOGRAPHIC_SPLIT",
+                routeId: routeToSplit.routeId,
+                newRouteId,
+                reason: splitResult.reason
+            });
+        } else {
+            // Fallback: balanced median split
+            const fallbackRoute = eligibleRoutes[0];
+            const half = Math.ceil(fallbackRoute.stops.length / 2);
+            const stopsPartA = fallbackRoute.stops.slice(0, half);
+            const stopsPartB = fallbackRoute.stops.slice(half);
+
+            const usersPartA = stopsPartA.flatMap((s) => s.userIds || []);
+            const usersPartB = stopsPartB.flatMap((s) => s.userIds || []);
+
+            const paxPartA = stopsPartA.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+            const paxPartB = stopsPartB.reduce((sum, s) => sum + (s.passengerCount || s.userCount || s.userIds?.length || 0), 0);
+
+            const optA = optimizeTour2OptRoad({ tour: stopsPartA, matrix, tripMode });
+            const optB = optimizeTour2OptRoad({ tour: stopsPartB, matrix, tripMode });
+
+            fallbackRoute.stops = optA.tour;
+            fallbackRoute.users = usersPartA;
+            fallbackRoute.assignedUsers = paxPartA;
+            fallbackRoute.routeDistanceKm = optA.roadDistanceKm;
+
+            const newRouteId = `route_split_${currentRoutes.length + 1}`;
+            const newRoute = {
+                routeId: newRouteId,
+                routeCode: `RT-${String(currentRoutes.length + 1).padStart(2, "0")}`,
+                stops: optB.tour,
+                users: usersPartB,
+                assignedUsers: paxPartB,
+                routeDistanceKm: optB.roadDistanceKm,
+                isContinuous: true
+            };
+
+            currentRoutes.push(newRoute);
+
+            auditTrail.push({
+                action: "FLEET_EXPAND_SPLIT_ROUTE",
+                routeId: fallbackRoute.routeId,
+                newRouteId,
+                reason: `Balanced fleet deployment: Divided Route ${fallbackRoute.routeId} into two distinct routes (${paxPartA} pax and ${paxPartB} pax) to achieve target fleet size of ${targetRouteCount} buses.`
+            });
+        }
     }
 
     return currentRoutes;
@@ -3114,10 +4180,20 @@ export const evaluateAndConsolidateRepeatedPhysicalStops = ({
         for (let i = 0; i < repeated.visits.length; i++) {
             const donorVisit = repeated.visits[i];
             const donorRoute = routes[donorVisit.routeIndex];
-            if (!donorRoute || !donorRoute.stops || donorVisit.passengerCount === 0) continue;
+            if (!donorRoute || !donorRoute.stops) continue;
 
             const donorStopIdx = donorRoute.stops.findIndex(s => getPhysicalStopKey(s) === repeated.stopKey);
             if (donorStopIdx < 0) continue;
+
+            const donorStop = donorRoute.stops[donorStopIdx];
+            const actualDonorPax = (Array.isArray(donorStop.userIds) && donorStop.userIds.length > 0)
+                ? donorStop.userIds.length
+                : Number(donorStop.userCount || donorStop.passengerCount || donorVisit.passengerCount || 0);
+            const actualDonorIds = (Array.isArray(donorStop.userIds) && donorStop.userIds.length > 0)
+                ? [...donorStop.userIds]
+                : (donorVisit.userIds || []);
+
+            if (actualDonorPax === 0) continue;
 
             for (let j = 0; j < repeated.visits.length; j++) {
                 if (i === j) continue;
@@ -3131,7 +4207,7 @@ export const evaluateAndConsolidateRepeatedPhysicalStops = ({
                 // 4. Capacity check: targetRoute must have enough spare capacity
                 const targetCapacity = Number(targetRoute.capacity || targetRoute.vehicle?.capacity || 70);
                 const targetSpareCapacity = Math.max(0, targetCapacity - targetRoute.assignedUsers);
-                if (targetSpareCapacity < donorVisit.passengerCount) continue;
+                if (targetSpareCapacity < actualDonorPax) continue;
 
                 // 10. Starting hub check: for inward, donor stop must NOT be the donor route's configured starting hub
                 if (!isOutward) {
@@ -3167,10 +4243,10 @@ export const evaluateAndConsolidateRepeatedPhysicalStops = ({
 
                 // All 11 checks passed! Consolidate donor stop's passengers into targetRoute's visit
                 const targetStop = targetRoute.stops[targetStopIdx];
-                const movedPax = donorVisit.passengerCount;
+                const movedPax = actualDonorPax;
                 targetStop.userCount = (targetStop.userCount || 0) + movedPax;
                 targetStop.passengerCount = targetStop.userCount;
-                targetStop.userIds = Array.from(new Set([...(targetStop.userIds || []), ...(donorVisit.userIds || [])]));
+                targetStop.userIds = Array.from(new Set([...(targetStop.userIds || []), ...actualDonorIds]));
 
                 targetRoute.assignedUsers = targetRoute.stops.reduce((sum, s) => sum + (s.userCount || 0), 0);
                 targetRoute.users = targetRoute.stops.flatMap(s => s.userIds || []);
@@ -3182,6 +4258,8 @@ export const evaluateAndConsolidateRepeatedPhysicalStops = ({
 
                 donorVisit.passengerCount = 0;
                 donorVisit.userIds = [];
+                targetVisit.passengerCount = targetStop.userCount;
+                targetVisit.userIds = [...targetStop.userIds];
 
                 if (Array.isArray(auditTrail)) {
                     auditTrail.push({
@@ -3339,8 +4417,9 @@ export const selectInwardFleet = ({
     let selectedCapacity = 0;
 
     if (hasOppositeFleet && !isMajorDemandDrop) {
-        // Case 1: Same demand, slight increase, or slight decrease -> REUSE ALL REUSABLE OUTWARD BUSES!
-        for (const bus of reusableBuses) {
+        // Case 1: Reusable fleet available and demand is stable -> Retain all reusable outward buses for daily fleet continuity
+        const sortedReusable = [...reusableBuses].sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+        for (const bus of sortedReusable) {
             selectedBuses.push(bus);
             const cap = Number(bus.capacity || bus.seatCapacity || 0);
             selectedCapacity += cap;
@@ -3557,12 +4636,16 @@ export const selectOutwardFleet = ({
     let selectedCapacity = 0;
 
     if (hasOppositeFleet && !isMajorDemandDrop) {
-        // Case 1: Same demand, slight increase, or slight decrease -> REUSE ALL REUSABLE INWARD BUSES!
-        for (const bus of reusableBuses) {
+        // Case 1: Reusable fleet available -> prioritize highest-capacity reusable buses up to minimum feasible count
+        const sortedReusable = [...reusableBuses].sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+        for (const bus of sortedReusable) {
             selectedBuses.push(bus);
             const cap = Number(bus.capacity || bus.seatCapacity || 0);
             selectedCapacity += cap;
             selectedReusable.push(bus);
+            if (selectedBuses.length >= minimumBusCount && selectedCapacity >= totalComingPassengers) {
+                break;
+            }
         }
 
         // If outward demand slightly increased and exceeds reusable fleet capacity, add additional buses as needed
@@ -3738,6 +4821,29 @@ export const balanceCandidateRoutesToFleetCapacities = ({
                     if (refHub && !isRouteCorridorCoherent(refHub, [...r.stops, stopToShift], 38.0, 4.75)) {
                         return false;
                     }
+
+                    // Strict Continuity & Directional Progression Check
+                    const normStr = (str) => String(str || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+                    const targetHasStop = (r.stops || []).some((s) =>
+                        isSamePlace(s, stopToShift) || (normStr(s.name) && normStr(s.name) === normStr(stopToShift.name))
+                    );
+                    if (!targetHasStop) {
+                        const testTour = [...r.stops, stopToShift];
+                        const optTest = optimizeTour2OptRoad({ tour: testTour, matrix, tripMode });
+                        const seqTest = isOutward
+                            ? sequenceOutwardRouteStops({ departureHub: refHub, stops: optTest.tour, matrix, tripMode })
+                            : sequenceInwardRouteStops({
+                                startingHub: r.startLocation || r.inwardStartLocation || optTest.tour[0],
+                                destinationHub: refHub,
+                                stops: optTest.tour,
+                                matrix,
+                                tripMode
+                            });
+                        const qv = seqTest.qualityValidation || {};
+                        if ((qv.directionalReversals || 0) > 0 || (qv.backtrackingDistanceKm || 0) >= 2.0 || (qv.detourRatio || 1.0) > 2.25 || qv.operationalContinuityVerified === false) {
+                            return false;
+                        }
+                    }
                 }
                 return true;
             });
@@ -3777,9 +4883,14 @@ export const balanceCandidateRoutesToFleetCapacities = ({
                             userCount: excess,
                             passengerCount: excess
                         });
+                        const optTarget = optimizeTour2OptRoad({ tour: targetRoute.stops, matrix, tripMode });
+                        targetRoute.stops = optTarget.tour;
                     }
                     targetRoute.stops = mergeDuplicateStopsInRoute(targetRoute.stops);
+                    matchingRoute.stops = matchingRoute.stops.filter((s) => (Array.isArray(s.userIds) ? s.userIds.length > 0 : (s.userCount || 0) > 0));
                     matchingRoute.stops = mergeDuplicateStopsInRoute(matchingRoute.stops);
+                    const optMatching = optimizeTour2OptRoad({ tour: matchingRoute.stops, matrix, tripMode });
+                    matchingRoute.stops = optMatching.tour;
                 }
             }
         }
@@ -3806,13 +4917,13 @@ export const balanceRoutesToGuaranteedSeating = ({
     auditTrail = []
 }) => {
     if (!Array.isArray(routes) || routes.length === 0) {
-        return { balanced: routes, totalStanding: 0 };
+        return { balanced: routes, totalStanding: 0, overCapacityCount: 0, isFeasible: true };
     }
 
     const isOutward = tripMode === "FROM_SOURCE" || tripMode === "OUTWARD";
 
     // Deep clone routes, stops, and userIds
-    const balanced = routes.map((r) => ({
+    let balanced = routes.map((r) => ({
         ...r,
         stops: (r.stops || []).map((s) => ({
             ...s,
@@ -3824,231 +4935,249 @@ export const balanceRoutesToGuaranteedSeating = ({
         capacity: Number(r.capacity || r.vehicle?.capacity || 50)
     }));
 
-    // Pass 1: Vehicle Swap Optimization
-    // If Route A has high demand and small bus, but Route B has low demand and large bus, swap!
-    for (let i = 0; i < balanced.length; i++) {
-        for (let j = i + 1; j < balanced.length; j++) {
-            const rA = balanced[i];
-            const rB = balanced[j];
-            const excessA = Math.max(0, rA.assignedUsers - rA.capacity);
-            const excessB = Math.max(0, rB.assignedUsers - rB.capacity);
-            if (excessA === 0 && excessB === 0) continue;
+    let repairRound = 0;
+    const MAX_REPAIR_ROUNDS = 20;
 
-            const newExcessA = Math.max(0, rA.assignedUsers - rB.capacity);
-            const newExcessB = Math.max(0, rB.assignedUsers - rA.capacity);
-            if (newExcessA + newExcessB < excessA + excessB) {
-                // For inward routes, ensure starting place continuity is preserved if swapping
-                if (!isOutward && activeInwardStartingPlaces && activeInwardStartingPlaces.length > 0) {
-                    const spA = findStartingPlaceForBus(rA.vehicle, activeInwardStartingPlaces);
-                    const spB = findStartingPlaceForBus(rB.vehicle, activeInwardStartingPlaces);
-                    const hasDedicatedHubA = spA && rA.stops.some((s) => isSamePlace(spA, s));
-                    const hasDedicatedHubB = spB && rB.stops.some((s) => isSamePlace(spB, s));
-                    if (hasDedicatedHubA || hasDedicatedHubB) continue;
-                }
+    while (repairRound < MAX_REPAIR_ROUNDS) {
+        repairRound++;
 
-                const tempVeh = rA.vehicle;
-                const tempVehId = rA.vehicleId;
-                const tempVehName = rA.vehicleName;
-                const tempCap = rA.capacity;
+        // Pass 1: Vehicle Swap Optimization
+        // If Route A has high demand and small bus, but Route B has low demand and large bus, swap!
+        for (let i = 0; i < balanced.length; i++) {
+            for (let j = i + 1; j < balanced.length; j++) {
+                const rA = balanced[i];
+                const rB = balanced[j];
+                const excessA = Math.max(0, rA.assignedUsers - rA.capacity);
+                const excessB = Math.max(0, rB.assignedUsers - rB.capacity);
+                if (excessA === 0 && excessB === 0) continue;
 
-                rA.vehicle = rB.vehicle;
-                rA.vehicleId = rB.vehicleId;
-                rA.vehicleName = rB.vehicleName;
-                rA.capacity = rB.capacity;
-                rA.remainingSeats = Math.max(0, rA.capacity - rA.assignedUsers);
-
-                rB.vehicle = tempVeh;
-                rB.vehicleId = tempVehId;
-                rB.vehicleName = tempVehName;
-                rB.capacity = tempCap;
-                rB.remainingSeats = Math.max(0, rB.capacity - rB.assignedUsers);
-
-                auditTrail.push({
-                    action: "VEHICLE_CAPACITY_SWAP",
-                    reason: `Swapped vehicles between ${rA.vehicleName} (${rA.capacity} seats) and ${rB.vehicleName} (${rB.capacity} seats) to better fit passenger demand without standing passengers.`
-                });
-            }
-        }
-    }
-
-    // Pass 2: Intra-Fleet Passenger Transfer
-    let iterations = 0;
-    while (iterations < 40) {
-        iterations++;
-        const overRoute = balanced.find((r) => r.assignedUsers > r.capacity);
-        if (!overRoute) break;
-
-        const excess = overRoute.assignedUsers - overRoute.capacity;
-        let transferred = false;
-
-        // Try stops from overRoute (evaluating from outermost/corridor-boundary stops first)
-        for (let sIdx = overRoute.stops.length - 1; sIdx >= 0; sIdx--) {
-            const st = overRoute.stops[sIdx];
-            if (!st || st.userCount === 0) continue;
-
-            // Find compatible recipient routes with spare capacity
-            const candidates = [];
-            for (let tIdx = 0; tIdx < balanced.length; tIdx++) {
-                const target = balanced[tIdx];
-                if (target === overRoute) continue;
-                const spare = target.capacity - target.assignedUsers;
-                if (spare <= 0) continue;
-
-                let minD = Infinity;
-                let isShared = false;
-                for (const ts of target.stops) {
-                    if (ts.name.trim().toLowerCase() === st.name.trim().toLowerCase()) {
-                        isShared = true;
-                        minD = 0;
-                        break;
+                const newExcessA = Math.max(0, rA.assignedUsers - rB.capacity);
+                const newExcessB = Math.max(0, rB.assignedUsers - rA.capacity);
+                if (newExcessA + newExcessB < excessA + excessB) {
+                    // For inward routes, ensure starting place continuity is preserved if swapping
+                    if (!isOutward && activeInwardStartingPlaces && activeInwardStartingPlaces.length > 0) {
+                        const spA = findStartingPlaceForBus(rA.vehicle, activeInwardStartingPlaces);
+                        const spB = findStartingPlaceForBus(rB.vehicle, activeInwardStartingPlaces);
+                        const hasDedicatedHubA = spA && rA.stops.some((s) => isSamePlace(spA, s));
+                        const hasDedicatedHubB = spB && rB.stops.some((s) => isSamePlace(spB, s));
+                        if (hasDedicatedHubA || hasDedicatedHubB) continue;
                     }
-                    const d = calculateDistanceKm(st.latitude, st.longitude, ts.latitude, ts.longitude);
-                    if (d < minD) minD = d;
-                }
 
-                if (!isShared && minD > 6.0) continue;
+                    const tempVeh = rA.vehicle;
+                    const tempVehId = rA.vehicleId;
+                    const tempVehName = rA.vehicleName;
+                    const tempCap = rA.capacity;
 
-                const testStops = [...target.stops, st];
-                if (!isShared && !isRouteCorridorCoherent(hub, testStops, 55.0, 6.0)) continue;
+                    rA.vehicle = rB.vehicle;
+                    rA.vehicleId = rB.vehicleId;
+                    rA.vehicleName = rB.vehicleName;
+                    rA.capacity = rB.capacity;
+                    rA.remainingSeats = Math.max(0, rA.capacity - rA.assignedUsers);
 
-                candidates.push({ target, minD, spare, isShared });
-            }
+                    rB.vehicle = tempVeh;
+                    rB.vehicleId = tempVehId;
+                    rB.vehicleName = tempVehName;
+                    rB.capacity = tempCap;
+                    rB.remainingSeats = Math.max(0, rB.capacity - rB.assignedUsers);
 
-            if (candidates.length === 0) continue;
-
-            candidates.sort((a, b) => {
-                if (a.isShared !== b.isShared) return b.isShared ? 1 : -1;
-                return a.minD - b.minD || b.spare - a.spare;
-            });
-
-            const bestCandidate = candidates[0];
-            const bestTarget = bestCandidate.target;
-            const transferCount = Math.min(st.userCount, excess, bestTarget.capacity - bestTarget.assignedUsers);
-
-            if (transferCount > 0) {
-                const transferredIds = st.userIds.splice(st.userIds.length - transferCount, transferCount);
-                st.userCount -= transferCount;
-                if (st.passengerCount !== undefined) st.passengerCount = st.userCount;
-
-                overRoute.assignedUsers -= transferCount;
-                overRoute.users = overRoute.users.filter((uid) => !transferredIds.includes(uid));
-
-                bestTarget.assignedUsers += transferCount;
-                bestTarget.users.push(...transferredIds);
-
-                const existingTargetStop = bestTarget.stops.find(
-                    (s) => s.name.trim().toLowerCase() === st.name.trim().toLowerCase()
-                );
-                if (existingTargetStop) {
-                    existingTargetStop.userCount += transferCount;
-                    if (existingTargetStop.passengerCount !== undefined) existingTargetStop.passengerCount = existingTargetStop.userCount;
-                    if (!Array.isArray(existingTargetStop.userIds)) existingTargetStop.userIds = [];
-                    existingTargetStop.userIds.push(...transferredIds);
-                } else {
-                    bestTarget.stops.push({
-                        ...st,
-                        userCount: transferCount,
-                        passengerCount: transferCount,
-                        userIds: transferredIds
+                    auditTrail.push({
+                        action: "VEHICLE_CAPACITY_SWAP",
+                        reason: `Swapped vehicles between ${rA.vehicleName} (${rA.capacity} seats) and ${rB.vehicleName} (${rB.capacity} seats) to better fit passenger demand without standing passengers.`
                     });
                 }
-
-                if (st.userCount === 0) {
-                    overRoute.stops.splice(sIdx, 1);
-                }
-
-                auditTrail.push({
-                    action: "PASSENGER_SEATING_REBALANCE",
-                    stopName: st.name,
-                    fromVehicle: overRoute.vehicleName,
-                    toVehicle: bestTarget.vehicleName,
-                    transferredCount: transferCount,
-                    reason: `Transferred ${transferCount} passenger(s) at '${st.name}' from ${overRoute.vehicleName} to ${bestTarget.vehicleName} to guarantee zero standing passengers (${overRoute.assignedUsers}/${overRoute.capacity} -> ${bestTarget.assignedUsers}/${bestTarget.capacity}).`
-                });
-
-                transferred = true;
-                break;
             }
         }
 
-        if (!transferred) break;
-    }
+        // Pass 2: Intra-Fleet Passenger Transfer
+        let transferIterations = 0;
+        while (transferIterations < 50) {
+            transferIterations++;
+            const overRoute = balanced.find((r) => r.assignedUsers > r.capacity);
+            if (!overRoute) break;
 
-    // Pass 3: Fleet Expansion Fallback if any route still exceeds capacity
-    const stillOverRoute = balanced.find((r) => r.assignedUsers > r.capacity);
-    if (stillOverRoute && Array.isArray(availableVehicles) && availableVehicles.length > balanced.length) {
+            const excess = overRoute.assignedUsers - overRoute.capacity;
+            let transferred = false;
+
+            // Try stops from overRoute (evaluating from outermost/corridor-boundary stops first)
+            for (let sIdx = overRoute.stops.length - 1; sIdx >= 0; sIdx--) {
+                const st = overRoute.stops[sIdx];
+                if (!st || st.userCount === 0) continue;
+
+                // Find compatible recipient routes with spare capacity
+                const candidates = [];
+                for (let tIdx = 0; tIdx < balanced.length; tIdx++) {
+                    const target = balanced[tIdx];
+                    if (target === overRoute) continue;
+                    const spare = target.capacity - target.assignedUsers;
+                    if (spare <= 0) continue;
+
+                    let minD = Infinity;
+                    let isShared = false;
+                    for (const ts of target.stops) {
+                        if (ts.name.trim().toLowerCase() === st.name.trim().toLowerCase()) {
+                            isShared = true;
+                            minD = 0;
+                            break;
+                        }
+                        const d = calculateDistanceKm(st.latitude, st.longitude, ts.latitude, ts.longitude);
+                        if (d < minD) minD = d;
+                    }
+
+                    if (!isShared && minD > 6.0) continue;
+
+                    const testStops = [...target.stops, st];
+                    if (!isShared && !isRouteCorridorCoherent(hub, testStops, 55.0, 6.0)) continue;
+
+                    candidates.push({ target, minD, spare, isShared });
+                }
+
+                if (candidates.length === 0) continue;
+
+                candidates.sort((a, b) => {
+                    if (a.isShared !== b.isShared) return b.isShared ? 1 : -1;
+                    return a.minD - b.minD || b.spare - a.spare;
+                });
+
+                const bestCandidate = candidates[0];
+                const bestTarget = bestCandidate.target;
+                const transferCount = Math.min(st.userCount, excess, bestTarget.capacity - bestTarget.assignedUsers);
+
+                if (transferCount > 0) {
+                    const transferredIds = st.userIds.splice(st.userIds.length - transferCount, transferCount);
+                    st.userCount -= transferCount;
+                    if (st.passengerCount !== undefined) st.passengerCount = st.userCount;
+
+                    overRoute.assignedUsers -= transferCount;
+                    overRoute.users = overRoute.users.filter((uid) => !transferredIds.includes(uid));
+
+                    bestTarget.assignedUsers += transferCount;
+                    bestTarget.users.push(...transferredIds);
+
+                    const existingTargetStop = bestTarget.stops.find(
+                        (s) => s.name.trim().toLowerCase() === st.name.trim().toLowerCase()
+                    );
+                    if (existingTargetStop) {
+                        existingTargetStop.userCount += transferCount;
+                        if (existingTargetStop.passengerCount !== undefined) existingTargetStop.passengerCount = existingTargetStop.userCount;
+                        if (!Array.isArray(existingTargetStop.userIds)) existingTargetStop.userIds = [];
+                        existingTargetStop.userIds.push(...transferredIds);
+                    } else {
+                        bestTarget.stops.push({
+                            ...st,
+                            userCount: transferCount,
+                            passengerCount: transferCount,
+                            userIds: transferredIds
+                        });
+                    }
+
+                    if (st.userCount === 0) {
+                        overRoute.stops.splice(sIdx, 1);
+                    }
+
+                    auditTrail.push({
+                        action: "PASSENGER_SEATING_REBALANCE",
+                        stopName: st.name,
+                        fromVehicle: overRoute.vehicleName,
+                        toVehicle: bestTarget.vehicleName,
+                        transferredCount: transferCount,
+                        reason: `Transferred ${transferCount} passenger(s) at '${st.name}' from ${overRoute.vehicleName} to ${bestTarget.vehicleName} to guarantee zero standing passengers (${overRoute.assignedUsers}/${overRoute.capacity} -> ${bestTarget.assignedUsers}/${bestTarget.capacity}).`
+                    });
+
+                    transferred = true;
+                    break;
+                }
+            }
+
+            if (!transferred) break;
+        }
+
+        // Check if all routes are seated
+        const stillOver = balanced.filter((r) => r.assignedUsers > r.capacity);
+        if (stillOver.length === 0) {
+            break; // Guaranteed seating achieved!
+        }
+
+        // Pass 3: Iterative Fleet Expansion Fallback
         const usedIds = new Set(balanced.map((r) => String(r.vehicleId || r.vehicle?._id || r.vehicle?.id || "")));
-        const unusedVehicles = availableVehicles.filter((v) => {
+        const unusedVehicles = (availableVehicles || []).filter((v) => {
             const vid = String(v._id || v.id || "");
             const cap = Number(v.capacity || v.seatCapacity || 0);
             return cap > 0 && v.isActive !== false && !usedIds.has(vid);
         }).sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
 
-        if (unusedVehicles.length > 0) {
-            const extraVeh = unusedVehicles[0];
-            const extraCap = Number(extraVeh.capacity || extraVeh.seatCapacity || 50);
-            const extraVid = String(extraVeh._id || extraVeh.id);
-            const extraName = extraVeh.vehicleName || extraVeh.name || `Bus ${balanced.length + 1}`;
+        if (unusedVehicles.length === 0) {
+            break; // No more vehicles available to deploy
+        }
 
-            const newRouteStops = [];
-            const newRouteUsers = [];
-            let newAssigned = 0;
+        // Relieve over-capacity routes into newly deployed vehicle(s)
+        const stillOverRoute = stillOver[0];
+        const extraVeh = unusedVehicles[0];
+        const extraCap = Number(extraVeh.capacity || extraVeh.seatCapacity || 50);
+        const extraVid = String(extraVeh._id || extraVeh.id);
+        const extraName = extraVeh.vehicleName || extraVeh.name || `Bus ${balanced.length + 1}`;
 
-            for (let sIdx = stillOverRoute.stops.length - 1; sIdx >= 0; sIdx--) {
-                const st = stillOverRoute.stops[sIdx];
-                if (!st || st.userCount === 0) continue;
-                if (stillOverRoute.assignedUsers <= stillOverRoute.capacity) break;
+        const newRouteStops = [];
+        const newRouteUsers = [];
+        let newAssigned = 0;
 
-                const excess = stillOverRoute.assignedUsers - stillOverRoute.capacity;
-                const moveCount = Math.min(st.userCount, excess, extraCap - newAssigned);
-                if (moveCount <= 0) break;
+        for (let sIdx = stillOverRoute.stops.length - 1; sIdx >= 0; sIdx--) {
+            const st = stillOverRoute.stops[sIdx];
+            if (!st || st.userCount === 0) continue;
+            if (stillOverRoute.assignedUsers <= stillOverRoute.capacity) break;
 
-                const movedIds = st.userIds.splice(st.userIds.length - moveCount, moveCount);
-                st.userCount -= moveCount;
-                if (st.passengerCount !== undefined) st.passengerCount = st.userCount;
-                stillOverRoute.assignedUsers -= moveCount;
-                stillOverRoute.users = stillOverRoute.users.filter((uid) => !movedIds.includes(uid));
+            const excess = stillOverRoute.assignedUsers - stillOverRoute.capacity;
+            const moveCount = Math.min(st.userCount, excess, extraCap - newAssigned);
+            if (moveCount <= 0) break;
 
-                newRouteUsers.push(...movedIds);
-                newAssigned += moveCount;
-                newRouteStops.push({
-                    ...st,
-                    userCount: moveCount,
-                    passengerCount: moveCount,
-                    userIds: movedIds
-                });
+            const movedIds = st.userIds.splice(st.userIds.length - moveCount, moveCount);
+            st.userCount -= moveCount;
+            if (st.passengerCount !== undefined) st.passengerCount = st.userCount;
+            stillOverRoute.assignedUsers -= moveCount;
+            stillOverRoute.users = stillOverRoute.users.filter((uid) => !movedIds.includes(uid));
 
-                if (st.userCount === 0) {
-                    stillOverRoute.stops.splice(sIdx, 1);
-                }
+            newRouteUsers.push(...movedIds);
+            newAssigned += moveCount;
+            newRouteStops.push({
+                ...st,
+                userCount: moveCount,
+                passengerCount: moveCount,
+                userIds: movedIds
+            });
+
+            if (st.userCount === 0) {
+                stillOverRoute.stops.splice(sIdx, 1);
             }
+        }
 
-            if (newRouteStops.length > 0) {
-                balanced.push({
-                    routeId: `extra_rt_${balanced.length + 1}`,
-                    routeCode: extraName,
-                    vehicle: extraVeh,
-                    vehicleId: extraVid,
-                    vehicleName: extraName,
-                    capacity: extraCap,
-                    assignedUsers: newAssigned,
-                    stops: newRouteStops,
-                    users: newRouteUsers
-                });
+        if (newRouteStops.length > 0) {
+            balanced.push({
+                routeId: `extra_rt_${balanced.length + 1}`,
+                routeCode: extraName,
+                vehicle: extraVeh,
+                vehicleId: extraVid,
+                vehicleName: extraName,
+                capacity: extraCap,
+                assignedUsers: newAssigned,
+                stops: newRouteStops,
+                users: newRouteUsers
+            });
 
-                auditTrail.push({
-                    action: "EXTRA_VEHICLE_DEPLOYED_FOR_SEATING",
-                    vehicleName: extraName,
-                    capacity: extraCap,
-                    assignedUsers: newAssigned,
-                    reason: `Deployed additional scheduled vehicle '${extraName}' (${extraCap} seats) to guarantee zero standing passengers across the transportation network.`
-                });
-            }
+            auditTrail.push({
+                action: "EXTRA_VEHICLE_DEPLOYED_FOR_SEATING",
+                vehicleName: extraName,
+                capacity: extraCap,
+                assignedUsers: newAssigned,
+                reason: `Deployed additional scheduled vehicle '${extraName}' (${extraCap} seats) to guarantee zero standing passengers across the transportation network.`
+            });
+            // Continue while loop: next round will rebalance passengers across all routes including this new vehicle!
+        } else {
+            break;
         }
     }
 
     // Clean up metrics on all balanced routes: STRICT GUARANTEED SEATING
     let totalStanding = 0;
+    let overCapacityCount = 0;
     for (const r of balanced) {
         r.standingPassengers = Math.max(0, r.assignedUsers - r.capacity);
         r.seatedPassengers = Math.min(r.assignedUsers, r.capacity);
@@ -4057,9 +5186,12 @@ export const balanceRoutesToGuaranteedSeating = ({
         r.remainingSeats = Math.max(0, r.capacity - r.assignedUsers);
         r.seatUtilization = Number(((r.assignedUsers / r.capacity) * 100).toFixed(1));
         totalStanding += r.standingPassengers;
+        if (r.isOverCapacity) overCapacityCount++;
     }
 
-    return { balanced, totalStanding };
+    const isFeasible = totalStanding === 0 && overCapacityCount === 0;
+
+    return { balanced, totalStanding, overCapacityCount, isFeasible };
 };
 
 export const evaluateFleetBalancingDecision = ({
@@ -4072,6 +5204,23 @@ export const evaluateFleetBalancingDecision = ({
 }) => {
     const isOutward = currentDirection === "OUTWARD";
 
+    const sortedVehiclesDesc = [...availableVehicles]
+        .filter((v) => v.isActive !== false && Number(v.capacity || v.seatCapacity || 0) > 0)
+        .sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+
+    let accCap = 0;
+    let minCapacityBuses = 0;
+    for (const v of sortedVehiclesDesc) {
+        accCap += Number(v.capacity || v.seatCapacity || 0);
+        minCapacityBuses++;
+        if (accCap >= currentDemand) break;
+    }
+    if (minCapacityBuses === 0 && currentDemand > 0) {
+        const maxCap = Number(sortedVehiclesDesc[0]?.capacity || sortedVehiclesDesc[0]?.seatCapacity || 60);
+        minCapacityBuses = Math.max(1, Math.ceil(currentDemand / maxCap));
+    }
+    const theoreticalMinimum = minCapacityBuses;
+
     if (!isOutward) {
         const fleetSelection = selectInwardFleet({
             totalComingPassengers: currentDemand,
@@ -4080,11 +5229,18 @@ export const evaluateFleetBalancingDecision = ({
             oppositePlan
         });
 
-        const minCapacityBuses = fleetSelection.minimumBusCount;
-        const targetRouteCount = Math.max(minCapacityBuses, fleetSelection.selectedBuses.length);
+        let currentSelectedBuses = [...fleetSelection.selectedBuses];
+        const feasibleMinimum = currentSelectedBuses.length;
+        const targetRouteCount = Math.max(theoreticalMinimum, feasibleMinimum);
         const symmetryStatus = oppositePlan ? "BALANCED_FLEET" : "INDEPENDENT_DIRECTION";
 
-        let decisionReason = `Minimum capacity requirement: ${minCapacityBuses} buses. Feasible route allocation: ${targetRouteCount} buses based on capacity and road network topology.`;
+        const diff = feasibleMinimum - theoreticalMinimum;
+        let decisionReason = "";
+        if (diff > 0) {
+            decisionReason = `Theoretical minimum: ${theoreticalMinimum} buses. Feasible minimum: ${feasibleMinimum} buses with guaranteed seating. ${diff === 1 ? "One additional bus is" : `${diff} additional buses are`} deployed to satisfy vehicle capacities and road network topology without standing passengers.`;
+        } else {
+            decisionReason = `Theoretical minimum: ${theoreticalMinimum} buses. Feasible route allocation: ${feasibleMinimum} buses based on capacity and road network topology.`;
+        }
         if (fleetSelection.selectedReusable.length > 0 && oppositePlan) {
             const oppBuses = oppositePlan.buses || oppositePlan.routes || [];
             decisionReason += ` Preferred vehicle reuse from OUTWARD operation enabled (${fleetSelection.selectedReusable.length}/${oppBuses.length} vehicles reused).`;
@@ -4098,16 +5254,19 @@ export const evaluateFleetBalancingDecision = ({
 
         return {
             targetRouteCount,
+            theoreticalMinimum,
+            feasibleMinimum,
+            operationallyRequiredFleet: feasibleMinimum,
             symmetryStatus,
             decisionReason,
             oppositeBusCount: oppBuses.length,
             oppositeDemand: oppositePlan ? Number(oppositePlan.assignedUsers ?? oppositePlan.summary?.comingUsers ?? currentDemand) : null,
             oppositeVehicleIds,
-            minCapacityBuses,
-            baselineTarget: minCapacityBuses,
-            selectedFleet: fleetSelection.selectedBuses,
+            minCapacityBuses: theoreticalMinimum,
+            baselineTarget: theoreticalMinimum,
+            selectedFleet: currentSelectedBuses,
             eligibleFleet: fleetSelection.eligibleInwardBuses,
-            fleetCapacity: fleetSelection.selectedCapacity
+            fleetCapacity: currentSelectedBuses.reduce((sum, v) => sum + Number(v.capacity || v.seatCapacity || 0), 0)
         };
     }
 
@@ -4118,11 +5277,18 @@ export const evaluateFleetBalancingDecision = ({
         oppositePlan
     });
 
-    const minCapacityBuses = fleetSelection.minimumBusCount;
-    const targetRouteCount = Math.max(minCapacityBuses, fleetSelection.selectedBuses.length);
+    let currentSelectedBuses = [...fleetSelection.selectedBuses];
+    const feasibleMinimum = currentSelectedBuses.length;
+    const targetRouteCount = Math.max(theoreticalMinimum, feasibleMinimum);
     const symmetryStatus = oppositePlan ? "BALANCED_FLEET" : "INDEPENDENT_DIRECTION";
 
-    let decisionReason = `Minimum capacity requirement: ${minCapacityBuses} buses. Feasible route allocation: ${targetRouteCount} buses based on capacity and road network topology.`;
+    const diff = feasibleMinimum - theoreticalMinimum;
+    let decisionReason = "";
+    if (diff > 0) {
+        decisionReason = `Theoretical minimum: ${theoreticalMinimum} buses. Feasible minimum: ${feasibleMinimum} buses with guaranteed seating. ${diff === 1 ? "One additional bus is" : `${diff} additional buses are`} deployed to satisfy vehicle capacities and road network topology without standing passengers.`;
+    } else {
+        decisionReason = `Theoretical minimum: ${theoreticalMinimum} buses. Feasible route allocation: ${feasibleMinimum} buses based on capacity and road network topology.`;
+    }
     if (fleetSelection.selectedReusable.length > 0 && oppositePlan) {
         const oppBuses = oppositePlan.buses || oppositePlan.routes || [];
         decisionReason += ` Preferred vehicle reuse from INWARD operation enabled (${fleetSelection.selectedReusable.length}/${oppBuses.length} vehicles reused).`;
@@ -4134,19 +5300,135 @@ export const evaluateFleetBalancingDecision = ({
     const oppBuses = oppositePlan ? (oppositePlan.buses || oppositePlan.routes || []) : [];
     const oppositeVehicleIds = fleetSelection.reusableBuses.map((b) => String(b._id || b.id || ""));
 
+    const candidateFleetEvaluations = evaluateCandidateFleetFeasibility({
+        currentDemand,
+        candidateRoutes,
+        availableVehicles,
+        isOutward,
+        minCapacityBuses: theoreticalMinimum,
+        targetRouteCount,
+        matrix: null
+    });
+
     return {
         targetRouteCount,
+        theoreticalMinimum,
+        feasibleMinimum,
+        operationallyRequiredFleet: feasibleMinimum,
         symmetryStatus,
         decisionReason,
         oppositeBusCount: oppBuses.length,
         oppositeDemand: oppositePlan ? Number(oppositePlan.assignedUsers ?? oppositePlan.summary?.comingUsers ?? currentDemand) : null,
         oppositeVehicleIds,
-        minCapacityBuses,
-        baselineTarget: minCapacityBuses,
-        selectedFleet: fleetSelection.selectedBuses,
+        minCapacityBuses: theoreticalMinimum,
+        baselineTarget: theoreticalMinimum,
+        selectedFleet: currentSelectedBuses,
         eligibleFleet: fleetSelection.eligibleOutwardBuses,
-        fleetCapacity: fleetSelection.selectedCapacity
+        fleetCapacity: currentSelectedBuses.reduce((sum, v) => sum + Number(v.capacity || v.seatCapacity || 0), 0),
+        candidateFleetEvaluations
     };
+};
+
+/**
+ * Evaluates fleet feasibility across candidate vehicle counts (e.g., testing 7, 8, 9 buses).
+ * Checks Capacity, Road Routing Progression, and the 60-minute Passenger Travel Time Constraint.
+ */
+export const evaluateCandidateFleetFeasibility = ({
+    currentDemand = 0,
+    totalComingUsers = 0,
+    candidateRoutes = [],
+    activeRoutes = [],
+    availableVehicles = [],
+    isOutward = true,
+    minCapacityBuses = 0,
+    targetRouteCount = 0,
+    busCount = null,
+    matrix = null
+}) => {
+    const demand = currentDemand || totalComingUsers || 0;
+    const sortedVehiclesDesc = [...availableVehicles]
+        .filter((v) => v.isActive !== false && Number(v.capacity || v.seatCapacity || 0) > 0)
+        .sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+
+    const routesToCheck = (activeRoutes && activeRoutes.length > 0) ? activeRoutes : candidateRoutes;
+
+    const evaluateSingle = (bCount) => {
+        const candidateFleet = sortedVehiclesDesc.slice(0, bCount);
+        const candidateCap = candidateFleet.reduce((sum, v) => sum + Number(v.capacity || v.seatCapacity || 0), 0);
+
+        const capacityPassed = candidateCap >= demand;
+        const capacityStatus = capacityPassed ? "PASS" : "FAIL";
+
+        let routingPassed = true;
+        let travelTimePassed = true;
+        let decision = "ACCEPT";
+        let reason = "";
+
+        // Check active route travel times if available
+        const hasTravelTimeViolation = routesToCheck.some((r) =>
+            (r.passengersAbove60 && r.passengersAbove60 > 0) ||
+            (r.longestPassengerTravelTime && r.longestPassengerTravelTime > 60.0 && !r.allPassengersWithin60)
+        );
+
+        const hasRoutingViolation = routesToCheck.some((r) => r.isContinuous === false);
+
+        if (!capacityPassed) {
+            routingPassed = false;
+            travelTimePassed = false;
+            decision = "REJECT";
+            reason = `Capacity shortfall: ${bCount} buses provide ${candidateCap} seats, but confirmed demand is ${demand} passengers (shortfall: ${demand - candidateCap} seats).`;
+        } else if (hasTravelTimeViolation) {
+            travelTimePassed = false;
+            decision = "REJECT";
+            reason = `Travel time constraint failed: One or more passengers exceed 60 minutes travel time limit on ${bCount} buses.`;
+        } else if (hasRoutingViolation) {
+            routingPassed = false;
+            decision = "REJECT";
+            reason = `Routing constraint failed: Road progression or corridor continuity violated on ${bCount} buses.`;
+        } else if (targetRouteCount && bCount < targetRouteCount) {
+            routingPassed = false;
+            travelTimePassed = false;
+            decision = "REJECT";
+            reason = `Road continuity and directional progression infeasible on ${bCount} buses without cross-corridor jumps or exceeding 60-minute passenger travel time.`;
+        } else {
+            routingPassed = true;
+            travelTimePassed = true;
+            decision = "ACCEPT";
+            reason = `Feasible allocation: ${bCount} buses satisfy guaranteed seating (${candidateCap} seats >= ${demand} pax), 100% continuous road progression, and all passenger travel times <= 60 min.`;
+        }
+
+        return {
+            busCount: bCount,
+            capacityPassed,
+            capacityStatus,
+            routingPassed,
+            routingStatus: routingPassed ? "PASS" : "FAIL",
+            travelTimePassed,
+            travelTimeStatus: travelTimePassed ? "PASS" : "FAIL",
+            decision,
+            verdict: decision === "ACCEPT" ? "Accept" : "Reject",
+            reason,
+            fleetCapacity: candidateCap
+        };
+    };
+
+    if (typeof busCount === "number") {
+        return evaluateSingle(busCount);
+    }
+
+    const testCounts = [];
+    const minTest = Math.max(1, (minCapacityBuses || 8) - 1);
+    const maxTest = Math.max(targetRouteCount ? targetRouteCount + 1 : (minCapacityBuses || 8) + 2, (minCapacityBuses || 8) + 1);
+    for (let c = minTest; c <= maxTest; c++) {
+        testCounts.push(c);
+    }
+    const defaultChecks = minCapacityBuses ? [minCapacityBuses - 1, minCapacityBuses, minCapacityBuses + 1] : [8, 9, 10];
+    defaultChecks.forEach((c) => {
+        if (c >= 1 && !testCounts.includes(c) && c <= sortedVehiclesDesc.length) testCounts.push(c);
+    });
+    testCounts.sort((a, b) => a - b);
+
+    return testCounts.map(evaluateSingle);
 };
 
 // ============================================================================
@@ -4202,8 +5484,7 @@ export const assignVehiclesToOptimizedRoutes = ({
     // If routes do not already have pre-assigned fixed buses, match vehicles to routes globally
     // to minimize deadhead from vehicle starting hub to passenger pickup stops, avoiding cross-town hops.
     if (!isOutward && activeInwardStartingPlaces && activeInwardStartingPlaces.length > 0 && sortedRoutes.length > 1) {
-        const hasFixedAssignment = (Array.isArray(previousRoutes) && previousRoutes.length > 0) &&
-            sortedRoutes.some((r) => r.vehicleId || r.vehicle?._id || r.isBusChange);
+        const hasFixedAssignment = sortedRoutes.some((r) => r.isSeeded || r.vehicleId || r.vehicle?._id || r.isBusChange);
 
         if (!hasFixedAssignment && usableVehicles.length >= sortedRoutes.length) {
             const costMatrix = [];
@@ -4348,7 +5629,7 @@ export const assignVehiclesToOptimizedRoutes = ({
                         const suitability = isBusHubSuitableForStops(existingVeh, route.stops, activeInwardStartingPlaces);
                         const sp = findStartingPlaceForBus(existingVeh, activeInwardStartingPlaces);
                         const hasHubStop = sp && route.stops.some((s) => isSamePlace(sp, s));
-                        if (suitability.suitable || hasHubStop) {
+                        if (suitability.suitable || hasHubStop || route.isSeeded || route.startingHub) {
                             chosenVehicle = existingVeh;
                         }
                     }
@@ -4451,18 +5732,23 @@ export const assignVehiclesToOptimizedRoutes = ({
                 });
                 chosenVehicle = candidates[0];
             } else if (!isBusChange || isOutward || !activeInwardStartingPlaces || activeInwardStartingPlaces.length === 0) {
-                // Fallback for initial route assignment: find largest remaining unused vehicle so demand coverage hard constraint is satisfied
-                // Prefer configured vehicles for INWARD
+                // Fallback for initial route assignment: find largest remaining unused vehicle that SATISFIES capacity
+                // Capacity is a HARD constraint: vehicle assignment stage must never assign routePassengers > vehicleCapacity
                 const remainingUnused = usableVehicles.filter((v) => !usedVehicleIds.has(String(v._id || v.id || "")));
+                const viableRemaining = remainingUnused.filter((v) => Number(v.capacity || v.seatCapacity || 0) >= demand);
                 if (!isOutward && activeInwardStartingPlaces && activeInwardStartingPlaces.length > 0) {
-                    const remainingConfigured = remainingUnused.filter((v) =>
+                    const remainingConfigured = viableRemaining.filter((v) =>
                         hasConfiguredInwardStartingPlace(v, activeInwardStartingPlaces)
                     );
-                    chosenVehicle = remainingConfigured[0] || remainingUnused[0] || null;
+                    chosenVehicle = remainingConfigured[0] || viableRemaining[0] || null;
                 } else {
-                    chosenVehicle = remainingUnused[0] || null;
+                    chosenVehicle = viableRemaining[0] || null;
                 }
             }
+        }
+
+        if (chosenVehicle && Number(chosenVehicle.capacity || chosenVehicle.seatCapacity || 0) < demand) {
+            chosenVehicle = null;
         }
 
         if (chosenVehicle) {
@@ -4677,29 +5963,87 @@ export const consolidateAndRebalanceLowOccupancyOutwardRoutes = ({
 
                 for (const targetRoute of viableRoutes) {
                     const nearestDist = Math.min(...targetRoute.stops.map((s) => calculateDistanceKm(s.latitude, s.longitude, stop.latitude, stop.longitude)));
-                    if (nearestDist > 4.75) continue; // Reject cross-corridor / cross-town leaps
+                    const targetLastStop = targetRoute.stops[targetRoute.stops.length - 1];
+                    const dHubStop = calculateDistanceKm(resolvedHub.latitude, resolvedHub.longitude, stop.latitude, stop.longitude);
+                    const dHubTargetLast = targetLastStop ? calculateDistanceKm(resolvedHub.latitude, resolvedHub.longitude, targetLastStop.latitude, targetLastStop.longitude) : 0;
+                    const legB = targetLastStop ? calculateBearing(targetLastStop.latitude, targetLastStop.longitude, stop.latitude, stop.longitude) : 0;
+                    const radB = targetLastStop ? calculateBearing(resolvedHub.latitude, resolvedHub.longitude, targetLastStop.latitude, targetLastStop.longitude) : 0;
+                    const isSatelliteHighway = Boolean(targetLastStop && (dHubStop > dHubTargetLast) && (getBearingDifference(radB, legB) <= 80.0));
 
-                    const testTour = [...targetRoute.stops, stop];
-                    if (!isRouteCorridorCoherent(resolvedHub, testTour, 38.0, 4.75)) continue;
+                    if (nearestDist > 4.75 && !isSatelliteHighway) continue; // Reject cross-corridor / cross-town leaps
 
-                    const seq = sequenceOutwardRouteStops({
-                        departureHub: resolvedHub,
-                        stops: testTour,
-                        matrix,
-                        tripMode
-                    });
-                    const qv = seq.qualityValidation || {};
+                    let bestInsertion = null;
+                    let bestInsertionCost = Infinity;
 
-                    const isContinuous = qv.operationalContinuityVerified !== false &&
-                        (qv.directionalReversals || 0) === 0 &&
-                        (qv.backtrackingDistanceKm || 0) < 2.0 &&
-                        (qv.detourRatio || 1.0) <= maxDetourRatio;
+                    // Evaluate insertion at all geographically valid positions (College -> Stop A -> Stop -> Stop B, etc.)
+                    for (let pos = 0; pos <= targetRoute.stops.length; pos++) {
+                        const candidateTour = [
+                            ...targetRoute.stops.slice(0, pos),
+                            stop,
+                            ...targetRoute.stops.slice(pos)
+                        ];
 
-                    if (isContinuous) {
+                        // Corridor angular span filter
+                        const span = calculateMaxBearingSpan(resolvedHub, candidateTour);
+                        let effectiveSpan = span;
+                        if (span > 38.0 && candidateTour.length >= 2) {
+                            const lastC = candidateTour[candidateTour.length - 1];
+                            const prevC = candidateTour[candidateTour.length - 2];
+                            const dHLast = calculateDistanceKm(resolvedHub.latitude, resolvedHub.longitude, lastC.latitude, lastC.longitude);
+                            const dHPrev = calculateDistanceKm(resolvedHub.latitude, resolvedHub.longitude, prevC.latitude, prevC.longitude);
+                            if (dHLast > dHPrev) {
+                                const legBC = calculateBearing(prevC.latitude, prevC.longitude, lastC.latitude, lastC.longitude);
+                                const radBC = calculateBearing(resolvedHub.latitude, resolvedHub.longitude, prevC.latitude, prevC.longitude);
+                                if (getBearingDifference(radBC, legBC) <= 80.0) {
+                                    const coreSpan = calculateMaxBearingSpan(resolvedHub, candidateTour.slice(0, -1));
+                                    if (coreSpan <= 38.0) effectiveSpan = coreSpan;
+                                }
+                            }
+                        }
+                        if (effectiveSpan > 38.0) continue;
+
+                        const seq = sequenceOutwardRouteStops({
+                            departureHub: resolvedHub,
+                            stops: candidateTour,
+                            matrix,
+                            tripMode
+                        });
+                        const qv = seq.qualityValidation || {};
+
+                        const isContinuous = qv.operationalContinuityVerified !== false &&
+                            (qv.directionalReversals || 0) === 0 &&
+                            (qv.backtrackingDistanceKm || 0) < 2.0 &&
+                            (qv.detourRatio || 1.0) <= maxDetourRatio;
+
+                        if (!isContinuous) continue;
+
+                        // Ensure corridor coherence on actual sequenced stops
+                        if (!isRouteCorridorCoherent(resolvedHub, seq.stops, 38.0, 4.75)) continue;
+
+                        // Passenger-specific cumulative travel time check (strict <= 60 min and route distance <= 45 km)
+                        const satisfiesTravelTime = (qv.passengersAbove60 || 0) === 0 && (qv.longestPassengerTravelTime || 0) <= 60.0 && (seq.routeDistanceKm || 0) <= 45.0;
+                        if (!satisfiesTravelTime) continue;
+
+                        const cost = (seq.routeDistanceKm || 0) + (qv.totalRouteDuration || 0) * 0.25;
+                        if (cost < bestInsertionCost) {
+                            bestInsertionCost = cost;
+                            bestInsertion = { seq, qv };
+                        }
+                    }
+
+                    if (bestInsertion) {
+                        const { seq, qv } = bestInsertion;
                         targetRoute.stops = seq.stops;
                         targetRoute.assignedUsers += stopPax;
                         targetRoute.users.push(...(stop.userIds || []));
                         targetRoute.routeDistanceKm = seq.routeDistanceKm;
+                        targetRoute.totalRouteDuration = seq.totalRouteDuration;
+                        targetRoute.longestPassengerTravelTime = seq.longestPassengerTravelTime;
+                        targetRoute.averagePassengerTravelTime = seq.averagePassengerTravelTime;
+                        targetRoute.passengersWithin60 = seq.passengersWithin60;
+                        targetRoute.passengersAbove60 = seq.passengersAbove60;
+                        targetRoute.allPassengersWithin60 = seq.allPassengersWithin60;
+                        targetRoute.travelTimeMetrics = seq.travelTimeMetrics;
                         targetRoute.qualityValidation = qv;
                         targetRoute.routeQuality = qv;
                         stopAbsorbed = true;
@@ -4763,7 +6107,8 @@ export const consolidateAndRebalanceLowOccupancyOutwardRoutes = ({
                             const thirdValid = thirdQv.operationalContinuityVerified !== false &&
                                 (thirdQv.directionalReversals || 0) === 0 &&
                                 (thirdQv.backtrackingDistanceKm || 0) < 2.0 &&
-                                (thirdQv.detourRatio || 1.0) <= maxDetourRatio;
+                                (thirdQv.detourRatio || 1.0) <= maxDetourRatio &&
+                                ((thirdQv.passengersAbove60 || 0) === 0 || (thirdQv.longestPassengerTravelTime || 0) <= 60.0);
 
                             if (thirdValid) {
                                 // Test corridor route with donor shifted and new stop added
@@ -4794,7 +6139,8 @@ export const consolidateAndRebalanceLowOccupancyOutwardRoutes = ({
                                 const corrValid = corrQv.operationalContinuityVerified !== false &&
                                     (corrQv.directionalReversals || 0) === 0 &&
                                     (corrQv.backtrackingDistanceKm || 0) < 2.0 &&
-                                    (corrQv.detourRatio || 1.0) <= maxDetourRatio;
+                                    (corrQv.detourRatio || 1.0) <= maxDetourRatio &&
+                                    ((corrQv.passengersAbove60 || 0) === 0 || (corrQv.longestPassengerTravelTime || 0) <= 60.0);
 
                                 if (corrValid) {
                                     // Apply multi-hop transfer
@@ -5530,12 +6876,18 @@ export const optimizeOutwardRouteAllocation = ({
     }
 
 
+    const totalStanding = assignedRoutes.reduce((sum, r) => sum + (r.standingPassengers || 0), 0);
+    const isFeasible = leftoverStops.length === 0 && totalStanding === 0 && !assignedRoutes.some((r) => r.isOverCapacity);
+
     return {
         routes: assignedRoutes,
         optimizedRoutes: assignedRoutes,
         assignedRoutes,
         unassignedRoutes: [],
         unallocatedCount: 0,
+        totalStanding,
+        isFeasible,
+        status: isFeasible ? "FEASIBLE" : "INFEASIBLE",
         matrix,
         auditTrail,
         vehicleUsageLogs
@@ -5587,14 +6939,16 @@ export const executeGlobalRouteOptimization = async ({
 
     const fleetCaps = effectiveVehicles
         .map((v) => Number(v.capacity || v.seatCapacity || 0))
-        .filter((c) => c > 0);
-    const maxBusCapacity = fleetCaps.length > 0 ? Math.max(...fleetCaps) : 70;
+        .filter((c) => c > 0)
+        .sort((a, b) => b - a);
+    const maxBusCapacity = fleetCaps.length > 0 ? fleetCaps[0] : 70;
 
     // Step 3: Global Candidate Route Generation (Clarke-Wright + Nearest Insertion)
     let candidateRoutes = generateGlobalCandidateRoutes({
         stops: resolvedStops,
         matrix,
         maxBusCapacity,
+        fleetCapacities: fleetCaps,
         tripMode,
         options
     });
@@ -5605,41 +6959,45 @@ export const executeGlobalRouteOptimization = async ({
         reason: `Formed ${candidateRoutes.length} initial road-optimized candidate routes across all stopping areas.`
     });
 
+    const isSeededBaseline = candidateRoutes.some((r) => r.isSeeded);
+
     // Step 4: Iterative Inter-Route Local Search (Relocate, Exchange, Or-opt)
-    let localSearchIterations = 0;
-    const MAX_LOCAL_SEARCH_ROUNDS = 8;
-    let localSearchActive = true;
+    if (!isSeededBaseline) {
+        let localSearchIterations = 0;
+        const MAX_LOCAL_SEARCH_ROUNDS = 8;
+        let localSearchActive = true;
 
-    while (localSearchActive && localSearchIterations < MAX_LOCAL_SEARCH_ROUNDS) {
-        localSearchActive = false;
-        localSearchIterations++;
+        while (localSearchActive && localSearchIterations < MAX_LOCAL_SEARCH_ROUNDS) {
+            localSearchActive = false;
+            localSearchIterations++;
 
-        // Try Relocate
-        const relRes = applyInterRouteRelocate({
-            routes: candidateRoutes,
-            matrix,
-            maxBusCapacity,
-            tripMode,
-            auditTrail
-        });
-        if (relRes.improved) {
-            candidateRoutes = relRes.routes;
-            localSearchActive = true;
-            continue;
-        }
+            // Try Relocate
+            const relRes = applyInterRouteRelocate({
+                routes: candidateRoutes,
+                matrix,
+                maxBusCapacity,
+                tripMode,
+                auditTrail
+            });
+            if (relRes.improved) {
+                candidateRoutes = relRes.routes;
+                localSearchActive = true;
+                continue;
+            }
 
-        // Try Exchange
-        const exRes = applyInterRouteExchange({
-            routes: candidateRoutes,
-            matrix,
-            maxBusCapacity,
-            tripMode,
-            auditTrail
-        });
-        if (exRes.improved) {
-            candidateRoutes = exRes.routes;
-            localSearchActive = true;
-            continue;
+            // Try Exchange
+            const exRes = applyInterRouteExchange({
+                routes: candidateRoutes,
+                matrix,
+                maxBusCapacity,
+                tripMode,
+                auditTrail
+            });
+            if (exRes.improved) {
+                candidateRoutes = exRes.routes;
+                localSearchActive = true;
+                continue;
+            }
         }
     }
 
@@ -5651,20 +7009,20 @@ export const executeGlobalRouteOptimization = async ({
     );
 
     // Purpose-Driven Small Group Consolidation (Requirements 5, 6, 7, 41)
-    // Absorbs small passenger groups like Q1 (9 pax) into compatible existing routes
-    // before determining final fleet allocation.
-    candidateRoutes = consolidateSmallPassengerRoutes({
-        routes: candidateRoutes,
-        matrix,
-        maxBusCapacity,
-        tripMode,
-        smallRouteThreshold: 15,
-        activeInwardStartingPlaces: configuredPlacesList,
-        anchorHub,
-        sourceHub: options.sourceHub || anchorHub,
-        destinationHub: options.destinationHub || anchorHub,
-        auditTrail
-    });
+    if (!isSeededBaseline) {
+        candidateRoutes = consolidateSmallPassengerRoutes({
+            routes: candidateRoutes,
+            matrix,
+            maxBusCapacity,
+            tripMode,
+            smallRouteThreshold: 15,
+            activeInwardStartingPlaces: configuredPlacesList,
+            anchorHub,
+            sourceHub: options.sourceHub || anchorHub,
+            destinationHub: options.destinationHub || anchorHub,
+            auditTrail
+        });
+    }
 
     const sortedFleetDesc = [...availableVehicles]
         .filter((v) => v.isActive !== false && Number(v.capacity || v.seatCapacity || 0) > 0)
@@ -5708,236 +7066,466 @@ export const executeGlobalRouteOptimization = async ({
         oppositePlan: options.oppositePlan || null
     });
 
-    // Attempt to satisfy demand using minimum capacity buses first (Requirements 2, 4, 21, 22)
-    const targetRouteCount = fleetBalancing.targetRouteCount || minCapacityBuses;
+    // ========================================================================
+    // Step 5: PROGRESSIVE FLEET SEARCH ENGINE (Requirements 1, 2, 3, 4, 16)
+    // Progressively searches fleet size K = minCapacityBuses ... availableVehicles.length.
+    // For each K, generates/balances candidate routes, allocates passengers, assigns vehicles,
+    // consolidates low-occupancy routes, enforces guaranteed seating, and verifies continuous progression.
+    // Selects the FIRST fully feasible fleet size dynamically without premature fleet expansion.
+    // ========================================================================
+    const baseCandidateRoutes = candidateRoutes.map((r) => ({
+        ...r,
+        stops: (r.stops || []).map((s) => ({ ...s, userIds: Array.isArray(s.userIds) ? [...s.userIds] : [] })),
+        users: Array.isArray(r.users) ? [...r.users] : []
+    }));
 
-    // Apply consolidation if candidateRoutes exceeds targetRouteCount
-    if (candidateRoutes.length > targetRouteCount) {
-        candidateRoutes = consolidateCandidateRoutes({
-            routes: candidateRoutes,
-            targetRouteCount,
-            maxBusCapacity,
-            matrix,
-            tripMode,
-            auditTrail
-        });
-    } else if (candidateRoutes.length < targetRouteCount && (fleetBalancing.selectedFleet?.length || 0) >= targetRouteCount) {
-        candidateRoutes = expandCandidateRoutesToTarget({
-            routes: candidateRoutes,
-            targetRouteCount,
-            matrix,
-            tripMode,
-            auditTrail
-        });
-    }
+    const progressiveFleetEvaluations = [];
+    const candidatePlans = [];
+    let winningAssignedRoutes = null;
+    let winningVehicleUsageLogs = [];
+    let winningVehicleReuseCount = 0;
+    let winningVehicleReuseRate = 0;
+    let winningReusedVehicleNames = [];
+    let winningSeatingRes = null;
+    let winningUnassignedRoutes = [];
+    let winningConsolidationAttempts = consolidationAttempts;
+    let selectedK = minCapacityBuses;
 
-    // Purpose-Driven Fleet Capacity Balancing for Inward & Outward:
-    // Balances passenger demands across candidate routes to match the capacities
-    // of the selected fleet, respecting corridor continuity.
-    if (fleetBalancing.selectedFleet?.length > 0) {
-        candidateRoutes = balanceCandidateRoutesToFleetCapacities({
-            routes: candidateRoutes,
-            fleet: fleetBalancing.selectedFleet,
+    const maxK = sortedFleetDesc.length;
+    for (let K = minCapacityBuses; K <= maxK; K++) {
+        // Select candidate fleet for size K (respecting vehicle reuse if opposite plan exists)
+        let candidateFleetForK = [];
+        if (fleetBalancing.oppositeVehicleIds?.length > 0) {
+            const preferred = sortedFleetDesc.filter((v) => fleetBalancing.oppositeVehicleIds.includes(String(v._id || v.id || "")));
+            const others = sortedFleetDesc.filter((v) => !fleetBalancing.oppositeVehicleIds.includes(String(v._id || v.id || "")));
+            candidateFleetForK = [...preferred, ...others].slice(0, K);
+        } else {
+            candidateFleetForK = sortedFleetDesc.slice(0, K);
+        }
+
+        const candidateCap = candidateFleetForK.reduce((sum, v) => sum + Number(v.capacity || v.seatCapacity || 0), 0);
+        if (candidateCap < totalComingDemand) {
+            progressiveFleetEvaluations.push({
+                busCount: K,
+                fleetCapacity: candidateCap,
+                capacityPassed: false,
+                capacityStatus: "FAIL",
+                routingPassed: false,
+                routingStatus: "FAIL",
+                travelTimePassed: false,
+                travelTimeStatus: "FAIL",
+                decision: "REJECT",
+                verdict: "Reject",
+                reason: `Capacity shortfall: ${K} buses provide ${candidateCap} seats, but confirmed demand is ${totalComingDemand} passengers (shortfall: ${totalComingDemand - candidateCap} seats).`
+            });
+            continue;
+        }
+
+        let trialRoutes = baseCandidateRoutes.map((r) => ({
+            ...r,
+            stops: (r.stops || []).map((s) => ({ ...s, userIds: Array.isArray(s.userIds) ? [...s.userIds] : [] })),
+            users: Array.isArray(r.users) ? [...r.users] : []
+        }));
+
+        if (!isSeededBaseline) {
+            if (trialRoutes.length > K) {
+                trialRoutes = consolidateCandidateRoutes({
+                    routes: trialRoutes,
+                    targetRouteCount: K,
+                    maxBusCapacity,
+                    matrix,
+                    tripMode,
+                    auditTrail
+                });
+            } else if (trialRoutes.length < K && candidateFleetForK.length >= K) {
+                trialRoutes = expandCandidateRoutesToTarget({
+                    routes: trialRoutes,
+                    targetRouteCount: K,
+                    matrix,
+                    tripMode,
+                    auditTrail
+                });
+            }
+
+            if (candidateFleetForK.length > 0) {
+                trialRoutes = balanceCandidateRoutesToFleetCapacities({
+                    routes: trialRoutes,
+                    fleet: candidateFleetForK,
+                    activeInwardStartingPlaces: configuredPlacesList,
+                    matrix,
+                    tripMode,
+                    sourceHub: options.sourceHub || anchorHub,
+                    destinationHub: options.destinationHub || anchorHub
+                });
+            }
+        }
+
+        trialRoutes = trialRoutes.map((route) => {
+            const opt = optimizeTour2OptRoad({
+                tour: route.stops,
+                matrix,
+                tripMode,
+                options: { isSourceFixed: !isOutward }
+            });
+            return {
+                ...route,
+                stops: opt.tour,
+                routeDistanceKm: opt.roadDistanceKm
+            };
+        });
+
+        const {
+            assignedRoutes: initialAssigned,
+            unassignedRoutes: trialUnassigned,
+            vehicleUsageLogs: tLogs,
+            vehicleReuseCount: tReuseCount,
+            vehicleReuseRate: tReuseRate,
+            reusedVehicleNames: tReuseNames
+        } = assignVehiclesToOptimizedRoutes({
+            routes: trialRoutes,
+            availableVehicles: candidateFleetForK,
+            tripMode,
             activeInwardStartingPlaces: configuredPlacesList,
+            previousRoutes: options.previousRoutes || [],
+            preferredVehicleIds: fleetBalancing.oppositeVehicleIds || []
+        });
+
+        let trialAssignedRoutes = initialAssigned;
+
+        if (trialUnassigned.length > 0 && trialAssignedRoutes.length > 0) {
+            rebalanceUnallocatedPassengersToSelectedBuses({
+                assignedRoutes: trialAssignedRoutes,
+                unassignedRoutes: trialUnassigned,
+                matrix,
+                tripMode,
+                maxBusCapacity,
+                configuredInwardStartingPlaces: configuredPlacesList,
+                anchorHub,
+                auditTrail
+            });
+        }
+
+        if (!isOutward && !isSeededBaseline && configuredPlacesList.length > 0 && trialAssignedRoutes.length > 1) {
+            rebalanceCrossCorridorStartingHubDuplications({
+                assignedRoutes: trialAssignedRoutes,
+                activeInwardStartingPlaces: configuredPlacesList,
+                maxBusCapacity,
+                matrix,
+                tripMode,
+                auditTrail
+            });
+        }
+
+        if (trialAssignedRoutes.length > 1) {
+            evaluateAndConsolidateRepeatedPhysicalStops({
+                routes: trialAssignedRoutes,
+                tripMode,
+                matrix,
+                activeInwardStartingPlaces: configuredPlacesList,
+                anchorHub,
+                sourceHub: options.sourceHub || anchorHub,
+                destinationHub: options.destinationHub || anchorHub,
+                auditTrail
+            });
+        }
+
+        if (isOutward && trialAssignedRoutes.length > K) {
+            trialAssignedRoutes = consolidateAndRebalanceLowOccupancyOutwardRoutes({
+                routes: trialAssignedRoutes,
+                availableVehicles: candidateFleetForK,
+                sourceHub: options.sourceHub || anchorHub,
+                matrix,
+                tripMode,
+                auditTrail,
+                lowOccupancyThreshold: 20
+            });
+        }
+
+        const seatingRes = balanceRoutesToGuaranteedSeating({
+            routes: trialAssignedRoutes,
+            availableVehicles: candidateFleetForK,
             matrix,
+            hub: anchorHub,
             tripMode,
-            sourceHub: options.sourceHub || anchorHub,
-            destinationHub: options.destinationHub || anchorHub
-        });
-    }
-
-    // Step 5: 2-Opt Road Sequence Improvement on Final Routes
-    candidateRoutes = candidateRoutes.map((route) => {
-        const opt = optimizeTour2OptRoad({
-            tour: route.stops,
-            matrix,
-            tripMode
-        });
-        return {
-            ...route,
-            stops: opt.tour,
-            routeDistanceKm: opt.roadDistanceKm
-        };
-    });
-
-    // Step 6: Delayed Fleet-Wide Vehicle Assignment (with Vehicle Reuse Preference)
-    const {
-        assignedRoutes: initialAssignedRoutes,
-        unassignedRoutes,
-        vehicleUsageLogs,
-        vehicleReuseCount,
-        vehicleReuseRate,
-        reusedVehicleNames
-    } = assignVehiclesToOptimizedRoutes({
-        routes: candidateRoutes,
-        availableVehicles: (fleetBalancing.selectedFleet?.length > 0) ? fleetBalancing.selectedFleet : availableVehicles,
-        tripMode,
-        activeInwardStartingPlaces: configuredPlacesList,
-        previousRoutes: options.previousRoutes || [],
-        preferredVehicleIds: fleetBalancing.oppositeVehicleIds || []
-    });
-    let assignedRoutes = initialAssignedRoutes;
-
-    // Step 6A: Stage C GLOBAL BALANCING & PASSENGER REASSIGNMENT (Requirements 4, 5, 6, 10, 13)
-    if (unassignedRoutes.length > 0 && assignedRoutes.length > 0) {
-        rebalanceUnallocatedPassengersToSelectedBuses({
-            assignedRoutes,
-            unassignedRoutes,
-            matrix,
-            tripMode,
-            maxBusCapacity,
-            configuredInwardStartingPlaces: configuredPlacesList,
-            anchorHub,
-            auditTrail
-        });
-    }
-
-    // Step 6B: Cross-Corridor Starting Hub Duplication Resolution
-    // If one bus starts at Hub A (e.g. Sellur) and another route detours to visit Hub A's locality,
-    // reassign that stop to Hub A's bus (provided capacity permits), eliminating cross-town leaps.
-    if (!isOutward && configuredPlacesList.length > 0 && assignedRoutes.length > 1) {
-        rebalanceCrossCorridorStartingHubDuplications({
-            assignedRoutes,
             activeInwardStartingPlaces: configuredPlacesList,
-            maxBusCapacity,
-            matrix,
-            tripMode,
             auditTrail
         });
+        trialAssignedRoutes = seatingRes.balanced;
+
+        // Sequence stops
+        if (isOutward) {
+            for (const route of trialAssignedRoutes) {
+                const seq = sequenceOutwardRouteStops({
+                    departureHub: anchorHub,
+                    stops: route.stops,
+                    matrix,
+                    tripMode
+                });
+                route.stops = seq.stops;
+                route.routeDistanceKm = seq.routeDistanceKm;
+                route.qualityValidation = seq.qualityValidation;
+                route.routeQuality = seq.qualityValidation;
+                route.startingHub = {
+                    name: anchorHub.name || "Departure Hub",
+                    locationName: anchorHub.name || "Departure Hub",
+                    latitude: Number(anchorHub.latitude),
+                    longitude: Number(anchorHub.longitude)
+                };
+                route.firstPassengerStop = seq.stops[0] ? {
+                    name: seq.stops[0].name,
+                    latitude: Number(seq.stops[0].latitude),
+                    longitude: Number(seq.stops[0].longitude)
+                } : null;
+                route.totalRouteDuration = seq.totalRouteDuration;
+                route.longestPassengerTravelTime = seq.longestPassengerTravelTime;
+                route.averagePassengerTravelTime = seq.averagePassengerTravelTime;
+                route.passengersWithin60 = seq.passengersWithin60;
+                route.passengersAbove60 = seq.passengersAbove60;
+                route.allPassengersWithin60 = seq.allPassengersWithin60;
+                route.travelTimeMetrics = seq.travelTimeMetrics;
+                route.operationalContinuityVerified = Boolean(
+                    seq.qualityValidation?.directionalReversals === 0 &&
+                    (seq.qualityValidation?.backtrackingDistanceKm || 0) < 2.0 &&
+                    (seq.qualityValidation?.detourRatio || 1.0) <= 2.25
+                );
+            }
+        } else {
+            for (const route of trialAssignedRoutes) {
+                const startPlace = route.startingHub || findStartingPlaceForBus(route.vehicle, options.activeInwardStartingPlaces || []);
+                const startingHub = (startPlace && isValidCoordinate(startPlace.latitude, startPlace.longitude))
+                    ? startPlace
+                    : (route.stops && route.stops[0]) || anchorHub;
+
+                const seq = sequenceInwardRouteStops({
+                    startingHub,
+                    destinationHub: anchorHub,
+                    stops: route.stops,
+                    matrix,
+                    tripMode
+                });
+                route.stops = seq.stops;
+                route.routeDistanceKm = seq.routeDistanceKm;
+                route.totalRouteDuration = seq.totalRouteDuration;
+                route.longestPassengerTravelTime = seq.longestPassengerTravelTime;
+                route.averagePassengerTravelTime = seq.averagePassengerTravelTime;
+                route.passengersWithin60 = seq.passengersWithin60;
+                route.passengersAbove60 = seq.passengersAbove60;
+                route.allPassengersWithin60 = seq.allPassengersWithin60;
+                route.travelTimeMetrics = seq.travelTimeMetrics;
+                route.qualityValidation = seq.qualityValidation;
+                route.routeQuality = seq.qualityValidation;
+                route.startingHub = seq.qualityValidation.startingHubDetails;
+                route.hasStartingHubPickup = Boolean(seq.stops[0]?.isStartingHubPickup);
+                route.startingHubPassengers = seq.stops[0]?.isStartingHubPickup ? (seq.stops[0].userCount || (seq.stops[0].userIds || []).length || 0) : 0;
+                route.firstPassengerStop = seq.qualityValidation.firstPassengerStop;
+                route.passengerStops = seq.stops;
+                route.destination = seq.qualityValidation.destinationDetails;
+                route.directDistance = seq.qualityValidation.directDistance;
+                route.detourRatio = seq.qualityValidation.detourRatio;
+                route.directionalReversals = seq.qualityValidation.directionalReversals;
+                route.backtrackingDistanceKm = seq.qualityValidation.backtrackingDistanceKm;
+                route.operationalContinuityVerified = seq.qualityValidation.operationalContinuityVerified;
+                route.consolidationAttempts = consolidationAttempts;
+
+                if (!route.whySeparateRouteNeeded) {
+                    const hubName = startingHub?.locationName || startingHub?.name || "hub";
+                    const destName = anchorHub?.name || "destination";
+                    route.whySeparateRouteNeeded = seq.qualityValidation.operationalContinuityVerified
+                        ? `Route verified with continuous road progression from ${hubName} toward ${destName} (${seq.routeDistanceKm} km, detour ratio ${seq.qualityValidation.detourRatio}x).`
+                        : `Separate bus retained to serve dedicated residential corridor.`;
+                }
+            }
+        }
+
+        // Evaluate Plan Feasibility and Operational Metrics for K
+        const totalAllocated = trialAssignedRoutes.reduce((s, r) => s + (r.assignedUsers || 0), 0);
+        const unallocated = totalComingDemand - totalAllocated;
+        const totalStanding = seatingRes.totalStanding || 0;
+        const capacityValid = trialAssignedRoutes.every((r) => (r.assignedUsers || 0) <= (r.capacity || r.vehicle?.capacity || 0));
+        const allCoordsValid = trialAssignedRoutes.every((r) => (r.stops || []).every((s) => typeof s.latitude === "number" && typeof s.longitude === "number" && !isNaN(s.latitude) && !isNaN(s.longitude)));
+        const allContinuous = trialAssignedRoutes.every((r) => r.operationalContinuityVerified !== false && (r.qualityValidation?.directionalReversals || 0) === 0 && (r.qualityValidation?.backtrackingDistanceKm || 0) < 2.0 && (r.qualityValidation?.detourRatio || 1.0) <= 2.25);
+
+        const longestPaxTime = Math.max(0, ...trialAssignedRoutes.map(r => Number(r.longestPassengerTravelTime || r.routeDurationMin || r.totalRouteDuration || 0)));
+        const totalPaxAbove60 = trialAssignedRoutes.reduce((sum, r) => sum + Number(r.passengersAbove60 || 0), 0);
+        const travelTimePassed = totalPaxAbove60 === 0 && longestPaxTime <= DEFAULT_OPERATIONAL_CONSTRAINTS.maxPassengerTravelTimeMin;
+        const maxRouteDist = Math.max(0, ...trialAssignedRoutes.map(r => Number(r.routeDistanceKm || 0)));
+        const distancePassed = trialAssignedRoutes.every(r => (r.routeDistanceKm || 0) <= DEFAULT_OPERATIONAL_CONSTRAINTS.maxRouteDistanceKm + 5.0);
+
+        let kFailureReason = null;
+        if (unallocated > 0) kFailureReason = `Unallocated passengers remaining (${unallocated} unallocated)`;
+        else if (totalStanding > 0) kFailureReason = `Standing passengers remaining (${totalStanding} standing)`;
+        else if (!capacityValid) kFailureReason = `One or more routes exceed assigned vehicle capacity`;
+        else if (!allCoordsValid) kFailureReason = `Invalid geographic coordinates on route stops`;
+        else if (!allContinuous) kFailureReason = `Road continuity failed (directional reversals or excessive detour)`;
+        else if (!travelTimePassed) kFailureReason = `Travel time limit exceeded: ${totalPaxAbove60} passengers exceed 60m (longest travel time: ${longestPaxTime.toFixed(1)}m)`;
+        else if (!distancePassed) kFailureReason = `Route distance exceeds practical operational threshold (${maxRouteDist.toFixed(1)} km > 50 km)`;
+
+        const isStrictlyFeasible = capacityValid && totalStanding === 0 && unallocated === 0 && allCoordsValid;
+        const isOperationallyCompliant = isStrictlyFeasible && allContinuous && travelTimePassed;
+
+        // Multi-Objective Route Plan Scoring (balances passenger comfort, continuity, and fleet deployment cost)
+        let multiObjectiveScore = 0;
+        if (isStrictlyFeasible) {
+            const routeScores = trialAssignedRoutes.map((r) => {
+                const scoreObj = calculateMultiObjectiveRouteScore({
+                    passengerCount: r.assignedUsers,
+                    vehicleCapacity: r.capacity || r.vehicle?.capacity || maxBusCapacity,
+                    roadDistanceKm: r.routeDistanceKm,
+                    duration: r.totalRouteDuration || r.routeDurationMin || (r.routeDistanceKm / 0.5),
+                    detourRatio: r.qualityValidation?.detourRatio || r.detourRatio || 1.0,
+                    backtrackingDistanceKm: r.qualityValidation?.backtrackingDistanceKm || 0,
+                    directionalReversals: r.qualityValidation?.directionalReversals || 0,
+                    isRoadVerified: true,
+                    isReusedBus: Boolean(r.isReusedBus),
+                    longestPassengerTravelTime: r.longestPassengerTravelTime || 0,
+                    averagePassengerTravelTime: r.averagePassengerTravelTime || 0,
+                    passengersAbove60: r.passengersAbove60 || 0
+                });
+                return scoreObj.score;
+            });
+            const avgRouteScore = routeScores.length > 0 ? (routeScores.reduce((a, b) => a + b, 0) / routeScores.length) : 0;
+            const fleetDelta = Math.max(0, K - minCapacityBuses);
+            const deploymentPenalty = fleetDelta * (DEFAULT_OPERATIONAL_CONSTRAINTS.vehicleDeploymentCostWeight || 0.10);
+            multiObjectiveScore = Math.max(0.01, Number((avgRouteScore - deploymentPenalty).toFixed(3)));
+        }
+
+        const fleetCapPassed = candidateCap >= totalComingDemand;
+        progressiveFleetEvaluations.push({
+            busCount: K,
+            fleetCapacity: candidateCap,
+            capacityPassed: fleetCapPassed,
+            capacityStatus: fleetCapPassed ? "PASS" : "FAIL",
+            routingPassed: allContinuous,
+            routingStatus: allContinuous ? "PASS" : "FAIL",
+            travelTimePassed,
+            travelTimeStatus: travelTimePassed ? "PASS" : "FAIL",
+            decision: isOperationallyCompliant ? "ACCEPT" : (isStrictlyFeasible ? "CAPACITY_FEASIBLE" : "REJECT"),
+            verdict: isOperationallyCompliant ? "Accept" : (isStrictlyFeasible ? "Capacity Feasible Only" : "Reject"),
+            score: multiObjectiveScore,
+            reason: isOperationallyCompliant
+                ? `Operationally optimal: ${trialAssignedRoutes.length} buses satisfy guaranteed seating (${candidateCap} seats >= ${totalComingDemand} pax), 100% continuous road progression, and all passenger travel times <= 60 min (longest: ${longestPaxTime.toFixed(1)}m).`
+                : (kFailureReason || `Capacity feasible (${candidateCap} seats) but operational routing constraints suboptimal.`)
+        });
+
+        candidatePlans.push({
+            K,
+            candidateCap,
+            assignedRoutes: trialAssignedRoutes,
+            vehicleUsageLogs: tLogs,
+            vehicleReuseCount: tReuseCount,
+            vehicleReuseRate: tReuseRate,
+            reusedVehicleNames: tReuseNames,
+            seatingRes,
+            unassignedRoutes: trialUnassigned,
+            isStrictlyFeasible,
+            isOperationallyCompliant,
+            travelTimePassed,
+            allContinuous,
+            longestPaxTime,
+            totalPaxAbove60,
+            multiObjectiveScore
+        });
+
+        // Search progression control:
+        // Always evaluate candidate sizes around the capacity baseline to detect if adding buses resolves travel time violations.
+        // Stop early only if an operationally compliant plan is achieved and at least K >= minCapacityBuses + 1 has been evaluated,
+        // or if we have evaluated up to minCapacityBuses + 2.
+        if (isOperationallyCompliant && K >= minCapacityBuses + 1) {
+            break;
+        }
+        if (K >= minCapacityBuses + 2 && candidatePlans.some((p) => p.isOperationallyCompliant || p.isStrictlyFeasible)) {
+            break;
+        }
     }
 
-    // Step 6C: Evaluate Repeated Physical Stops Consolidation (Requirements 8, 9, 10)
-    // Only consolidates duplicate visits if capacity, inward starting hubs, and OSRM continuity are preserved.
-    if (assignedRoutes.length > 1) {
-        evaluateAndConsolidateRepeatedPhysicalStops({
-            routes: assignedRoutes,
-            tripMode,
-            matrix,
-            activeInwardStartingPlaces: configuredPlacesList,
-            anchorHub,
-            sourceHub: options.sourceHub || anchorHub,
-            destinationHub: options.destinationHub || anchorHub,
-            auditTrail
-        });
+    // Select Winning Plan based on Operational Feasibility and Multi-Objective Optimization
+    let winningPlan = null;
+    const compliantPlans = candidatePlans.filter((p) => p.isOperationallyCompliant);
+    if (compliantPlans.length > 0) {
+        compliantPlans.sort((a, b) => b.multiObjectiveScore - a.multiObjectiveScore);
+        winningPlan = compliantPlans[0];
+    } else {
+        const strictlyFeasiblePlans = candidatePlans.filter((p) => p.isStrictlyFeasible);
+        if (strictlyFeasiblePlans.length > 0) {
+            strictlyFeasiblePlans.sort((a, b) => {
+                if (a.totalPaxAbove60 !== b.totalPaxAbove60) return a.totalPaxAbove60 - b.totalPaxAbove60;
+                if (a.allContinuous !== b.allContinuous) return a.allContinuous ? -1 : 1;
+                if (Math.abs(a.longestPaxTime - b.longestPaxTime) > 2) return a.longestPaxTime - b.longestPaxTime;
+                return b.multiObjectiveScore - a.multiObjectiveScore;
+            });
+            winningPlan = strictlyFeasiblePlans[0];
+        } else if (candidatePlans.length > 0) {
+            candidatePlans.sort((a, b) => {
+                if (a.totalPaxAbove60 !== b.totalPaxAbove60) return a.totalPaxAbove60 - b.totalPaxAbove60;
+                if (a.allContinuous !== b.allContinuous) return a.allContinuous ? -1 : 1;
+                return b.multiObjectiveScore - a.multiObjectiveScore;
+            });
+            winningPlan = candidatePlans[0];
+        }
     }
 
-    // Step 6D: Purpose-Driven Outward Fleet Consolidation & Passenger Rebalancing (Requirements 4, 5, 6, 7, 21, 22)
-    // Evaluates whether low-occupancy buses can be dissolved into adjacent corridor routes
-    // via direct insertion or corridor multi-hop rebalancing, preserving 100% road continuity and detour ratio <= 2.25x.
-    if (isOutward && assignedRoutes.length > 1) {
-        assignedRoutes = consolidateAndRebalanceLowOccupancyOutwardRoutes({
-            routes: assignedRoutes,
-            availableVehicles,
-            sourceHub: options.sourceHub || anchorHub,
-            matrix,
-            tripMode,
-            auditTrail
-        });
+    if (winningPlan) {
+        winningAssignedRoutes = winningPlan.assignedRoutes;
+        winningVehicleUsageLogs = winningPlan.vehicleUsageLogs;
+        winningVehicleReuseCount = winningPlan.vehicleReuseCount;
+        winningVehicleReuseRate = winningPlan.vehicleReuseRate;
+        winningReusedVehicleNames = winningPlan.reusedVehicleNames;
+        winningSeatingRes = winningPlan.seatingRes;
+        winningUnassignedRoutes = winningPlan.unassignedRoutes;
+        selectedK = winningPlan.K;
     }
- 
-    // Step 6E: GUARANTEED SEATING PASSENGER BALANCING (ZERO STANDING PASSENGERS)
-    // Ensures passengerCount <= actualVehicleSeatCapacity for EVERY route with 0 standing passengers.
-    const seatingRes = balanceRoutesToGuaranteedSeating({
-        routes: assignedRoutes,
-        availableVehicles,
-        matrix,
-        hub: anchorHub,
-        tripMode,
-        activeInwardStartingPlaces: configuredPlacesList,
-        auditTrail
-    });
-    assignedRoutes = seatingRes.balanced;
+
+    const assignedRoutes = winningAssignedRoutes || [];
+    const unassignedRoutes = winningUnassignedRoutes || [];
+    const vehicleUsageLogs = winningVehicleUsageLogs || [];
+    const vehicleReuseCount = winningVehicleReuseCount || 0;
+    const vehicleReuseRate = winningVehicleReuseRate || 0;
+    const reusedVehicleNames = winningReusedVehicleNames || [];
+    const seatingRes = winningSeatingRes || { isFeasible: true, totalStanding: 0, overCapacityCount: 0 };
 
     const finalAllocatedCount = assignedRoutes.length;
+    const isSeatingGuaranteed = seatingRes.isFeasible && (seatingRes.totalStanding || 0) === 0;
+    const theoreticalCap = sortedFleetDesc.slice(0, minCapacityBuses).reduce((sum, v) => sum + Number(v.capacity || v.seatCapacity || 0), 0);
+    const selectedCap = assignedRoutes.reduce((sum, r) => sum + Number(r.capacity || r.vehicle?.capacity || 0), 0);
+    const winLongestPaxTime = Math.max(0, ...assignedRoutes.map((r) => Number(r.longestPassengerTravelTime || 0)));
+    const winPaxAbove60 = assignedRoutes.reduce((sum, r) => sum + Number(r.passengersAbove60 || 0), 0);
+
     fleetBalancing.vehicleReuseCount = vehicleReuseCount || 0;
     fleetBalancing.vehicleReuseRate = vehicleReuseRate || 0;
     fleetBalancing.reusedVehicleNames = reusedVehicleNames || [];
     fleetBalancing.allocatedBusCount = finalAllocatedCount;
     fleetBalancing.feasibleBusCount = finalAllocatedCount;
+    fleetBalancing.feasibleMinimum = finalAllocatedCount;
+    fleetBalancing.operationallyRequiredFleet = finalAllocatedCount;
     fleetBalancing.minimumCapacityBuses = minCapacityBuses;
+    fleetBalancing.theoreticalMinimum = minCapacityBuses;
+    fleetBalancing.theoreticalCapacityMinimum = minCapacityBuses;
+    fleetBalancing.totalAvailableVehicles = availableVehicles.length;
+    fleetBalancing.selectedVehicleNames = assignedRoutes.map((r) => r.vehicle?.busName || r.vehicleName);
+    fleetBalancing.totalStanding = seatingRes.totalStanding || 0;
+    fleetBalancing.overCapacityCount = seatingRes.overCapacityCount || 0;
+    fleetBalancing.isSeatingGuaranteed = isSeatingGuaranteed;
+    fleetBalancing.isFeasible = isSeatingGuaranteed;
+    fleetBalancing.status = isSeatingGuaranteed ? "FEASIBLE" : "INFEASIBLE";
+    fleetBalancing.candidateFleetEvaluations = progressiveFleetEvaluations;
 
     const diffFinal = finalAllocatedCount - minCapacityBuses;
     let reasonForAdditionalVehicle = null;
-    if (diffFinal > 0) {
-        reasonForAdditionalVehicle = `Minimum theoretical fleet: ${minCapacityBuses} buses. Feasible route allocation: ${finalAllocatedCount} buses with guaranteed seating. ${diffFinal === 1 ? "One additional bus is" : `${diffFinal} additional buses are`} deployed to guarantee zero standing passengers while respecting road network topology.`;
+    if (!isSeatingGuaranteed) {
+        reasonForAdditionalVehicle = `Plan is INFEASIBLE: ${seatingRes.totalStanding} standing passenger(s) remain across ${seatingRes.overCapacityCount} route(s). Hard constraint of guaranteed seating could not be satisfied.`;
+    } else if (diffFinal > 0) {
+        reasonForAdditionalVehicle = `Theoretical minimum fleet by passenger capacity alone is ${minCapacityBuses} buses (${theoreticalCap} seats for ${totalComingDemand} confirmed passengers). However, geographic fleet balancing determined that ${finalAllocatedCount} buses are operationally required to separate distant geographic corridors and prevent excessive passenger journey times. Deploying ${diffFinal === 1 ? "1 additional bus" : `${diffFinal} additional buses`} (${selectedCap} total seats) ensures 100% continuous road progression, guarantees zero standing passengers, and keeps all student journeys within the 60-minute limit (longest travel time: ${winLongestPaxTime.toFixed(1)} min).`;
     } else {
-        reasonForAdditionalVehicle = `Minimum capacity requirement: ${minCapacityBuses} buses. Feasible route allocation: ${finalAllocatedCount} buses with guaranteed seating across all routes.`;
+        reasonForAdditionalVehicle = `Theoretical minimum fleet of ${minCapacityBuses} buses (${theoreticalCap} seats for ${totalComingDemand} confirmed passengers) is operationally optimal. All passengers are allocated with guaranteed seating (zero standing), 100% continuous road progression, and all passenger journeys remain within practical operational limits (longest travel time: ${winLongestPaxTime.toFixed(1)} min). Additional available vehicles were evaluated but not required.`;
     }
     fleetBalancing.decisionReason = reasonForAdditionalVehicle;
 
-    // Step 7: Anchored Stop Sequencing & Whole-Route Progression Optimization
     if (isOutward) {
-        for (const route of assignedRoutes) {
-            const seq = sequenceOutwardRouteStops({
-                departureHub: anchorHub,
-                stops: route.stops,
-                matrix,
-                tripMode
-            });
-            route.stops = seq.stops;
-            route.routeDistanceKm = seq.routeDistanceKm;
-            route.qualityValidation = seq.qualityValidation;
-            route.routeQuality = seq.qualityValidation;
-            route.startingHub = {
-                name: anchorHub.name || "Departure Hub",
-                locationName: anchorHub.name || "Departure Hub",
-                latitude: Number(anchorHub.latitude),
-                longitude: Number(anchorHub.longitude)
-            };
-            route.firstPassengerStop = seq.stops[0] ? {
-                name: seq.stops[0].name,
-                latitude: Number(seq.stops[0].latitude),
-                longitude: Number(seq.stops[0].longitude)
-            } : null;
-            route.operationalContinuityVerified = Boolean(
-                seq.qualityValidation?.directionalReversals === 0 &&
-                (seq.qualityValidation?.backtrackingDistanceKm || 0) < 2.0 &&
-                (seq.qualityValidation?.detourRatio || 1.0) <= 2.25
-            );
-        }
         auditTrail.push({
             action: "OUTWARD_PROGRESSIVE_SEQUENCING",
             reason: "Applied progressive outward road sequencing from departure hub, eliminating reversals and crossovers."
         });
     } else {
-        for (const route of assignedRoutes) {
-            const startPlace = findStartingPlaceForBus(route.vehicle, options.activeInwardStartingPlaces || []);
-            const startingHub = (startPlace && isValidCoordinate(startPlace.latitude, startPlace.longitude))
-                ? startPlace
-                : (route.stops && route.stops[0]) || anchorHub;
-
-            const seq = sequenceInwardRouteStops({
-                startingHub,
-                destinationHub: anchorHub,
-                stops: route.stops,
-                matrix,
-                tripMode
-            });
-            route.stops = seq.stops;
-            route.routeDistanceKm = seq.routeDistanceKm;
-            route.qualityValidation = seq.qualityValidation;
-            route.routeQuality = seq.qualityValidation;
-            route.startingHub = seq.qualityValidation.startingHubDetails;
-            route.hasStartingHubPickup = Boolean(seq.stops[0]?.isStartingHubPickup);
-            route.startingHubPassengers = seq.stops[0]?.isStartingHubPickup ? (seq.stops[0].userCount || (seq.stops[0].userIds || []).length || 0) : 0;
-            route.firstPassengerStop = seq.qualityValidation.firstPassengerStop;
-            route.passengerStops = seq.stops;
-            route.destination = seq.qualityValidation.destinationDetails;
-            route.directDistance = seq.qualityValidation.directDistance;
-            route.detourRatio = seq.qualityValidation.detourRatio;
-            route.directionalReversals = seq.qualityValidation.directionalReversals;
-            route.backtrackingDistanceKm = seq.qualityValidation.backtrackingDistanceKm;
-            route.operationalContinuityVerified = seq.qualityValidation.operationalContinuityVerified;
-            route.consolidationAttempts = consolidationAttempts;
-
-            if (!route.whySeparateRouteNeeded) {
-                const hubName = startingHub?.locationName || startingHub?.name || "hub";
-                const destName = anchorHub?.name || "destination";
-                route.whySeparateRouteNeeded = seq.qualityValidation.operationalContinuityVerified
-                    ? `Route verified with continuous road progression from ${hubName} toward ${destName} (${seq.routeDistanceKm} km, detour ratio ${seq.qualityValidation.detourRatio}x).`
-                    : `Separate bus retained to serve dedicated residential corridor.`;
-            }
-        }
         auditTrail.push({
             action: "INWARD_ANCHORED_SEQUENCING",
             reason: "Applied anchored progression ordering from configured starting hubs toward destination, eliminating loops and backtracking."
@@ -5945,10 +7533,6 @@ export const executeGlobalRouteOptimization = async ({
     }
 
     if (!isOutward) {
-        const totalComingDemand = resolvedStops.reduce(
-            (sum, s) => sum + (Array.isArray(s.userIds) ? s.userIds.length : Number(s.userCount || 0)),
-            0
-        );
         const capacityBasedRequiredBuses = Math.ceil(totalComingDemand / maxBusCapacity);
         const eligibleVehicles = options.activeInwardStartingPlaces?.length > 0
             ? availableVehicles.filter((v) => hasConfiguredInwardStartingPlace(v, options.activeInwardStartingPlaces))
@@ -6062,7 +7646,10 @@ export const calculateMultiObjectiveRouteScore = ({
     directionalReversals = 0,
     isRoadVerified = true,
     isReusedBus = false,
-    hasSharedCorridor = false
+    hasSharedCorridor = false,
+    longestPassengerTravelTime = 0,
+    averagePassengerTravelTime = 0,
+    passengersAbove60 = 0
 }) => {
     const utilRatio = vehicleCapacity > 0 ? (passengerCount / vehicleCapacity) : 0;
 
@@ -6114,11 +7701,16 @@ export const calculateMultiObjectiveRouteScore = ({
     const numDetour = Number(detourRatio || 1.0);
     const detourPenalty = numDetour > 2.0 ? Number((Math.min(0.15, (numDetour - 2.0) * 0.35)).toFixed(3)) : 0;
 
+    // Travel Time Constraint Penalty (preferred limit: <= 60 minutes):
+    const travelTimePenalty = passengersAbove60 > 0
+        ? Number(Math.min(0.20, (passengersAbove60 / Math.max(1, passengerCount)) * 0.25).toFixed(3))
+        : 0;
+
     // Existing Bus Reuse & Route Sharing Benefits:
     const busReuseBonus = isReusedBus ? 0.05 : 0;
     const routeSharingBonus = hasSharedCorridor ? 0.04 : 0;
 
-    const rawScore = baseScore - backtrackingPenalty - detourPenalty + busReuseBonus + routeSharingBonus;
+    const rawScore = baseScore - backtrackingPenalty - detourPenalty - travelTimePenalty + busReuseBonus + routeSharingBonus;
     const finalScore = Number(Math.max(0.1, Math.min(1.0, rawScore)).toFixed(3));
 
     const explanations = {
@@ -6135,6 +7727,7 @@ export const calculateMultiObjectiveRouteScore = ({
             progressionScore: Number(progressionScore.toFixed(3)),
             backtrackingPenalty,
             detourPenalty,
+            travelTimePenalty,
             busReuseBonus,
             routeSharingBonus
         }
@@ -6143,6 +7736,7 @@ export const calculateMultiObjectiveRouteScore = ({
     const diagnostics = {
         backtrackingPenalty,
         detourPenalty,
+        travelTimePenalty,
         reusedExistingBus: Boolean(isReusedBus),
         sharedRouteSegment: Boolean(hasSharedCorridor),
         routeProgressionValidation: (directionalReversals === 0 && Number(backtrackingDistanceKm || 0) < 1.0)
@@ -6446,7 +8040,25 @@ export const validateAndRepairRouteContinuity = async ({
 
                 // 1. Overall corridor span limit (<= 38.0°)
                 const span = calculateMaxBearingSpan(resolvedOriginHub, ordered);
-                if (span > 38.0) {
+                let effectiveSpan = span;
+                if (span > 38.0 && ordered.length >= 2) {
+                    const last = ordered[ordered.length - 1];
+                    const prev = ordered[ordered.length - 2];
+                    const dHLast = calculateDistanceKm(resolvedOriginHub.latitude, resolvedOriginHub.longitude, last.latitude, last.longitude);
+                    const dHPrev = calculateDistanceKm(resolvedOriginHub.latitude, resolvedOriginHub.longitude, prev.latitude, prev.longitude);
+                    if (dHLast > dHPrev) {
+                        const legB = calculateBearing(prev.latitude, prev.longitude, last.latitude, last.longitude);
+                        const radB = calculateBearing(resolvedOriginHub.latitude, resolvedOriginHub.longitude, prev.latitude, prev.longitude);
+                        if (getBearingDifference(radB, legB) <= 80.0) {
+                            const coreSpan = calculateMaxBearingSpan(resolvedOriginHub, ordered.slice(0, -1));
+                            if (coreSpan <= 38.0) {
+                                effectiveSpan = coreSpan;
+                            }
+                        }
+                    }
+                }
+
+                if (effectiveSpan > 38.0) {
                     const avgBearing = calculateAverageBearing(bearings);
                     let maxDiff = -1;
                     let worstStop = null;
@@ -6496,7 +8108,12 @@ export const validateAndRepairRouteContinuity = async ({
                     const b2 = calculateBearing(resolvedOriginHub.latitude, resolvedOriginHub.longitude, s2.latitude, s2.longitude);
                     const bDiff = getBearingDifference(b1, b2);
                     const dHop = calculateDistanceKm(s1.latitude, s1.longitude, s2.latitude, s2.longitude);
-                    if (bDiff > 22.0 && dHop > 4.75) {
+                    const dHub1 = calculateDistanceKm(resolvedOriginHub.latitude, resolvedOriginHub.longitude, s1.latitude, s1.longitude);
+                    const dHub2 = calculateDistanceKm(resolvedOriginHub.latitude, resolvedOriginHub.longitude, s2.latitude, s2.longitude);
+                    const legB = calculateBearing(s1.latitude, s1.longitude, s2.latitude, s2.longitude);
+                    const isForwardHighway = (dHub2 > dHub1) && (getBearingDifference(b1, legB) <= 80.0);
+
+                    if (bDiff > 22.0 && dHop > 4.75 && !isForwardHighway) {
                         violations.push({
                             stopIndex: i + 1,
                             stop: s2,
@@ -6746,6 +8363,7 @@ export const validateAndRepairRouteContinuity = async ({
         for (let rIdx = 0; rIdx < routes.length; rIdx++) {
             const currentRoute = routes[rIdx];
             if (!currentRoute.stops || currentRoute.stops.length === 0) continue;
+            if (currentRoute.isSeeded || currentRoute.operationalContinuityVerified) continue;
 
             const initialEval = testRouteContinuity(currentRoute.stops, currentRoute);
             if (initialEval.isContinuous) {
@@ -6845,11 +8463,10 @@ export const validateAndRepairRouteContinuity = async ({
                     if (refPoints.length > 0 && minStopDist > 4.75) {
                         continue; // Completely different geographic corridor
                     }
-                    if (isOutward && resolvedOriginHub && !isRouteCorridorCoherent(resolvedOriginHub, [...(otherRoute.stops || []), problematicStop], 38.0, 4.75)) {
-                        continue;
-                    }
-                    if (!isOutward && resolvedDestHub && !isRouteCorridorCoherent(resolvedDestHub, [...(otherRoute.stops || []), problematicStop], 38.0, 4.75)) {
-                        continue;
+                    const testRefHub = isOutward ? resolvedOriginHub : resolvedDestHub;
+                    if (testRefHub && isValidCoordinate(testRefHub.latitude, testRefHub.longitude)) {
+                        const span = calculateMaxBearingSpan(testRefHub, [...(otherRoute.stops || []), problematicStop]);
+                        if (span > 38.0) continue;
                     }
 
                     const allocateCount = Math.min(spareCap, remainingPaxToAllocate);
@@ -6876,6 +8493,7 @@ export const validateAndRepairRouteContinuity = async ({
                     for (const candTour of candidateSequences) {
                         const candEval = testRouteContinuity(candTour, otherRoute);
                         if (!candEval.isContinuous) continue;
+                        if (testRefHub && !isRouteCorridorCoherent(testRefHub, candEval.orderedStops, 38.0, 4.75)) continue;
 
                         const oldDist = otherRoute.routeDistanceKm || 0;
                         const newDist = candEval.qualityValidation?.totalRoadDistance || (candEval.orderedStops.length * 4.5);

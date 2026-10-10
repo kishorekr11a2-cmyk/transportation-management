@@ -11,7 +11,7 @@ import { resolveLateResponsesForPlan, resolveLateResponsesForPreviousPlan, getAc
 import { clearActiveApprovedPlansCache } from "./studentTransportStatusService.js";
 import { buildConsecutiveSegmentRoadGeometry } from "./roadMatrixService.js";
 import { recordActivatedPlanPerformance, seedHistoricalRoutesIfEmpty } from "./historicalRouteService.js";
-import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes, consolidateAndRebalanceLowOccupancyOutwardRoutes, rebalanceInwardUnallocatedPassengers, mergeDuplicateStopsInRoute, isRouteCorridorCoherent, calculateMaxBearingSpan, isSamePlace } from "./routeOptimizationService.js";
+import { calculateMultiObjectiveRouteScore, executeGlobalRouteOptimization, buildGlobalOptimizationMatrix, validateAndRepairRouteContinuity, evaluateAndConsolidateRepeatedPhysicalStops, consolidateSmallPassengerRoutes, consolidateAndRebalanceLowOccupancyOutwardRoutes, rebalanceInwardUnallocatedPassengers, mergeDuplicateStopsInRoute, isRouteCorridorCoherent, calculateMaxBearingSpan, isSamePlace, calculatePassengerTravelTimeMetrics } from "./routeOptimizationService.js";
 import { ML_SYSTEM_STATUS } from "./mlPredictionService.js";
 import { DEFAULT_SOURCE_HUB } from "./mapGeocodingService.js";
 
@@ -130,11 +130,11 @@ export const normalizeCanonicalStopName = (str = "") => {
             mergedTokens.push(token);
         }
     }
-    if (singleCharBuffer) {
-        mergedTokens.push(singleCharBuffer);
-    }
-
-    return mergedTokens.join(" ");
+    let normalized = mergedTokens.join(" ");
+    if (normalized === "arappayalam") normalized = "arappalayam";
+    else if (normalized === "tiruparankundram") normalized = "thiruparankundram";
+    else if (normalized === "bbkulam") normalized = "bibikulam";
+    return normalized;
 };
 
 export const normalizeStopName = normalizeCanonicalStopName;
@@ -533,6 +533,23 @@ export const MADURAI_REGIONAL_STOPS = {
     "vandiyur": { latitude: 9.9200, longitude: 78.1650, displayName: "Vandiyur, Madurai" },
     "vilangudi": { latitude: 9.9510, longitude: 78.0920, displayName: "Vilangudi, Madurai" },
     "villapuram": { latitude: 9.8950, longitude: 78.1320, displayName: "Villapuram, Madurai" },
+    "munichalai": { latitude: 9.9180, longitude: 78.1300, displayName: "Munichalai, Madurai" },
+    "south gate": { latitude: 9.9120, longitude: 78.1200, displayName: "South Gate, Madurai" },
+    "thiruparankundram": { latitude: 9.8820, longitude: 78.0720, displayName: "Thiruparankundram, Madurai" },
+    "tiruparankundram": { latitude: 9.8820, longitude: 78.0720, displayName: "Thiruparankundram, Madurai" },
+    "pasumalai": { latitude: 9.8950, longitude: 78.0820, displayName: "Pasumalai, Madurai" },
+    "sundararajapuram": { latitude: 9.9050, longitude: 78.1020, displayName: "Sundararajapuram, Madurai" },
+    "kamarajar salai": { latitude: 9.9150, longitude: 78.1350, displayName: "Kamarajar Salai, Madurai" },
+    "madurai junction": { latitude: 9.9190, longitude: 78.1100, displayName: "Madurai Junction, Madurai" },
+    "periyar bus stand": { latitude: 9.9160, longitude: 78.1120, displayName: "Periyar Bus Stand, Madurai" },
+    "tvs nagar": { latitude: 9.8920, longitude: 78.0920, displayName: "TVS Nagar, Madurai" },
+    "melur road": { latitude: 9.9500, longitude: 78.1700, displayName: "Melur Road, Madurai" },
+    "narayanapuram": { latitude: 9.9520, longitude: 78.1450, displayName: "Narayanapuram, Madurai" },
+    "virattipathu": { latitude: 9.9355, longitude: 78.0774, displayName: "Virattipathu, Madurai" },
+    "achampathu": { latitude: 9.9387, longitude: 78.0657, displayName: "Achampathu, Madurai" },
+    "arappayalam": { latitude: 9.9322, longitude: 78.1025, displayName: "Arappalayam, Madurai" },
+    "k.k. nagar west": { latitude: 9.9250, longitude: 78.1460, displayName: "K.K. Nagar West, Madurai" },
+    "k.pudur": { latitude: 9.9520, longitude: 78.1460, displayName: "K.Pudur, Madurai" },
     "k l n college of engineering": { latitude: 9.8324, longitude: 78.1884, displayName: "K.L.N. College of Engineering, Pottapalayam" },
     "kln college of engineering": { latitude: 9.8324, longitude: 78.1884, displayName: "K.L.N. College of Engineering, Pottapalayam" },
     "klnce": { latitude: 9.8324, longitude: 78.1884, displayName: "K.L.N. College of Engineering, Pottapalayam" },
@@ -2235,13 +2252,14 @@ export const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
             continue;
         }
 
-        const normGroupName = normalizeTextBackend(group.name);
+        const rawGroupName = String(group?.name || group?.stopping || group?.stopName || "");
+        const normGroupName = normalizeTextBackend(rawGroupName);
 
         // 2. Check Regional Transit Gazetteer (instant 0ms lookup) - scoped to Madurai context
-        const isMaduraiContext = !group.city || group.city.toLowerCase() === "madurai";
-        const gazetteerMatch = isMaduraiContext ? (
+        const isMaduraiContext = !group?.city || String(group.city).toLowerCase() === "madurai";
+        const gazetteerMatch = isMaduraiContext && rawGroupName ? (
             MADURAI_REGIONAL_STOPS[normGroupName] ||
-            MADURAI_REGIONAL_STOPS[group.name.toLowerCase().trim()] ||
+            MADURAI_REGIONAL_STOPS[rawGroupName.toLowerCase().trim()] ||
             Object.entries(MADURAI_REGIONAL_STOPS).find(([k]) => normGroupName.includes(k) || k.includes(normGroupName))?.[1]
         ) : null;
 
@@ -2250,7 +2268,7 @@ export const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
                 ...group,
                 latitude: Number(gazetteerMatch.latitude),
                 longitude: Number(gazetteerMatch.longitude),
-                displayName: gazetteerMatch.displayName || `${group.name}, Madurai`,
+                displayName: gazetteerMatch.displayName || `${rawGroupName}, Madurai`,
                 source: "Regional Transit Gazetteer",
                 resolved: true
             };
@@ -2310,16 +2328,44 @@ export const resolveStopCoordinates = async (stoppingGroups, startingPoint) => {
                 if (results.length > 0) {
                     let best = results[0];
                     if (startingPoint && isValidCoordinate(startingPoint.latitude, startingPoint.longitude)) {
-                        // Apply hard geographic sanity check: prefer candidate closest to hub within regional transit radius
+                        // Global geographic & name-relevance candidate scoring:
+                        // Prioritize candidates that match group.name over generic city-level or district-level results
+                        const normTargetName = normalizeTextBackend(group.name);
+                        const targetTokens = normTargetName.split(/\s+/).filter((t) => t.length >= 3);
+
                         const scored = results
-                            .map((r) => ({
-                                ...r,
-                                distKm: calculateDistanceKm(startingPoint.latitude, startingPoint.longitude, r.latitude, r.longitude)
-                            }))
+                            .map((r, originalIdx) => {
+                                const distKm = calculateDistanceKm(startingPoint.latitude, startingPoint.longitude, r.latitude, r.longitude);
+                                const normCandidate = normalizeTextBackend(r.displayName || r.name || "");
+
+                                let nameScore = 0;
+                                if (normCandidate.includes(normTargetName)) {
+                                    nameScore += 100;
+                                } else {
+                                    const matchedTokens = targetTokens.filter((tok) => normCandidate.includes(tok));
+                                    nameScore += (matchedTokens.length * 25);
+                                }
+
+                                // Penalize broad city/state results if target has specific stop name
+                                if (targetTokens.length > 0 && !targetTokens.some((tok) => normCandidate.includes(tok))) {
+                                    nameScore -= 50;
+                                }
+
+                                return {
+                                    ...r,
+                                    distKm,
+                                    nameScore,
+                                    originalIdx
+                                };
+                            })
                             .filter((r) => r.distKm <= MAX_TRANSIT_RADIUS_KM);
 
                         if (scored.length > 0) {
-                            scored.sort((a, b) => a.distKm - b.distKm);
+                            scored.sort((a, b) => {
+                                if (b.nameScore !== a.nameScore) return b.nameScore - a.nameScore;
+                                if (a.originalIdx !== b.originalIdx) return a.originalIdx - b.originalIdx;
+                                return a.distKm - b.distKm;
+                            });
                             best = scored[0];
                         } else {
                             best = null;
@@ -4566,10 +4612,20 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
                 allRoutePassengerCountsMatchIds = false;
             }
 
-            // Capacity check (allows authorized standing passengers if specified)
+            // Capacity check (guaranteed seating is a hard constraint unless allowStanding is explicitly requested)
             const busStanding = Number(bus.standingPassengers || bus.overCapacityCount || 0);
-            if (busAssigned > (bus.capacity + busStanding)) {
-                allCapacitiesValid = false;
+            if (context?.allowStanding) {
+                if (busAssigned > (bus.capacity + busStanding)) {
+                    allCapacitiesValid = false;
+                }
+            } else if (context?.requireGuaranteedSeating) {
+                if (busAssigned > bus.capacity || busStanding > 0) {
+                    allCapacitiesValid = false;
+                }
+            } else {
+                if (busAssigned > (bus.capacity + busStanding)) {
+                    allCapacitiesValid = false;
+                }
             }
 
             // Vehicle uniqueness & availability check
@@ -4677,6 +4733,70 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
             }
         }
 
+        // P0 Requirement: Allocation-to-route consistency check
+        // Verify every assigned passenger's actual stopping area appears in their assigned bus's route sequence
+        const userToStopMap = new Map();
+        (confirmedUsers || []).forEach((u) => {
+            const uid = String(u._id || u.userId || u.id || "");
+            const stoppings = getUserStoppings(u);
+            if (uid && stoppings.length > 0) userToStopMap.set(uid, stoppings[0]);
+        });
+
+        const missingPassengerStops = [];
+        busList.forEach((bus) => {
+            const busPaxIds = bus.users || bus.passengerUserIds || [];
+            busPaxIds.forEach((uid) => {
+                const strId = String(uid);
+                const reqStop = userToStopMap.get(strId);
+                if (reqStop) {
+                    const canonReq = normalizeCanonicalStopName(reqStop);
+                    const isServed = (bus.stops || []).some((st) => {
+                        const cSt = normalizeCanonicalStopName(st.name);
+                        if (cSt === canonReq || isSamePlace(st, { name: reqStop })) return true;
+                        if (Array.isArray(st.representedStops) && st.representedStops.some((rs) => normalizeCanonicalStopName(rs) === canonReq || isSamePlace({ name: rs }, { name: reqStop }))) return true;
+                        if (Array.isArray(st.originalStopNames) && st.originalStopNames.some((rs) => normalizeCanonicalStopName(rs) === canonReq || isSamePlace({ name: rs }, { name: reqStop }))) return true;
+                        return false;
+                    });
+                    if (!isServed) {
+                        missingPassengerStops.push({
+                            userId: strId,
+                            stoppingArea: reqStop,
+                            bus: bus.vehicleName || bus.routeCode
+                        });
+                    }
+                }
+            });
+        });
+
+        // Verify every required stopping area with confirmed passengers is represented in the final route set
+        const allVisitedCanonStops = new Set();
+        busList.forEach((b) => (b.stops || []).forEach((st) => {
+            const c = normalizeCanonicalStopName(st.name);
+            if (c) allVisitedCanonStops.add(c);
+            if (Array.isArray(st.representedStops)) {
+                st.representedStops.forEach((rs) => {
+                    const rsc = normalizeCanonicalStopName(rs);
+                    if (rsc) allVisitedCanonStops.add(rsc);
+                });
+            }
+            if (Array.isArray(st.originalStopNames)) {
+                st.originalStopNames.forEach((rs) => {
+                    const rsc = normalizeCanonicalStopName(rs);
+                    if (rsc) allVisitedCanonStops.add(rsc);
+                });
+            }
+        }));
+
+        const missingRequiredAreas = [];
+        for (const [, reqStop] of userToStopMap.entries()) {
+            const canonReq = normalizeCanonicalStopName(reqStop);
+            if (canonReq && !allVisitedCanonStops.has(canonReq)) {
+                if (!missingRequiredAreas.includes(reqStop)) {
+                    missingRequiredAreas.push(reqStop);
+                }
+            }
+        }
+
         const checks = {
             allPassengersAssigned: (totalAssignedUsers + unallocatedCount) === totalComingUsers,
             allPassengersAccountedFor: (totalAssignedUsers + unallocatedCount) === totalComingUsers,
@@ -4684,14 +4804,20 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
             noPassengerUnallocated: totalComingUsers > totalAvailableCapacity ? true : (unallocatedCount === 0),
             noMissingPassengers: missingConfirmedCount === 0,
             demandConservation: totalAssignedUsers <= totalComingUsers,
+            everyPassengerStopRepresentedInAssignedBus: missingPassengerStops.length === 0,
+            everyRequiredStoppingAreaCovered: missingRequiredAreas.length === 0,
             stopPassengerSumMatches: allStopPassengerSumsMatch,
             routePassengerCountMatchesIds: allRoutePassengerCountsMatchIds,
             vehiclesExist: busList.every((b) => b.vehicleId),
             vehicleUniquenessValid: !duplicateVehicleFound,
             onlyAvailableVehiclesAssigned: allVehiclesAvailable,
             vehicleCountWithinLimit: busList.length <= (availableVehicles.length || Infinity),
-            capacitiesNotExceeded: allCapacitiesValid,
+            capacitiesNotExceeded: context?.requireGuaranteedSeating
+                ? (allCapacitiesValid && busList.every((b) => Number(b.assignedUsers ?? 0) <= Number(b.capacity || 0) && Number(b.standingPassengers || 0) === 0))
+                : allCapacitiesValid,
             vehicleCountsMatchAssignments: allStopPassengerSumsMatch && allRoutePassengerCountsMatchIds,
+            guaranteedSeatingSatisfied: busList.every((b) => Number(b.assignedUsers ?? 0) <= Number(b.capacity || 0) && Number(b.standingPassengers || 0) === 0),
+            noStandingPassengers: busList.every((b) => Number(b.standingPassengers || 0) === 0),
             roadRouteConnectivityValid: busList.every((b) => Array.isArray(b.stops) && b.stops.length > 0),
             routeEndpointsValid: allEndpointsValid,
             inwardStartingHubsValid: allInwardStartingHubsValid,
@@ -4715,6 +4841,8 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
             unallocatedCount,
             duplicatePassengerFound,
             missingConfirmedCount,
+            missingPassengerStops,
+            missingRequiredAreas,
             allContinuityValid
         };
     };
@@ -4756,6 +4884,8 @@ export const validateTransportationPlan = (planOrParams, maybeContext = {}) => {
     if (!audit.checks.allPassengersAccountedFor) failureReasons.push("Accounting mismatch: assigned + unallocated !== demand");
     if (!audit.checks.noPassengerDuplicated) failureReasons.push("Duplicate passenger assignment detected");
     if (!audit.checks.noMissingPassengers) failureReasons.push("Assigned passenger not found in confirmed users list");
+    if (!audit.checks.everyPassengerStopRepresentedInAssignedBus) failureReasons.push(`Assigned passenger stopping area missing from assigned bus route sequence (${audit.missingPassengerStops?.length || 0} affected)`);
+    if (!audit.checks.everyRequiredStoppingAreaCovered) failureReasons.push(`Required stopping area missing from route set: ${(audit.missingRequiredAreas || []).join(", ")}`);
     if (!audit.checks.capacitiesNotExceeded) failureReasons.push("One or more vehicles exceed rated seat capacity");
     if (!audit.checks.vehicleUniquenessValid) failureReasons.push("Same vehicle assigned to multiple simultaneous routes");
     if (!audit.checks.onlyAvailableVehiclesAssigned) failureReasons.push("Unavailable vehicles assigned");
@@ -5029,9 +5159,10 @@ export const buildAIPlan = async ({
     let continuityUnallocated = continuityRepairResult.unallocatedPassengers || [];
 
     // Outward Post-Continuity Fleet Consolidation & Passenger Rebalancing (Requirements 4, 5, 6, 7, 21, 22)
-    // If continuity repair introduced a low-occupancy fallback bus (or an under-utilized bus remains),
+    // If continuity repair introduced a low-occupancy fallback bus (above the operationally required fleet),
     // evaluate whether its stops can be continuously absorbed into adjacent corridor routes.
-    if (effectiveTripMode === "FROM_SOURCE" && chosenBuses.length > 1) {
+    const requiredFleetTarget = globalOpt?.fleetBalancing?.operationallyRequiredFleet || globalOpt?.fleetBalancing?.feasibleMinimum || 0;
+    if (effectiveTripMode === "FROM_SOURCE" && chosenBuses.length > requiredFleetTarget && chosenBuses.length > 1) {
         chosenBuses = consolidateAndRebalanceLowOccupancyOutwardRoutes({
             routes: chosenBuses,
             availableVehicles,
@@ -5242,6 +5373,16 @@ export const buildAIPlan = async ({
             };
             bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified);
             bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.failedSegments > 0);
+            bus.roadValidation = {
+                isRoadVerified: Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified),
+                allLegsValid: allLegsValid(finalRoadRoute),
+                distanceKm: bus.routeDistanceKm,
+                durationMin: bus.routeDurationMin,
+                segmentCount: finalRoadRoute?.segmentCount,
+                successfulSegments: finalRoadRoute?.successfulSegments,
+                failedSegments: finalRoadRoute?.failedSegments,
+                geometry: bus.roadGeometry
+            };
             bus.lastOutwardStop = bus.stops[bus.stops.length - 1] || null;
 
             const continuity = validateRouteCorridorContinuity(
@@ -5254,6 +5395,37 @@ export const buildAIPlan = async ({
             bus.isContinuous = Boolean(finalRoadRoute && finalRoadRoute.isContinuous && continuity.isContinuous);
             bus.detourRatio = continuity.detourRatio;
             bus.isDetour = continuity.isDetour;
+
+            // Passenger-Specific Cumulative OSRM Travel Time Metrics (College -> Stop)
+            const outwardTtMetrics = calculatePassengerTravelTimeMetrics({
+                direction: "OUTWARD",
+                sourceHub: resolvedSourceHub,
+                destinationHub: null,
+                stops: bus.stops,
+                roadGeometry: bus.roadGeometry,
+                totalRouteDurationMin: bus.routeDurationMin,
+                totalRouteDistanceKm: bus.routeDistanceKm
+            });
+            bus.travelTimeMetrics = outwardTtMetrics;
+            bus.totalRouteDuration = bus.routeDurationMin;
+            bus.longestPassengerTravelTime = outwardTtMetrics.longestPassengerTravelTime;
+            bus.averagePassengerTravelTime = outwardTtMetrics.averagePassengerTravelTime;
+            bus.passengersWithin60 = outwardTtMetrics.passengersWithin60;
+            bus.passengersAbove60 = outwardTtMetrics.passengersAbove60;
+            bus.allPassengersWithin60 = outwardTtMetrics.allPassengersWithin60;
+            bus.travelTimeValidation = {
+                status: outwardTtMetrics.travelTimeConstraintSatisfied ? "PASS" : "FAIL",
+                satisfied: outwardTtMetrics.travelTimeConstraintSatisfied,
+                longestPassengerTravelTime: outwardTtMetrics.longestPassengerTravelTime,
+                averagePassengerTravelTime: outwardTtMetrics.averagePassengerTravelTime,
+                passengersWithin60: outwardTtMetrics.passengersWithin60,
+                passengersAbove60: outwardTtMetrics.passengersAbove60,
+                allPassengersWithin60: outwardTtMetrics.allPassengersWithin60,
+                violatingStops: outwardTtMetrics.violatingStops,
+                warningReason: outwardTtMetrics.passengersAbove60 > 0
+                    ? "No available alternative vehicle/route can satisfy the current capacity and road-continuity constraints."
+                    : null
+            };
 
             // Required debug logging for outward continuous geometry
             console.log(`\n======================================================`);
@@ -5457,6 +5629,16 @@ export const buildAIPlan = async ({
             }
             bus.isRoadVerified = Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified);
             bus.isFallback = Boolean(!finalRoadRoute || finalRoadRoute.isFallback);
+            bus.roadValidation = {
+                isRoadVerified: Boolean(finalRoadRoute && finalRoadRoute.isRoadVerified),
+                allLegsValid: allLegsValid(finalRoadRoute),
+                distanceKm: bus.routeDistanceKm,
+                durationMin: bus.routeDurationMin,
+                segmentCount: finalRoadRoute?.segmentCount,
+                successfulSegments: finalRoadRoute?.successfulSegments,
+                failedSegments: finalRoadRoute?.failedSegments,
+                geometry: bus.roadGeometry
+            };
 
             const continuity = validateRouteCorridorContinuity(
                 bus,
@@ -5468,6 +5650,37 @@ export const buildAIPlan = async ({
             bus.isContinuous = continuity.isContinuous;
             bus.detourRatio = continuity.detourRatio;
             bus.isDetour = continuity.isDetour;
+
+            // Passenger-Specific Cumulative OSRM Travel Time Metrics (Boarding Stop -> College)
+            const inwardTtMetrics = calculatePassengerTravelTimeMetrics({
+                direction: "INWARD",
+                sourceHub: bus.startLocation || bus.inwardStartLocation || (bus.stops && bus.stops[0]),
+                destinationHub: resolvedDestinationHub,
+                stops: bus.stops,
+                roadGeometry: bus.roadGeometry,
+                totalRouteDurationMin: bus.routeDurationMin,
+                totalRouteDistanceKm: bus.routeDistanceKm
+            });
+            bus.travelTimeMetrics = inwardTtMetrics;
+            bus.totalRouteDuration = bus.routeDurationMin;
+            bus.longestPassengerTravelTime = inwardTtMetrics.longestPassengerTravelTime;
+            bus.averagePassengerTravelTime = inwardTtMetrics.averagePassengerTravelTime;
+            bus.passengersWithin60 = inwardTtMetrics.passengersWithin60;
+            bus.passengersAbove60 = inwardTtMetrics.passengersAbove60;
+            bus.allPassengersWithin60 = inwardTtMetrics.allPassengersWithin60;
+            bus.travelTimeValidation = {
+                status: inwardTtMetrics.travelTimeConstraintSatisfied ? "PASS" : "FAIL",
+                satisfied: inwardTtMetrics.travelTimeConstraintSatisfied,
+                longestPassengerTravelTime: inwardTtMetrics.longestPassengerTravelTime,
+                averagePassengerTravelTime: inwardTtMetrics.averagePassengerTravelTime,
+                passengersWithin60: inwardTtMetrics.passengersWithin60,
+                passengersAbove60: inwardTtMetrics.passengersAbove60,
+                allPassengersWithin60: inwardTtMetrics.allPassengersWithin60,
+                violatingStops: inwardTtMetrics.violatingStops,
+                warningReason: inwardTtMetrics.passengersAbove60 > 0
+                    ? "No available alternative vehicle/route can satisfy the current capacity and road-continuity constraints."
+                    : null
+            };
 
             // Label is derived AFTER continuity — requires OSRM validity + continuity + no backtracking + no inversion + operational continuity
             {
@@ -5641,7 +5854,24 @@ export const buildAIPlan = async ({
             firstPassengerStop: bus.firstPassengerStop || null,
             operationalContinuityVerified: bus.operationalContinuityVerified !== false,
             whySeparateRouteNeeded: bus.whySeparateRouteNeeded || null,
-            consolidationAttempts: bus.consolidationAttempts || []
+            consolidationAttempts: bus.consolidationAttempts || [],
+            totalRouteDuration: bus.totalRouteDuration ?? bus.routeDurationMin,
+            longestPassengerTravelTime: bus.longestPassengerTravelTime ?? 0,
+            averagePassengerTravelTime: bus.averagePassengerTravelTime ?? 0,
+            passengersWithin60: bus.passengersWithin60 ?? assignedUsers,
+            passengersAbove60: bus.passengersAbove60 ?? 0,
+            allPassengersWithin60: bus.allPassengersWithin60 !== false,
+            travelTimeMetrics: bus.travelTimeMetrics || null,
+            travelTimeValidation: bus.travelTimeValidation || {
+                status: (bus.passengersAbove60 ?? 0) === 0 ? "PASS" : "FAIL",
+                satisfied: (bus.passengersAbove60 ?? 0) === 0,
+                longestPassengerTravelTime: bus.longestPassengerTravelTime ?? 0,
+                averagePassengerTravelTime: bus.averagePassengerTravelTime ?? 0,
+                passengersWithin60: bus.passengersWithin60 ?? assignedUsers,
+                passengersAbove60: bus.passengersAbove60 ?? 0,
+                allPassengersWithin60: (bus.passengersAbove60 ?? 0) === 0,
+                warningReason: (bus.passengersAbove60 ?? 0) > 0 ? "No available alternative vehicle/route can satisfy the current capacity and road-continuity constraints." : null
+            }
         };
 
         const scoreResult = calculateMultiObjectiveRouteScore({
@@ -5656,7 +5886,10 @@ export const buildAIPlan = async ({
             directionalReversals: bus.continuityValidation?.directionalReversals || (bus.continuityValidation?.backtrackingDetected ? 1 : 0),
             isRoadVerified: bus.isRoadVerified !== false,
             isReusedBus: Boolean(bus.isReusedBus || bus.reusedExistingBus),
-            hasSharedCorridor: Boolean(bus.hasSharedCorridor)
+            hasSharedCorridor: Boolean(bus.hasSharedCorridor),
+            longestPassengerTravelTime: bus.longestPassengerTravelTime || 0,
+            averagePassengerTravelTime: bus.averagePassengerTravelTime || 0,
+            passengersAbove60: bus.passengersAbove60 || 0
         });
 
         routeObj.routeScore = scoreResult.totalScore;
@@ -5703,7 +5936,15 @@ export const buildAIPlan = async ({
                 reusedExistingBus: routeObj.reusedExistingBus,
                 backtrackingPenalty: routeObj.backtrackingPenalty,
                 routeProgressionValidation: routeObj.routeProgressionValidation,
-                diagnostics: routeObj.diagnostics
+                diagnostics: routeObj.diagnostics,
+                totalRouteDuration: routeObj.totalRouteDuration,
+                longestPassengerTravelTime: routeObj.longestPassengerTravelTime,
+                averagePassengerTravelTime: routeObj.averagePassengerTravelTime,
+                passengersWithin60: routeObj.passengersWithin60,
+                passengersAbove60: routeObj.passengersAbove60,
+                allPassengersWithin60: routeObj.allPassengersWithin60,
+                travelTimeMetrics: routeObj.travelTimeMetrics,
+                travelTimeValidation: routeObj.travelTimeValidation
             };
 
             routeObj.outward = {
@@ -5723,7 +5964,15 @@ export const buildAIPlan = async ({
                 reusedExistingBus: routeObj.reusedExistingBus,
                 backtrackingPenalty: routeObj.backtrackingPenalty,
                 routeProgressionValidation: routeObj.routeProgressionValidation,
-                diagnostics: routeObj.diagnostics
+                diagnostics: routeObj.diagnostics,
+                totalRouteDuration: routeObj.totalRouteDuration,
+                longestPassengerTravelTime: routeObj.longestPassengerTravelTime,
+                averagePassengerTravelTime: routeObj.averagePassengerTravelTime,
+                passengersWithin60: routeObj.passengersWithin60,
+                passengersAbove60: routeObj.passengersAbove60,
+                allPassengersWithin60: routeObj.allPassengersWithin60,
+                travelTimeMetrics: routeObj.travelTimeMetrics,
+                travelTimeValidation: routeObj.travelTimeValidation
             };
         } else {
             const lastOutwardStop = routeObj.lastOutwardStop || (standardizedStops.length > 0 ? standardizedStops[standardizedStops.length - 1] : null);
@@ -5755,7 +6004,15 @@ export const buildAIPlan = async ({
                 reusedExistingBus: routeObj.reusedExistingBus,
                 backtrackingPenalty: routeObj.backtrackingPenalty,
                 routeProgressionValidation: routeObj.routeProgressionValidation,
-                diagnostics: routeObj.diagnostics
+                diagnostics: routeObj.diagnostics,
+                totalRouteDuration: routeObj.totalRouteDuration,
+                longestPassengerTravelTime: routeObj.longestPassengerTravelTime,
+                averagePassengerTravelTime: routeObj.averagePassengerTravelTime,
+                passengersWithin60: routeObj.passengersWithin60,
+                passengersAbove60: routeObj.passengersAbove60,
+                allPassengersWithin60: routeObj.allPassengersWithin60,
+                travelTimeMetrics: routeObj.travelTimeMetrics,
+                travelTimeValidation: routeObj.travelTimeValidation
             };
 
             routeObj.inward = {
@@ -5775,7 +6032,15 @@ export const buildAIPlan = async ({
                 reusedExistingBus: routeObj.reusedExistingBus,
                 backtrackingPenalty: routeObj.backtrackingPenalty,
                 routeProgressionValidation: routeObj.routeProgressionValidation,
-                diagnostics: routeObj.diagnostics
+                diagnostics: routeObj.diagnostics,
+                totalRouteDuration: routeObj.totalRouteDuration,
+                longestPassengerTravelTime: routeObj.longestPassengerTravelTime,
+                averagePassengerTravelTime: routeObj.averagePassengerTravelTime,
+                passengersWithin60: routeObj.passengersWithin60,
+                passengersAbove60: routeObj.passengersAbove60,
+                allPassengersWithin60: routeObj.allPassengersWithin60,
+                travelTimeMetrics: routeObj.travelTimeMetrics,
+                travelTimeValidation: routeObj.travelTimeValidation
             };
         }
 
@@ -5902,7 +6167,7 @@ export const buildAIPlan = async ({
     const capacityShortage = totalAvailableCapacity < totalComingUsers && unassignedUsers > 0;
 
     // STEP 6: Multi-criteria plan certification via validateTransportationPlan
-    const certification = validateTransportationPlan(
+    let certification = validateTransportationPlan(
         { buses, unassignedUsers },
         {
             totalComingUsers,
@@ -5913,9 +6178,96 @@ export const buildAIPlan = async ({
             tripMode: effectiveTripMode,
             sourceHub: resolvedSourceHub,
             destinationHub: resolvedDestinationHub,
-            activeInwardStartingPlaces: startingPlacesList
+            activeInwardStartingPlaces: startingPlacesList,
+            requireGuaranteedSeating: true
         }
     );
+
+    // AUTOMATED REPAIR PASS: If any assigned passenger's stopping area is missing from their assigned bus,
+    // re-incorporate the missing stop into the assigned bus at the optimal road-network position using road resequencing
+    if (!certification.checks?.everyPassengerStopRepresentedInAssignedBus && Array.isArray(certification.missingPassengerStops) && certification.missingPassengerStops.length > 0) {
+        let repairedAny = false;
+        for (const missing of certification.missingPassengerStops) {
+            const targetBus = buses.find((b) => (b.vehicleName || b.routeCode) === missing.bus || b.routeCode === missing.bus);
+            if (!targetBus) continue;
+
+            // Find geographic coordinates for missing.stoppingArea
+            const stopInfo = resolvedStops.find((s) =>
+                normalizeCanonicalStopName(s.name) === normalizeCanonicalStopName(missing.stoppingArea) ||
+                isSamePlace(s, { name: missing.stoppingArea })
+            );
+
+            if (stopInfo && isValidCoordinate(stopInfo.latitude, stopInfo.longitude)) {
+                let existingStop = (targetBus.stops || []).find((s) =>
+                    normalizeCanonicalStopName(s.name) === normalizeCanonicalStopName(missing.stoppingArea) ||
+                    isSamePlace(s, stopInfo)
+                );
+
+                if (existingStop) {
+                    if (!Array.isArray(existingStop.userIds)) existingStop.userIds = [];
+                    if (!existingStop.userIds.includes(missing.userId)) {
+                        existingStop.userIds.push(missing.userId);
+                    }
+                    if (!Array.isArray(existingStop.representedStops)) existingStop.representedStops = [existingStop.name];
+                    if (!existingStop.representedStops.includes(missing.stoppingArea)) {
+                        existingStop.representedStops.push(missing.stoppingArea);
+                    }
+                    existingStop.userCount = existingStop.userIds.length;
+                    existingStop.passengerCount = existingStop.userCount;
+                    repairedAny = true;
+                } else {
+                    const newStop = {
+                        ...stopInfo,
+                        userIds: [missing.userId],
+                        userCount: 1,
+                        passengerCount: 1,
+                        representedStops: [missing.stoppingArea]
+                    };
+                    const updatedTour = [...(targetBus.stops || []), newStop];
+                    if (effectiveTripMode === "FROM_SOURCE") {
+                        const seq = sequenceOutwardRouteStops({
+                            departureHub: resolvedSourceHub,
+                            stops: updatedTour
+                        });
+                        targetBus.stops = seq.stops;
+                        targetBus.routeDistanceKm = seq.routeDistanceKm;
+                        targetBus.totalRouteDuration = seq.totalRouteDuration;
+                        targetBus.qualityValidation = seq.qualityValidation;
+                    } else {
+                        const startLoc = targetBus.startingHub || (targetBus.stops && targetBus.stops[0]);
+                        const seq = sequenceInwardRouteStops({
+                            startingHub: startLoc,
+                            destinationHub: resolvedDestinationHub,
+                            stops: updatedTour
+                        });
+                        targetBus.stops = seq.stops;
+                        targetBus.routeDistanceKm = seq.routeDistanceKm;
+                        targetBus.totalRouteDuration = seq.totalRouteDuration;
+                        targetBus.qualityValidation = seq.qualityValidation;
+                    }
+                    repairedAny = true;
+                }
+            }
+        }
+
+        if (repairedAny) {
+            certification = validateTransportationPlan(
+                { buses, unassignedUsers },
+                {
+                    totalComingUsers,
+                    availableVehicles,
+                    totalAvailableCapacity,
+                    resolvedStops,
+                    confirmedUsers,
+                    tripMode: effectiveTripMode,
+                    sourceHub: resolvedSourceHub,
+                    destinationHub: resolvedDestinationHub,
+                    activeInwardStartingPlaces: startingPlacesList,
+                    requireGuaranteedSeating: true
+                }
+            );
+        }
+    }
 
     const recommendations = Array.from(new Set([...(chosenLogs || consolidationLogs || [])]));
     const warnings = [];
@@ -5940,7 +6292,7 @@ export const buildAIPlan = async ({
     const stopToBusesMap = new Map();
     buses.forEach((b) => {
         (b.stops || []).forEach((st) => {
-            const k = st.name.toLowerCase().trim();
+            const k = normalizeCanonicalStopName(st.name || st.pointName || st.area || "") || st.name.toLowerCase().trim();
             if (!stopToBusesMap.has(k)) {
                 stopToBusesMap.set(k, {
                     name: st.name,
@@ -6015,11 +6367,28 @@ export const buildAIPlan = async ({
 
     const stopCountExplanation = `${uniqueStopCount} unique stopping areas covered across ${routeStopVisitCount} route stop visits on ${buses.length} active routes (${sharedStopCount} shared/split stops).`;
 
-    // Distinction: Minimum Capacity Requirement vs Feasible Route Requirement (Req 2)
-    const availCaps = (availableVehicles || []).map((v) => Number(v.capacity || v.seatCapacity || 0)).filter((c) => c > 0);
-    const maxBusCap = availCaps.length > 0 ? Math.max(...availCaps) : 70;
-    const minimumCapacityBuses = Math.max(1, Math.ceil(totalComingUsers / maxBusCap));
+    // Distinction: Minimum Capacity Requirement vs Feasible Route Requirement (Req 2, 14)
+    // Sort available eligible vehicle capacities descending and accumulate until >= totalComingUsers.
+    const availCaps = (availableVehicles || [])
+        .filter((v) => v.isActive !== false && String(v.status || "").toUpperCase() !== "INACTIVE")
+        .map((v) => Number(v.capacity || v.seatCapacity || 0))
+        .filter((c) => c > 0)
+        .sort((a, b) => b - a);
+
+    let accCap = 0;
+    let minimumCapacityBuses = 0;
+    for (const cap of availCaps) {
+        accCap += cap;
+        minimumCapacityBuses++;
+        if (accCap >= totalComingUsers) break;
+    }
+    if (minimumCapacityBuses === 0 && totalComingUsers > 0) {
+        const maxBusCap = availCaps.length > 0 ? availCaps[0] : 70;
+        minimumCapacityBuses = Math.max(1, Math.ceil(totalComingUsers / maxBusCap));
+    }
+    const theoreticalCapacityMinimum = minimumCapacityBuses;
     const feasibleBusCount = buses.length;
+    const minimumFeasibleFleet = feasibleBusCount;
     const allocatedBusCount = buses.length;
     const availableBusCount = (availableVehicles || []).length;
 
@@ -6056,9 +6425,9 @@ export const buildAIPlan = async ({
     const diff = feasibleBusCount - minimumCapacityBuses;
     let accurateFleetBalancingReason = null;
     if (diff > 0) {
-        accurateFleetBalancingReason = `Minimum capacity requirement: ${minimumCapacityBuses} buses. Feasible route allocation: ${feasibleBusCount} buses. ${diff === 1 ? "One additional bus is" : `${diff} additional buses are`} required because ${minimumCapacityBuses} buses cannot satisfy the current passenger distribution and routing constraints.`;
+        accurateFleetBalancingReason = `Theoretical capacity minimum: ${theoreticalCapacityMinimum} buses. Minimum feasible fleet: ${feasibleBusCount} buses. ${diff === 1 ? "One additional bus is" : `${diff} additional buses are`} required because ${theoreticalCapacityMinimum} buses cannot satisfy the actual vehicle capacities or routing constraints.`;
     } else {
-        accurateFleetBalancingReason = `Minimum capacity requirement: ${minimumCapacityBuses} buses. Feasible route allocation: ${feasibleBusCount} buses based on capacity and road network topology.`;
+        accurateFleetBalancingReason = `Theoretical capacity minimum: ${theoreticalCapacityMinimum} buses. Minimum feasible fleet: ${feasibleBusCount} buses based on capacity and road network topology.`;
     }
     if (reusedBusCount > 0 && oppBuses.length > 0) {
         accurateFleetBalancingReason += ` Preferred vehicle reuse from ${oppDirectionName} operation enabled (${reusedBusCount}/${oppositeBusCount} vehicles reused).`;
@@ -6067,7 +6436,12 @@ export const buildAIPlan = async ({
     const updatedFleetBalancing = {
         ...(globalOpt?.fleetBalancing || {}),
         minimumCapacityBuses,
+        theoreticalMinimum: minimumCapacityBuses,
+        theoreticalCapacityMinimum,
         feasibleBusCount,
+        minimumFeasibleFleet,
+        operationallyRequiredFleet: feasibleBusCount,
+        feasibleMinimum: feasibleBusCount,
         allocatedBusCount,
         availableBusCount,
         reusedVehicles,
@@ -6076,7 +6450,8 @@ export const buildAIPlan = async ({
         vehicleReuseRate: oppositeBusCount > 0 ? Number(((reusedBusCount / oppositeBusCount) * 100).toFixed(1)) : 0,
         reusedVehicleNames,
         oppositeBusCount,
-        decisionReason: accurateFleetBalancingReason
+        decisionReason: globalOpt?.fleetBalancing?.decisionReason || accurateFleetBalancingReason,
+        candidateFleetEvaluations: globalOpt?.fleetBalancing?.candidateFleetEvaluations || []
     };
 
     // Console audit summary
@@ -6085,9 +6460,27 @@ export const buildAIPlan = async ({
     buses.forEach((b) => {
         const first = b.stops[0]?.name || "None";
         const last = b.stops[b.stops.length - 1]?.name || "None";
-        console.log(`  [${b.routeCode}] ${b.vehicleName} (${b.capacity} seats, ${b.assignedUsers} passengers, ${b.stops.length} stops, ${b.routeDistanceKm}km): ${first} -> ${last} | Detour=${b.detourRatio || 1.2}`);
+        console.log(`  [${b.routeCode}] ${b.vehicleName} (${b.capacity} seats, ${b.assignedUsers} passengers, ${b.stops.length} stops, ${b.routeDistanceKm}km): ${first} -> ${last} | Detour=${b.detourRatio || 1.2} | MaxPaxTime=${b.longestPassengerTravelTime}m | AvgPaxTime=${b.averagePassengerTravelTime}m`);
     });
     console.log("============================================================");
+
+    // Network-Level Passenger Travel Time Aggregation
+    const totalAssignedPax = buses.reduce((s, b) => s + (b.assignedUsers || 0), 0);
+    const totalPaxWithin60 = buses.reduce((s, b) => s + (b.passengersWithin60 ?? b.assignedUsers ?? 0), 0);
+    const totalPaxAbove60 = buses.reduce((s, b) => s + (b.passengersAbove60 || 0), 0);
+    const networkLongestPaxTime = buses.length > 0 ? Math.max(...buses.map((b) => b.longestPassengerTravelTime || 0)) : 0;
+    const sumWeightedPaxTime = buses.reduce((s, b) => s + ((b.averagePassengerTravelTime || 0) * (b.assignedUsers || 0)), 0);
+    const networkAveragePaxTime = totalAssignedPax > 0 ? Number((sumWeightedPaxTime / totalAssignedPax).toFixed(1)) : 0;
+    const allPaxWithin60 = totalPaxAbove60 === 0;
+
+    const travelTimeSummary = {
+        longestPassengerTravelTime: networkLongestPaxTime,
+        averagePassengerTravelTime: networkAveragePaxTime,
+        passengersWithin60: totalPaxWithin60,
+        passengersAbove60: totalPaxAbove60,
+        allPassengersWithin60: allPaxWithin60,
+        validationStatus: allPaxWithin60 ? "PASS" : "FAIL"
+    };
 
     return {
         planType: "AI",
@@ -6125,7 +6518,9 @@ export const buildAIPlan = async ({
         unallocatedUsers: unassignedUsers,
         unallocatedPassengersCount: unassignedUsers,
         minimumCapacityBuses,
+        theoreticalMinimum: minimumCapacityBuses,
         feasibleBusCount,
+        feasibleMinimum: feasibleBusCount,
         feasibleFleetCount: feasibleBusCount,
         allocatedBusCount,
         availableBusCount,
@@ -6136,6 +6531,9 @@ export const buildAIPlan = async ({
         totalStandingPassengers,
         totalOverCapacityBuses,
         hasOverCapacity: totalStandingPassengers > 0,
+        isSeatingGuaranteed: totalStandingPassengers === 0,
+        isFeasible: totalStandingPassengers === 0 && unassignedUsers === 0 && Boolean(certification?.isCertified),
+        feasibilityStatus: (totalStandingPassengers === 0 && unassignedUsers === 0 && Boolean(certification?.isCertified)) ? "FEASIBLE" : "INFEASIBLE",
         unallocatedReason,
         duplicateUsers: 0,
         physicalFleetCapacity,
@@ -6171,8 +6569,8 @@ export const buildAIPlan = async ({
         reasonForAdditionalVehicle: globalOpt?.reasonForAdditionalVehicle || null,
         fleetBalancing: updatedFleetBalancing,
         validationMessage: effectiveTripMode === "TO_DESTINATION"
-            ? `${buses.length} buses are required for ${totalComingUsers} passengers (min capacity: ${minimumCapacityBuses} buses, feasible fleet: ${feasibleBusCount} buses). All selected inward buses have configured starting places. Ready to generate.`
-            : `The independent AI engine allocated continuous road routes for all ${assignedUsers} confirmed passengers across ${buses.length} available vehicles (min capacity: ${minimumCapacityBuses} buses, feasible fleet: ${feasibleBusCount} buses, ${allocatedSeats} total seats, ${Math.max(0, allocatedSeats - assignedUsers)} unused seats).`,
+            ? `${buses.length} buses are required for ${totalComingUsers} passengers (theoretical capacity minimum: ${minimumCapacityBuses} buses, minimum feasible fleet: ${feasibleBusCount} buses). All selected inward buses have configured starting places. Ready to generate.`
+            : `The independent AI engine allocated continuous road routes for all ${assignedUsers} confirmed passengers across ${buses.length} available vehicles (theoretical capacity minimum: ${minimumCapacityBuses} buses, minimum feasible fleet: ${feasibleBusCount} buses, ${allocatedSeats} total seats, ${Math.max(0, allocatedSeats - assignedUsers)} unused seats).`,
         warnings,
         recommendationsList: recommendations,
         consolidationAudit: chosenAudit || consolidationAudit,
@@ -6190,6 +6588,20 @@ export const buildAIPlan = async ({
         reasonsForSharedStops,
         totalRouteStopVisits: routeStopVisitCount,
         stopCountExplanation,
+        longestPassengerTravelTime: networkLongestPaxTime,
+        averagePassengerTravelTime: networkAveragePaxTime,
+        passengersWithin60: totalPaxWithin60,
+        passengersAbove60: totalPaxAbove60,
+        allPassengersWithin60: allPaxWithin60,
+        travelTimeSummary,
+        travelTimeValidation: {
+            status: allPaxWithin60 ? "PASS" : "FAIL",
+            satisfied: allPaxWithin60,
+            longestPassengerTravelTime: networkLongestPaxTime,
+            averagePassengerTravelTime: networkAveragePaxTime,
+            passengersWithin60: totalPaxWithin60,
+            passengersAbove60: totalPaxAbove60
+        },
         certification,
         createdAt: new Date().toISOString()
     };
@@ -7361,7 +7773,10 @@ export const generateAgentRecommendations = async (payload = {}) => {
                         primary.latitude, primary.longitude,
                         candidate.latitude, candidate.longitude
                     );
-                    if (distBetween < NEAR_DUPLICATE_THRESHOLD_KM) {
+                    const isSameOrAlias = isSamePlace(primary, candidate) ||
+                        normalizeCanonicalStopName(primary.name) === normalizeCanonicalStopName(candidate.name);
+
+                    if (distBetween < NEAR_DUPLICATE_THRESHOLD_KM && isSameOrAlias) {
                         // Merge: the one with more passengers becomes primary
                         const primaryDemand = Array.isArray(primary.userIds) ? primary.userIds.length : (primary.userCount || 0);
                         const candidateDemand = Array.isArray(candidate.userIds) ? candidate.userIds.length : (candidate.userCount || 0);
@@ -7389,8 +7804,16 @@ export const generateAgentRecommendations = async (payload = {}) => {
                         survivor.passengerUserIds = mergedIds;
                         survivor.passengerCount = mergedIds.length;
                         survivor.users = Array.from(mergedUsersMap.values());
+                        survivor.representedStops = Array.from(new Set([
+                            ...(survivor.representedStops || [survivor.name]),
+                            ...(other.representedStops || [other.name])
+                        ]));
+                        survivor.originalStopNames = Array.from(new Set([
+                            ...(survivor.originalStopNames || [survivor.name]),
+                            ...(other.originalStopNames || [other.name])
+                        ]));
 
-                        console.log(`[NearDupMerge] Merged near-duplicate stop '${other.name}' (~${Math.round(distBetween * 1000)}m) into '${survivor.name}' — combined ${survivor.userCount} passengers`);
+                        console.log(`[NearDupMerge] Merged near-duplicate alias stop '${other.name}' (~${Math.round(distBetween * 1000)}m) into '${survivor.name}' — combined ${survivor.userCount} passengers`);
 
                         primary = survivor;
                         absorbed.add(mj);
@@ -7548,19 +7971,24 @@ export const generateAgentRecommendations = async (payload = {}) => {
         assertions.push(`ASSERT 2: Over-allocation: assigned (${totalAssigned}) > total demand (${totalComingUsers})`);
     }
 
-    // ASSERT 3: allocatedPassengers <= allocatedCapacity + totalStandingPassengers
-    const totalStandingAllowance = Number(aiPlan.totalStandingPassengers || 0);
-    if (totalAssigned > totalAllocatedSeats + totalStandingAllowance) {
-        assertions.push(`ASSERT 3: Vehicle capacity exceeded: assigned (${totalAssigned}) > allocated capacity (${totalAllocatedSeats}) + standing (${totalStandingAllowance})`);
+    // ASSERT 3: allocatedPassengers <= allocatedCapacity (Guaranteed Seating as hard constraint)
+    if (totalAssigned > totalAllocatedSeats) {
+        assertions.push(`ASSERT 3: Vehicle capacity exceeded: assigned (${totalAssigned}) > allocated capacity (${totalAllocatedSeats}). Guaranteed seating constraint violated.`);
     }
 
-    // ASSERT 4: Every route passenger count <= vehicle capacity + standing passengers
+    // ASSERT 4: Every route passenger count <= vehicle capacity (zero standing passengers permitted)
     aiPlan.buses.forEach((b) => {
         const bStanding = Number(b.standingPassengers || b.overCapacityCount || 0);
-        if (b.assignedUsers > b.capacity + bStanding) {
-            assertions.push(`ASSERT 4: Route ${b.routeCode} assignedUsers (${b.assignedUsers}) > capacity (${b.capacity}) + standing (${bStanding})`);
+        if (b.assignedUsers > b.capacity || bStanding > 0) {
+            assertions.push(`ASSERT 4: Route ${b.routeCode || b.vehicleName} assignedUsers (${b.assignedUsers}) > capacity (${b.capacity}) or contains ${bStanding} standing passenger(s). Guaranteed seating violated.`);
         }
     });
+
+    // ASSERT 4B: Plan must contain zero standing passengers
+    const planStandingTotal = Number(aiPlan.totalStandingPassengers || 0);
+    if (planStandingTotal > 0) {
+        assertions.push(`ASSERT 4B: Guaranteed seating violated: plan contains ${planStandingTotal} standing passenger(s).`);
+    }
 
     // ASSERT 5: Every passenger is assigned to at most one route
     const seenPassengerIds = new Set();
@@ -7670,6 +8098,40 @@ export const generateAgentRecommendations = async (payload = {}) => {
         assertions.push(`ASSERT 18: Statistics validation failed: bus passenger sum (${sumBusPax}) does not match assigned total (${totalAssigned})`);
     }
 
+    // ASSERT 19: Allocation-to-route consistency (Every passenger's actual stopping area must appear on assigned bus)
+    const userToStopMap = new Map();
+    confirmedUsers.forEach((u) => {
+        const uid = String(u._id || u.userId || u.id || "");
+        const stoppings = getUserStoppings(u);
+        if (uid && stoppings.length > 0) userToStopMap.set(uid, stoppings[0]);
+    });
+
+    const paxMissingStops = [];
+    aiPlan.buses.forEach((b) => {
+        const bUsers = b.users || b.passengerUserIds || [];
+        bUsers.forEach((uid) => {
+            const strId = String(uid);
+            const reqStop = userToStopMap.get(strId);
+            if (reqStop) {
+                const canonReq = normalizeCanonicalStopName(reqStop);
+                const isServed = (b.stops || []).some((st) => {
+                    const cSt = normalizeCanonicalStopName(st.name);
+                    if (cSt === canonReq || isSamePlace(st, { name: reqStop })) return true;
+                    if (Array.isArray(st.representedStops) && st.representedStops.some((rs) => normalizeCanonicalStopName(rs) === canonReq || isSamePlace({ name: rs }, { name: reqStop }))) return true;
+                    if (Array.isArray(st.originalStopNames) && st.originalStopNames.some((rs) => normalizeCanonicalStopName(rs) === canonReq || isSamePlace({ name: rs }, { name: reqStop }))) return true;
+                    return false;
+                });
+                if (!isServed) {
+                    paxMissingStops.push({ userId: strId, stop: reqStop, bus: b.vehicleName || b.routeCode });
+                }
+            }
+        });
+    });
+
+    if (paxMissingStops.length > 0) {
+        assertions.push(`ASSERT 19: Allocation-to-route consistency failed: ${paxMissingStops.length} passenger(s) assigned to a bus lacking their stopping area (${paxMissingStops.slice(0, 5).map((p) => `${p.userId}@${p.stop}->${p.bus}`).join(", ")})`);
+    }
+
     if (assertions.length > 0) {
         console.error("AI Plan Consistency Assertions Failed:", assertions);
         return {
@@ -7728,7 +8190,12 @@ export const generateAgentRecommendations = async (payload = {}) => {
             continuityPassed: aiPlan.buses.every((b) => b.isContinuous),
             startingHubsPassed: effectiveTripMode === "TO_DESTINATION"
                 ? aiPlan.buses.every((b) => Boolean(b.startLocation || b.inwardStartLocation || b.startingHub))
-                : true
+                : true,
+            travelTimePassed: aiPlan.allPassengersWithin60 !== false,
+            longestPassengerTravelTime: aiPlan.longestPassengerTravelTime || 0,
+            averagePassengerTravelTime: aiPlan.averagePassengerTravelTime || 0,
+            passengersWithin60: aiPlan.passengersWithin60 || totalAssigned,
+            passengersAbove60: aiPlan.passengersAbove60 || 0
         }
     };
 
@@ -7823,7 +8290,14 @@ export const generateAgentRecommendations = async (payload = {}) => {
             splitStopCount: aiPlan.splitStopCount,
             mappedStoppingAreas: aiPlan.uniqueStopCount,
             capacityShortage: aiPlan.capacityShortage,
-            stopCountExplanation: aiPlan.stopCountExplanation
+            stopCountExplanation: aiPlan.stopCountExplanation,
+            longestPassengerTravelTime: aiPlan.longestPassengerTravelTime || 0,
+            averagePassengerTravelTime: aiPlan.averagePassengerTravelTime || 0,
+            passengersWithin60: aiPlan.passengersWithin60 || finalAllocationResult.allocatedPassengers,
+            passengersAbove60: aiPlan.passengersAbove60 || 0,
+            allPassengersWithin60: aiPlan.allPassengersWithin60 !== false,
+            travelTimeValidation: aiPlan.travelTimeValidation || null,
+            travelTimeSummary: aiPlan.travelTimeSummary || null
         },
         stoppingGroups,
         aiPlan,
@@ -8188,8 +8662,12 @@ export const persistPlanToUsers = async (
 
                 if (match) {
                     const { bus, stop, allocBase } = match;
-                    const matchedStop = stop || (bus.stops || []).find(s => (s.userIds || []).some(id => String(id).toLowerCase().trim() === uId || String(id).toLowerCase().trim() === uUserId)) || (bus.stops || []).find(s => s.name?.toLowerCase().trim() === uStop) || bus.stops?.[0];
-                    const stopName = matchedStop?.name || stop?.name || student.stoppings || "Assigned Stop";
+                    const matchedStop = stop ||
+                        (bus?.stops || []).find(s => (s.userIds || []).some(id => String(id).toLowerCase().trim() === uId || String(id).toLowerCase().trim() === uUserId)) ||
+                        (bus?.stops || []).find(s => normalizeCanonicalStopName(s.name) === normalizeCanonicalStopName(uStop) || isSamePlace(s, { name: uStop })) ||
+                        (bus?.stops || []).find(s => (Array.isArray(s.representedStops) && s.representedStops.some(rs => normalizeCanonicalStopName(rs) === normalizeCanonicalStopName(uStop))) || (Array.isArray(s.originalStopNames) && s.originalStopNames.some(rs => normalizeCanonicalStopName(rs) === normalizeCanonicalStopName(uStop)))) ||
+                        null;
+                    const stopName = student.stoppings || matchedStop?.name || stop?.name || "Assigned Stop";
                     const studentIndexInBus = (bus.users || []).findIndex(
                         (id) => String(id).toLowerCase().trim() === uId || String(id).toLowerCase().trim() === uUserId
                     );

@@ -13,3 +13,7 @@ backend/whatsapp/auth/
 node_modules/
 
 .env
+
+# Local test data and WhatsApp credentials
+/backend/test_users_400.xlsx
+/backend/whatsapp/auth/
