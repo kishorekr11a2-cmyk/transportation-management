@@ -2,10 +2,16 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     HiArrowLeft,
+    HiArrowRight,
     HiPaperAirplane,
     HiCheckCircle,
     HiExclamationCircle,
-    HiTruck
+    HiTruck,
+    HiInformationCircle,
+    HiExclamationTriangle,
+    HiUsers,
+    HiCheck,
+    HiXMark
 } from "react-icons/hi2";
 import { toast } from "react-hot-toast";
 import {
@@ -134,82 +140,182 @@ function Automation() {
 
     return (
         <div className="automation-page">
-            {/* Header */}
-            <header className="automation-header">
-                <div className="automation-header__left">
+            <div className="automation-page-shell">
+                {/* ── Top Navigation Bar: Back Button ── */}
+                <div className="automation-top-bar">
                     <button
                         type="button"
                         className="automation-back-btn"
                         onClick={() => navigate("/admin-dashboard")}
-                        aria-label="Go back to Dashboard"
+                        aria-label="Back to Admin Dashboard"
                     >
                         <HiArrowLeft size={16} />
                         Back
                     </button>
-                    <div>
-                        <p className="automation-brand__label">Transportation Notification Automation</p>
-                        <h1 className="automation-brand__title">Automation</h1>
-                    </div>
-                </div>
-            </header>
-
-            {/* Main Content */}
-            <main className="automation-container">
-                <div className="automation-intro">
-                    <h2 className="automation-intro__title">Transportation Notification Automation</h2>
-                    <p className="automation-intro__sub">
-                        Trigger automated travel status notifications for registered passengers via n8n.
-                    </p>
                 </div>
 
-                <div className="automation-card">
-                    <div className="automation-card__header">
-                        <div className="automation-card__icon" aria-hidden="true">
-                            <HiPaperAirplane size={22} />
-                        </div>
-                        <h3 className="automation-card__title">
-                            Travel Status WhatsApp Notification
-                        </h3>
+                {/* ── TOP ILLUSTRATED BANNER CARD ── */}
+                <header className="automation-banner">
+                    <div className="automation-banner__content">
+                        <span className="automation-banner__pill">WhatsApp & Automation Control</span>
+                        <h1 className="automation-banner__title">Automation</h1>
+                        <p className="automation-banner__desc">
+                            Manage WhatsApp travel-status notifications and approved transportation allocation messages for registered students.
+                        </p>
+                    </div>
+                </header>
+
+                {/* ── SECTION 2: Action Status Bar ── */}
+                <section className="automation-center-header" aria-label="Notification Center Control">
+                    <div className="automation-center-header__left">
+                        <h2 className="automation-center-title">WhatsApp Notification Center</h2>
+                        <p className="automation-center-sub">
+                            Choose a notification action to send transportation messages.
+                        </p>
                     </div>
 
-                    <div className="automation-card__body">
-                        <p className="automation-card__desc">
-                            Send a WhatsApp message to users who have a phone number registered in the system.
-                        </p>
-                        <p className="automation-card__desc">
-                            Users without a phone number will be skipped.
-                        </p>
-
-                        <div className="automation-card__note">
-                            <strong>Note:</strong> Clicking <strong>Send Travel Status</strong> queries registered users, verifies each user's registered phone number, and dispatches individual travel status WhatsApp notifications via n8n.
+                    <div className="automation-center-header__right">
+                        <div className="automation-header-status-box">
+                            <span className="automation-status-tag">Action Status:</span>
+                            {statusState === "ready" && (
+                                <div className="automation-status-pill automation-status-pill--ready">
+                                    <span className="automation-status-dot" />
+                                    <span>Ready</span>
+                                </div>
+                            )}
+                            {statusState === "sending" && (
+                                <div className="automation-status-pill automation-status-pill--sending">
+                                    <span className="automation-spinner-tiny" aria-hidden="true" />
+                                    <span>Sending...</span>
+                                </div>
+                            )}
+                            {statusState === "success" && (
+                                <div className="automation-status-pill automation-status-pill--success">
+                                    <HiCheckCircle size={15} />
+                                    <span>Success</span>
+                                </div>
+                            )}
+                            {statusState === "error" && (
+                                <div className="automation-status-pill automation-status-pill--error">
+                                    <HiExclamationCircle size={15} />
+                                    <span>Error</span>
+                                </div>
+                            )}
                         </div>
                     </div>
+                </section>
 
-                    {/* Actions Area */}
-                    <div className="automation-card__actions">
-                        <div className="automation-btn-actions-row">
-                            {/* Original Send Travel Status Button */}
+                {/* ── SECTION 3: Two Equal-Sized Gradient Action Cards (Style 1) ── */}
+                <section className="automation-cards-grid" aria-label="Notification Actions">
+                    {/* LEFT CARD — TRAVEL STATUS NOTIFICATION */}
+                    <div className="automation-action-card automation-card--travel">
+                        <div className="automation-card__top">
+                            <div className="automation-card__icon-holder automation-icon--travel" aria-hidden="true">
+                                <HiPaperAirplane size={20} />
+                            </div>
+                            <span className="automation-card__badge-label automation-badge--travel">
+                                TRAVEL RESPONSES
+                            </span>
+                        </div>
+
+                        <div className="automation-card__content">
+                            <h3 className="automation-card__title">Travel Status Notification</h3>
+                            <p className="automation-card__desc">
+                                Send WhatsApp travel-status requests to registered students with valid phone numbers.
+                            </p>
+
+                            <div className="automation-card__info-box automation-info--travel">
+                                <div className="automation-response-options">
+                                    <span className="automation-chip automation-chip--coming">
+                                        <HiCheck size={14} /> COMING
+                                    </span>
+                                    <span className="automation-chip automation-chip--not-coming">
+                                        <HiXMark size={14} /> NOT COMING
+                                    </span>
+                                </div>
+                                <p className="automation-card__info-text">
+                                    Students can submit one valid travel response per reset cycle.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="automation-card__bottom">
                             <button
                                 type="button"
-                                className="automation-btn-primary"
+                                className="automation-pill-btn automation-btn--blue"
                                 id="btn-send-travel-status"
                                 onClick={handleSendTravelStatus}
                                 disabled={statusState === "sending"}
                             >
-                                {statusState === "sending" && activeAction === "travel-status" ? (
-                                    <>
-                                        <span className="automation-spinner" aria-hidden="true" />
-                                        Sending...
-                                    </>
-                                ) : (
-                                    "Send Travel Status"
-                                )}
+                                <span className="automation-pill-btn__icon">
+                                    <HiPaperAirplane size={18} />
+                                </span>
+                                <span className="automation-pill-btn__text">
+                                    {statusState === "sending" && activeAction === "travel-status" ? (
+                                        <>
+                                            <span className="automation-spinner" aria-hidden="true" />
+                                            Sending...
+                                        </>
+                                    ) : (
+                                        "Send Travel Status"
+                                    )}
+                                </span>
+                                <span className="automation-pill-btn__arrow">
+                                    <HiArrowRight size={17} />
+                                </span>
                             </button>
+                        </div>
+                    </div>
 
-                            {/* Send Allocation Details Button */}
+                    {/* RIGHT CARD — ALLOCATION DETAILS NOTIFICATION */}
+                    <div className="automation-action-card automation-card--allocation">
+                        <div className="automation-card__top">
+                            <div className="automation-card__icon-holder automation-icon--allocation" aria-hidden="true">
+                                <HiTruck size={20} />
+                            </div>
+                            <span className="automation-card__badge-label automation-badge--allocation">
+                                APPROVED ALLOCATIONS
+                            </span>
+                        </div>
+
+                        <div className="automation-card__content">
+                            <h3 className="automation-card__title">Allocation Details Notification</h3>
+                            <p className="automation-card__desc">
+                                Send approved bus, route, direction, and stopping-area details to allocated students.
+                            </p>
+
+                            <div className={`automation-card__info-box ${isAllocationReady ? "automation-info--ready" : "automation-info--locked"}`}>
+                                {isAllocationReady ? (
+                                    <div className="automation-readiness-positive">
+                                        <span className="automation-readiness-chip ready">
+                                            <HiCheckCircle size={15} /> Ready to Dispatch
+                                        </span>
+                                        <p className="automation-card__info-text">
+                                            {allocationReadiness?.reason || "Approved plan with allocated students ready for dispatch."}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="automation-readiness-negative">
+                                        <span className="automation-readiness-chip locked">
+                                            <HiInformationCircle size={15} /> Prerequisites Pending
+                                        </span>
+                                        <p className="automation-card__info-text">
+                                            Enabled only when an approved transportation plan exists and students have actually been allocated transportation.
+                                            {allocationReadiness?.reason && (
+                                                <span className="automation-readiness-reason">
+                                                    {" "}({allocationReadiness.reason})
+                                                </span>
+                                            )}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="automation-card__bottom">
                             <button
                                 type="button"
-                                className="automation-btn-success"
+                                className="automation-pill-btn automation-btn--emerald"
                                 id="btn-send-allocation-details"
                                 onClick={handleSendAllocationDetails}
                                 disabled={
@@ -222,106 +328,133 @@ function Automation() {
                                         : "Send confirmed bus and route details to allocated students"
                                 }
                             >
-                                {statusState === "sending" &&
+                                <span className="automation-pill-btn__icon">
+                                    <HiTruck size={18} />
+                                </span>
+                                <span className="automation-pill-btn__text">
+                                    {statusState === "sending" &&
                                     activeAction === "allocation" ? (
-                                    <>
-                                        <span
-                                            className="automation-spinner"
-                                            aria-hidden="true"
-                                        />
-                                        Sending Details...
-                                    </>
-                                ) : (
-                                    <>
-                                        <HiTruck size={18} />
-                                        Send Allocation Details
-                                    </>
-                                )}
+                                        <>
+                                            <span
+                                                className="automation-spinner"
+                                                aria-hidden="true"
+                                            />
+                                            Sending Details...
+                                        </>
+                                    ) : (
+                                        "Send Allocation Details"
+                                    )}
+                                </span>
+                                <span className="automation-pill-btn__arrow">
+                                    <HiArrowRight size={17} />
+                                </span>
                             </button>
                         </div>
+                    </div>
+                </section>
 
-                        {!isAllocationReady && (
-                            <div className="automation-allocation-hint">
-                                ℹ️{" "}
-                                <strong>Send Allocation Details</strong> is
-                                enabled only when an approved transportation
-                                plan exists and students have actually been
-                                allocated transportation.
-                                {allocationReadiness?.reason && (
-                                    <span>
-                                        {" "}
-                                        ({allocationReadiness.reason})
-                                    </span>
-                                )}
-                            </div>
-                        )}
+
+
+                {/* ── SECTION 5: Notification Status Panel ── */}
+                <section className="automation-status-panel" aria-label="Notification Dispatch Status">
+                    <div className="automation-status-panel__info">
+                        <span className="automation-status-panel__label">Notification Status</span>
+                        <p className="automation-status-panel__desc">
+                            {statusMessage || "System is idle and ready to dispatch."}
+                        </p>
                     </div>
 
-                    {/* Status feedback section */}
-                    <div className="automation-status-box">
-                        <span className="automation-status-label">Status:</span>
-
+                    <div className="automation-status-panel__badge">
                         {statusState === "ready" && (
-                            <div className="automation-status-pill automation-status-pill--ready">
+                            <span className="automation-panel-pill ready">
                                 <span className="automation-status-dot" />
-                                <span>● {statusMessage}</span>
-                            </div>
+                                Ready
+                            </span>
                         )}
-
                         {statusState === "sending" && (
-                            <div className="automation-status-pill automation-status-pill--sending">
-                                <span className="automation-status-dot" />
-                                <span>{statusMessage}</span>
-                            </div>
+                            <span className="automation-panel-pill sending">
+                                <span className="automation-spinner-tiny" aria-hidden="true" />
+                                {activeAction === "allocation" ? "Dispatching Allocation..." : "Dispatching Travel Status..."}
+                            </span>
                         )}
-
                         {statusState === "success" && (
-                            <div className="automation-status-pill automation-status-pill--success">
+                            <span className="automation-panel-pill success">
                                 <HiCheckCircle size={16} />
-                                <span>{statusMessage}</span>
-                            </div>
+                                Completed Successfully
+                            </span>
                         )}
-
                         {statusState === "error" && (
-                            <div className="automation-status-pill automation-status-pill--error">
+                            <span className="automation-panel-pill error">
                                 <HiExclamationCircle size={16} />
-                                <span>{statusMessage}</span>
-                            </div>
+                                Dispatch Failed
+                            </span>
                         )}
                     </div>
+                </section>
 
-                    {/* Summary metrics display */}
-                    {summary && (
-                        <div className="automation-summary-card">
-                            <h4 className="automation-summary-title">Execution Summary</h4>
-                            <div className="automation-summary-grid">
-                                <div className="automation-stat-box">
+                {/* ── SECTION 6: Conditional Execution Summary ── */}
+                {summary && (
+                    <section className="automation-summary-section" aria-label="Execution Summary">
+                        <div className="automation-summary-header">
+                            <h3 className="automation-summary-title">Execution Summary</h3>
+                            <span className="automation-summary-sub">Results from latest dispatch cycle</span>
+                        </div>
+                        <div className="automation-summary-grid">
+                            <div className="automation-stat-card automation-stat--total">
+                                <div className="automation-stat-icon">
+                                    <HiUsers size={20} />
+                                </div>
+                                <div className="automation-stat-info">
                                     <span className="automation-stat-label">Total Users</span>
                                     <span className="automation-stat-value">{summary.totalUsers ?? 0}</span>
                                 </div>
-                                {summary.totalAllocated !== undefined && (
-                                    <div className="automation-stat-box">
+                            </div>
+
+                            {summary.totalAllocated !== undefined && (
+                                <div className="automation-stat-card automation-stat--allocated">
+                                    <div className="automation-stat-icon">
+                                        <HiTruck size={20} />
+                                    </div>
+                                    <div className="automation-stat-info">
                                         <span className="automation-stat-label">Total Allocated</span>
                                         <span className="automation-stat-value">{summary.totalAllocated}</span>
                                     </div>
-                                )}
-                                <div className="automation-stat-box automation-stat-box--success">
+                                </div>
+                            )}
+
+                            <div className="automation-stat-card automation-stat--sent">
+                                <div className="automation-stat-icon">
+                                    <HiCheckCircle size={20} />
+                                </div>
+                                <div className="automation-stat-info">
                                     <span className="automation-stat-label">Messages Sent</span>
                                     <span className="automation-stat-value">{summary.sentCount ?? 0}</span>
                                 </div>
-                                <div className="automation-stat-box automation-stat-box--warning">
-                                    <span className="automation-stat-label">Users Skipped (No Phone)</span>
+                            </div>
+
+                            <div className="automation-stat-card automation-stat--skipped">
+                                <div className="automation-stat-icon">
+                                    <HiExclamationTriangle size={20} />
+                                </div>
+                                <div className="automation-stat-info">
+                                    <span className="automation-stat-label">Users Skipped</span>
                                     <span className="automation-stat-value">{summary.skippedCount ?? 0}</span>
                                 </div>
-                                <div className="automation-stat-box automation-stat-box--danger">
+                            </div>
+
+                            <div className="automation-stat-card automation-stat--failed">
+                                <div className="automation-stat-icon">
+                                    <HiExclamationCircle size={20} />
+                                </div>
+                                <div className="automation-stat-info">
                                     <span className="automation-stat-label">Failed Messages</span>
                                     <span className="automation-stat-value">{summary.failedCount ?? 0}</span>
                                 </div>
                             </div>
                         </div>
-                    )}
-                </div>
-            </main>
+                    </section>
+                )}
+            </div>
         </div>
     );
 }

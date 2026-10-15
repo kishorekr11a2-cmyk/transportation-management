@@ -1,71 +1,131 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { HiArrowLeft } from "react-icons/hi";
 import {
-    MdPlace,
-    MdAdd,
-    MdEdit,
-    MdDelete,
-    MdClose,
-    MdRefresh,
-    MdSearch,
-    MdCheckCircle,
-    MdCancel,
-    MdInfo
-} from "react-icons/md";
-import { HiArrowLeft } from "react-icons/hi2";
-
-import api from "../services/api";
+    getInwardStartingPlaces,
+    addInwardStartingPlace,
+    updateInwardStartingPlace,
+    deleteInwardStartingPlace,
+    toggleInwardStartingPlaceStatus,
+    getAIData,
+    getActivePlan
+} from "../services/aiAgentService";
 import LocationSearchBox from "../components/LocationSearchBox";
+import "../css/AIAgent.css";
 import "../css/InwardStartingPlaces.css";
+
+const getBusCapacity = (bus) =>
+    Number(
+        bus?.capacity ??
+        bus?.seatCapacity ??
+        bus?.seats ??
+        bus?.totalSeats ??
+        0
+    );
+
+const getBusName = (bus, index = 0) =>
+    bus?.vehicleName ||
+    bus?.name ||
+    bus?.busName ||
+    `Bus ${index + 1}`;
 
 const InwardStartingPlaces = () => {
     const navigate = useNavigate();
 
-    const [places, setPlaces] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState("");
+    const [places, setPlaces] = useState(() => {
+        try {
+            const cached = localStorage.getItem("cached_inward_starting_places");
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            }
+        } catch { }
+        return [];
+    });
+    const [loading, setLoading] = useState(() => {
+        try {
+            const cached = localStorage.getItem("cached_inward_starting_places");
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) return false;
+            }
+        } catch { }
+        return true;
+    });
+    const [aiData, setAiData] = useState(null);
+    const [activePlan, setActivePlan] = useState(null);
 
     // Modal state
     const [showModal, setShowModal] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [editId, setEditId] = useState(null);
+    const [modalError, setModalError] = useState("");
+    const [editingPlace, setEditingPlace] = useState(null);
+    const [modalBusId, setModalBusId] = useState("");
+    const [modalLocation, setModalLocation] = useState(null);
 
-    // Form fields
-    const [formData, setFormData] = useState({
-        name: "",
-        address: "",
-        latitude: "",
-        longitude: "",
-        active: true
-    });
+    // Prevent background scroll when modal is open
+    useEffect(() => {
+        if (showModal) {
+            const originalOverflow = document.body.style.overflow;
+            document.body.style.overflow = "hidden";
+            return () => {
+                document.body.style.overflow = originalOverflow;
+            };
+        }
+    }, [showModal]);
 
-    // Delete confirmation modal state
-    const [deleteTarget, setDeleteTarget] = useState(null);
-    const [deleting, setDeleting] = useState(false);
-
-    // ── Fetch Starting Places ──────────────────────────────
-    const fetchStartingPlaces = async () => {
+    // Fetch starting places immediately and fleet metrics in background
+    const loadStartingPlaces = async (showLoadingSpinner = true) => {
         try {
-            setLoading(true);
-            const res = await api.get("/inward-starting-places");
-            if (res.data?.success) {
-                setPlaces(res.data.startingPlaces || []);
+            if (showLoadingSpinner && (!places || places.length === 0)) {
+                setLoading(true);
+            }
+            const res = await getInwardStartingPlaces();
+            if (res?.success && Array.isArray(res.startingPlaces)) {
+                setPlaces(res.startingPlaces);
+                try {
+                    localStorage.setItem("cached_inward_starting_places", JSON.stringify(res.startingPlaces));
+                } catch { }
             }
         } catch (err) {
-            console.error("Failed to load inward starting places:", err);
-            toast.error(err.response?.data?.message || "Failed to load starting places");
+            console.error("Failed to load starting places:", err);
+            toast.error("Failed to load starting places");
         } finally {
             setLoading(false);
         }
     };
 
+    const loadFleetMetrics = async () => {
+        try {
+            const [aiRes, planRes] = await Promise.allSettled([
+                getAIData(),
+                getActivePlan({ direction: "INWARD", planType: "AI" })
+            ]);
+            if (aiRes.status === "fulfilled" && aiRes.value) {
+                setAiData(aiRes.value);
+            }
+            if (planRes.status === "fulfilled" && planRes.value?.success) {
+                setActivePlan(planRes.value.inwardPlan || planRes.value.plan || null);
+            }
+        } catch (err) {
+            console.warn("Failed to load fleet metrics:", err);
+        }
+    };
+
+    const loadAllData = async (showLoadingSpinner = true) => {
+        await Promise.all([
+            loadStartingPlaces(showLoadingSpinner),
+            loadFleetMetrics()
+        ]);
+    };
+
     useEffect(() => {
-        fetchStartingPlaces();
+        loadAllData(true);
 
         const handleSync = () => {
             if (document.visibilityState === "visible") {
-                fetchStartingPlaces();
+                loadAllData(false);
             }
         };
 
@@ -78,492 +138,425 @@ const InwardStartingPlaces = () => {
         };
     }, []);
 
-    // ── Form Handlers ──────────────────────────────────────
+    // ── Fleet Readiness Calculations (Exact logic matching AI Agent) ──
+    const studentCount = Number(
+        aiData?.confirmedUserCount ??
+        aiData?.comingUsers ??
+        activePlan?.summary?.confirmedUsers ??
+        0
+    );
+
+    const vehicleList = useMemo(() => {
+        return aiData?.availableVehicles || aiData?.vehicles || [];
+    }, [aiData]);
+
+    const theoreticalMinBuses = Number(
+        aiData?.requiredBusesCount ??
+        activePlan?.summary?.requiredBusesCount ??
+        activePlan?.theoreticalMinimum ??
+        activePlan?.minimumCapacityBuses ??
+        (studentCount > 0
+            ? Math.max(1, Math.ceil(studentCount / (vehicleList?.[0]?.capacity || 65)))
+            : 1)
+    );
+
+    const feasibleBusesCount = Number(
+        activePlan?.feasibleBusCount ??
+        activePlan?.buses?.length ??
+        theoreticalMinBuses
+    );
+
+    const activeStartingPlacesCount = useMemo(() => {
+        return places.filter((p) => p.active).length;
+    }, [places]);
+
+    const hasActiveInwardPlan = Boolean(
+        activePlan ||
+        (Array.isArray(activePlan?.buses) && activePlan.buses.length > 0)
+    );
+
+    const requiredBusTarget = hasActiveInwardPlan ? feasibleBusesCount : theoreticalMinBuses;
+    const hasSufficientStartingPlaces = activeStartingPlacesCount >= requiredBusTarget;
+
+    // ── Form Modal Handlers ──
     const handleOpenAddModal = () => {
-        setEditId(null);
-        setFormData({
-            name: "",
-            address: "",
-            latitude: "",
-            longitude: "",
-            active: true
-        });
+        setEditingPlace(null);
+        setModalBusId("");
+        setModalLocation(null);
+        setModalError("");
         setShowModal(true);
     };
 
     const handleOpenEditModal = (place) => {
-        setEditId(place._id);
-        setFormData({
-            name: place.name || "",
+        setEditingPlace(place);
+        setModalBusId(place.vehicleId || place.busId || place._id || "");
+        setModalLocation({
+            name: place.locationName || place.name || "",
+            displayName: place.address || place.locationName || place.name || "",
             address: place.address || "",
-            latitude: place.latitude !== undefined ? String(place.latitude) : "",
-            longitude: place.longitude !== undefined ? String(place.longitude) : "",
-            active: place.active !== undefined ? place.active : true
+            latitude: place.latitude,
+            longitude: place.longitude
         });
+        setModalError("");
         setShowModal(true);
     };
 
     const handleCloseModal = () => {
         setShowModal(false);
-        setEditId(null);
+        setEditingPlace(null);
+        setModalBusId("");
+        setModalLocation(null);
+        setModalError("");
     };
 
-    const handleLocationSelect = (loc) => {
-        if (!loc) return;
-        setFormData((prev) => ({
-            ...prev,
-            name: prev.name || loc.name || loc.displayName || "",
-            address: loc.address || loc.displayName || prev.address,
-            latitude: loc.latitude !== undefined ? String(loc.latitude) : prev.latitude,
-            longitude: loc.longitude !== undefined ? String(loc.longitude) : prev.longitude
-        }));
-        toast.success(`Coordinates loaded for "${loc.name || 'Selected Place'}"`);
-    };
+    const handleSave = async (e) => {
+        if (e) e.preventDefault();
+        setModalError("");
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        const cleanName = formData.name.trim();
-        const latNum = Number(formData.latitude);
-        const lngNum = Number(formData.longitude);
-
-        if (!cleanName) {
-            toast.error("Please enter a starting place name.");
+        if (!modalBusId) {
+            setModalError("Please select an available bus.");
             return;
         }
 
-        if (
-            formData.latitude === "" ||
-            formData.longitude === "" ||
-            !Number.isFinite(latNum) ||
-            !Number.isFinite(lngNum)
-        ) {
-            toast.error("Please provide valid latitude and longitude coordinates.");
+        if (!modalLocation || !modalLocation.latitude || !modalLocation.longitude) {
+            setModalError("Please select a valid starting location.");
             return;
         }
 
-        if (latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
-            toast.error("Coordinates out of geographic range.");
-            return;
-        }
+        const chosenBus = vehicleList.find(
+            (b) => String(b._id || b.id) === String(modalBusId)
+        );
+        const busName = chosenBus
+            ? getBusName(chosenBus)
+            : (editingPlace?.busName || modalBusId);
+        const capacity = chosenBus
+            ? getBusCapacity(chosenBus)
+            : (editingPlace?.capacity || 0);
 
         try {
             setSaving(true);
             const payload = {
-                name: cleanName,
-                address: formData.address.trim(),
-                latitude: latNum,
-                longitude: lngNum,
-                active: Boolean(formData.active)
+                vehicleId: String(modalBusId),
+                busId: String(modalBusId),
+                busName,
+                capacity,
+                locationName: modalLocation.name || modalLocation.displayName,
+                name: modalLocation.name || modalLocation.displayName,
+                address: modalLocation.address || modalLocation.displayName || "",
+                latitude: Number(modalLocation.latitude),
+                longitude: Number(modalLocation.longitude),
+                active: true
             };
 
-            if (editId) {
-                const res = await api.put(`/inward-starting-places/${editId}`, payload);
-                toast.success(res.data?.message || "Starting place updated successfully");
+            let res;
+            if (editingPlace?._id) {
+                res = await updateInwardStartingPlace(editingPlace._id, payload);
             } else {
-                const res = await api.post("/inward-starting-places", payload);
-                toast.success(res.data?.message || "Starting place added successfully");
+                res = await addInwardStartingPlace(payload);
             }
 
-            handleCloseModal();
-            fetchStartingPlaces();
+            if (res?.success) {
+                toast.success(res.message || "Starting place saved successfully");
+                handleCloseModal();
+                await loadAllData(false);
+            } else {
+                setModalError(res?.message || "Failed to save starting place");
+            }
         } catch (err) {
-            console.error("Save starting place error:", err);
-            toast.error(err.response?.data?.message || "Failed to save starting place");
+            const msg =
+                err?.response?.data?.message ||
+                err.message ||
+                "Failed to save starting place";
+            setModalError(msg);
         } finally {
             setSaving(false);
         }
     };
 
-    // ── Toggle Status ──────────────────────────────────────
-    const handleToggleStatus = async (place) => {
+    const handleToggleStartingPlace = async (id) => {
         try {
-            const res = await api.patch(`/inward-starting-places/${place._id}/toggle`);
-            toast.success(res.data?.message || "Status updated");
-            setPlaces((prev) =>
-                prev.map((p) => (p._id === place._id ? { ...p, active: !p.active } : p))
+            const res = await toggleInwardStartingPlaceStatus(id);
+            if (res?.success) {
+                toast.success(res.message || "Status updated");
+                await loadAllData(false);
+            } else {
+                toast.error(res?.message || "Failed to toggle status");
+            }
+        } catch (err) {
+            toast.error(
+                err?.response?.data?.message || err.message || "Failed to toggle status"
             );
-        } catch (err) {
-            console.error("Toggle status error:", err);
-            toast.error(err.response?.data?.message || "Failed to update status");
         }
     };
 
-    // ── Delete ─────────────────────────────────────────────
-    const handleDelete = async () => {
-        if (!deleteTarget) return;
+    const handleDeleteStartingPlace = async (id) => {
+        if (!window.confirm("Are you sure you want to remove this inward starting place configuration?")) {
+            return;
+        }
+
         try {
-            setDeleting(true);
-            const res = await api.delete(`/inward-starting-places/${deleteTarget._id}`);
-            toast.success(res.data?.message || "Starting place deleted");
-            setDeleteTarget(null);
-            fetchStartingPlaces();
+            const res = await deleteInwardStartingPlace(id);
+            if (res?.success) {
+                toast.success("Starting place removed");
+                await loadAllData(false);
+            } else {
+                toast.error(res?.message || "Failed to delete");
+            }
         } catch (err) {
-            console.error("Delete error:", err);
-            toast.error(err.response?.data?.message || "Failed to delete starting place");
-        } finally {
-            setDeleting(false);
+            toast.error(
+                err?.response?.data?.message || err.message || "Failed to delete"
+            );
         }
     };
-
-    // ── Metrics ────────────────────────────────────────────
-    const totalCount = places.length;
-    const activeCount = useMemo(() => places.filter((p) => p.active).length, [places]);
-    const inactiveCount = totalCount - activeCount;
-
-    const filteredPlaces = useMemo(() => {
-        if (!searchQuery.trim()) return places;
-        const q = searchQuery.toLowerCase();
-        return places.filter(
-            (p) =>
-                p.name?.toLowerCase().includes(q) ||
-                p.address?.toLowerCase().includes(q)
-        );
-    }, [places, searchQuery]);
 
     return (
-        <div className="inward-places-page">
-            {/* ── Header ── */}
-            <header className="inward-places-header">
-                <div className="inward-places-header__left">
+        <div className="ai-page">
+            {/* Campus & Bus Background Illustration (Ocean Breeze Theme) */}
+            <div className="ai-hero-bg" aria-hidden="true">
+                <div className="ai-hero-illustration"></div>
+            </div>
+
+            {/* Header */}
+            <div className="ai-header inward-page-header">
+                <div className="ai-header-left">
                     <button
-                        className="inward-places-back-btn"
-                        onClick={() => navigate("/admin-dashboard")}
-                        aria-label="Go back"
+                        type="button"
+                        className="ai-back-btn"
+                        onClick={() => navigate("/ai-agent")}
+                        aria-label="Go back to AI Agent"
                     >
                         <HiArrowLeft size={16} />
                         Back
                     </button>
-
-                    <div className="inward-places-brand">
-                        <div className="inward-places-brand__icon" aria-hidden="true">
-                            <MdPlace size={24} />
-                        </div>
-                        <div>
-                            <p className="inward-places-brand__label">Route Origins Configuration</p>
-                            <h1 className="inward-places-brand__title">Inward Starting Places</h1>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="inward-places-header__right">
-                    <p className="inward-places-subtitle">
-                        Configure origin hubs from which inward buses will depart before picking up passengers.
+                    <h1 className="ai-page-title">INWARD BUS STARTING PLACES</h1>
+                    <p className="ai-page-subtitle">
+                        Configure and manage the starting hub/location for each inward bus.
                     </p>
-                    <button
-                        className="inward-places-add-btn"
-                        onClick={handleOpenAddModal}
-                        aria-label="Add starting place"
-                    >
-                        <MdAdd size={18} />
-                        Add Starting Place
-                    </button>
-                </div>
-            </header>
-
-            {/* ── Informational Notice ── */}
-            <div className="inward-places-info-banner">
-                <MdInfo size={20} />
-                <div>
-                    <strong>How Inward Starting Places Work:</strong> When the AI generates an <b>INWARD</b> transportation plan, each bus route will dynamically start from the configured active starting place closest to its passenger pickup cluster (e.g. <i>Starting Hub → Pickups → College</i>). At least one active place is required for inward plan generation.
-                </div>
-            </div>
-
-            {/* ── Stats Row ── */}
-            <div className="inward-places-stats">
-                <div className="inward-places-stat-card">
-                    <p className="inward-places-stat-card__label">Total Configured</p>
-                    <p className="inward-places-stat-card__val">{totalCount}</p>
-                </div>
-                <div className="inward-places-stat-card active">
-                    <p className="inward-places-stat-card__label">Active Hubs</p>
-                    <p className="inward-places-stat-card__val">{activeCount}</p>
-                </div>
-                <div className="inward-places-stat-card inactive">
-                    <p className="inward-places-stat-card__label">Inactive / Standby</p>
-                    <p className="inward-places-stat-card__val">{inactiveCount}</p>
-                </div>
-            </div>
-
-            {/* ── Table Card ── */}
-            <div className="inward-places-table-card">
-                <div className="inward-places-table-toolbar">
-                    <div className="inward-places-search-box">
-                        <MdSearch size={18} color="#64748b" />
-                        <input
-                            type="text"
-                            placeholder="Filter starting places..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                    </div>
-                    <button
-                        className="inward-places-back-btn"
-                        onClick={fetchStartingPlaces}
-                        title="Refresh list"
-                    >
-                        <MdRefresh size={16} />
-                        Refresh
-                    </button>
                 </div>
 
-                <div className="inward-places-table-container">
-                    {loading ? (
-                        <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>
-                            Loading inward starting places...
-                        </div>
-                    ) : filteredPlaces.length === 0 ? (
-                        <div className="inward-places-empty">
-                            <MdPlace className="inward-places-empty__icon" />
-                            <h3>No inward starting places found</h3>
-                            <p>
-                                {searchQuery
-                                    ? "No starting places match your filter query."
-                                    : "No inward starting places have been configured yet. Add at least one starting place before generating inward routes."}
-                            </p>
-                            {!searchQuery && (
-                                <button
-                                    className="inward-places-add-btn"
-                                    onClick={handleOpenAddModal}
-                                >
-                                    <MdAdd size={18} />
-                                    Add First Starting Place
-                                </button>
-                            )}
-                        </div>
-                    ) : (
-                        <table className="inward-places-table">
-                            <thead>
-                                <tr>
-                                    <th>Starting Place Name</th>
-                                    <th>Address / Landmark</th>
-                                    <th>Coordinates</th>
-                                    <th>Status</th>
-                                    <th style={{ textAlign: "right" }}>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredPlaces.map((place) => (
-                                    <tr key={place._id}>
-                                        <td className="place-name-cell">
-                                            {place.name}
-                                        </td>
-                                        <td className="place-address-cell" title={place.address}>
-                                            {place.address || <span style={{ color: "#64748b" }}>—</span>}
-                                        </td>
-                                        <td>
-                                            <span className="inward-places-coord-badge">
-                                                {Number(place.latitude).toFixed(4)}, {Number(place.longitude).toFixed(4)}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span
-                                                className={`status-pill ${place.active ? "active" : "inactive"}`}
-                                                style={{ cursor: "pointer" }}
-                                                onClick={() => handleToggleStatus(place)}
-                                                title="Click to toggle active status"
-                                            >
-                                                {place.active ? (
-                                                    <>
-                                                        <MdCheckCircle size={13} />
-                                                        Active
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <MdCancel size={13} />
-                                                        Inactive
-                                                    </>
-                                                )}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div
-                                                className="inward-places-actions"
-                                                style={{ justifyContent: "flex-end" }}
-                                            >
-                                                <button
-                                                    className="action-icon-btn toggle"
-                                                    onClick={() => handleToggleStatus(place)}
-                                                    title={place.active ? "Deactivate" : "Activate"}
-                                                    aria-label="Toggle active status"
-                                                >
-                                                    {place.active ? <MdCancel size={16} /> : <MdCheckCircle size={16} />}
-                                                </button>
-                                                <button
-                                                    className="action-icon-btn edit"
-                                                    onClick={() => handleOpenEditModal(place)}
-                                                    title="Edit place details"
-                                                    aria-label="Edit starting place"
-                                                >
-                                                    <MdEdit size={16} />
-                                                </button>
-                                                <button
-                                                    className="action-icon-btn delete"
-                                                    onClick={() => setDeleteTarget(place)}
-                                                    title="Delete starting place"
-                                                    aria-label="Delete starting place"
-                                                >
-                                                    <MdDelete size={16} />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
-            </div>
-
-            {/* ── Add / Edit Modal ── */}
-            {showModal && (
-                <div className="inward-modal-overlay" onClick={handleCloseModal}>
+                <div className="ai-header-actions">
                     <div
-                        className="inward-modal"
-                        onClick={(e) => e.stopPropagation()}
+                        className={`ai-ready ${
+                            hasSufficientStartingPlaces ? "ready" : "invalidated"
+                        }`}
                     >
-                        <div className="inward-modal__header">
-                            <h2>{editId ? "Edit Inward Starting Place" : "Add Inward Starting Place"}</h2>
+                        <span className="ready-dot"></span>
+                        {hasSufficientStartingPlaces
+                            ? "Fleet Ready to Generate"
+                            : "Configuration Required"}
+                    </div>
+                </div>
+            </div>
+
+            {/* Management Section */}
+            <div className="inward-mgmt-container">
+                {/* ── Fleet Readiness Information Banner ── */}
+                <div
+                    className={`inward-readiness-banner ${
+                        hasSufficientStartingPlaces ? "banner-ready" : "banner-warning"
+                    }`}
+                >
+                    <span className="banner-icon">
+                        {hasSufficientStartingPlaces ? "✓" : "⚠️"}
+                    </span>
+                    <div className="banner-text">
+                        {hasSufficientStartingPlaces
+                            ? hasActiveInwardPlan && feasibleBusesCount !== theoreticalMinBuses
+                                ? `${feasibleBusesCount} buses operationally required for ${studentCount} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses, operationally required fleet: ${feasibleBusesCount} buses). All selected inward buses have configured starting places. Ready to generate.`
+                                : `${feasibleBusesCount || theoreticalMinBuses} buses operationally required for ${studentCount} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses). All selected inward buses have configured starting places. Ready to generate.`
+                            : `Theoretical capacity minimum: ${theoreticalMinBuses} buses for ${studentCount} passengers. Starting locations configured for ${activeStartingPlacesCount} buses. Configuration required before generating inward routes.`}
+                    </div>
+                </div>
+
+                {/* ── Control Toolbar ── */}
+                <div className="inward-mgmt-toolbar">
+                    <div className="inward-toolbar-left">
+                        <span className="inward-count-badge">
+                            Configured Starting Places ({places.length})
+                        </span>
+                        <span className="inward-active-count-badge">
+                            {activeStartingPlacesCount} Active
+                        </span>
+                    </div>
+
+                    <button
+                        type="button"
+                        className="configure-start-place-btn"
+                        onClick={handleOpenAddModal}
+                    >
+                        + Configure Bus Starting Place
+                    </button>
+                </div>
+
+                {/* ── Starting Hub Cards Grid ── */}
+                {loading ? (
+                    <div className="inward-loading-state">
+                        Loading inward starting places...
+                    </div>
+                ) : places.length === 0 ? (
+                    <div className="no-places-notice">
+                        <p>
+                            No inward bus starting places configured yet. Click{" "}
+                            <strong>+ Configure Bus Starting Place</strong> to assign starting
+                            locations for available buses.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="inward-cards-grid-wrap">
+                        <div className="bus-start-cards-grid">
+                            {places.map((sp) => (
+                                <div
+                                    key={sp._id}
+                                    className={`bus-start-card ${
+                                        sp.active ? "active-place" : "inactive-place"
+                                    }`}
+                                >
+                                    <div className="bus-start-info">
+                                        {/* TOP ROW: Dark navy bus badge, light capacity badge, Active pill */}
+                                        <div className="bus-badge-row">
+                                            <span className="bus-name-badge">{sp.busName}</span>
+                                            {sp.capacity > 0 && (
+                                                <span className="bus-cap-badge">
+                                                    {sp.capacity} seats
+                                                </span>
+                                            )}
+                                            <span
+                                                className={`status-pill ${
+                                                    sp.active ? "active" : "inactive"
+                                                }`}
+                                            >
+                                                {sp.active ? "Active" : "Inactive"}
+                                            </span>
+                                        </div>
+
+                                        {/* MIDDLE AREA: Pink pin, bold name, address, coordinates */}
+                                        <div className="location-detail">
+                                            <span className="loc-icon">📍</span>
+                                            <div>
+                                                <strong>{sp.locationName || sp.name}</strong>
+                                                {sp.address && <p>{sp.address}</p>}
+                                                <small>
+                                                    {Number(sp.latitude).toFixed(5)},{" "}
+                                                    {Number(sp.longitude).toFixed(5)}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* BOTTOM AREA: Divider and three equal buttons: Edit | Deactivate/Activate | Remove */}
+                                    <div className="bus-start-actions">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenEditModal(sp)}
+                                        >
+                                            Edit
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleStartingPlace(sp._id)}
+                                        >
+                                            {sp.active ? "Deactivate" : "Activate"}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn-remove"
+                                            onClick={() => handleDeleteStartingPlace(sp._id)}
+                                        >
+                                            Remove
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* ── Configuration / Edit Modal ── */}
+            {showModal && (
+                <div className="start-modal-overlay">
+                    <div className="start-modal-dialog">
+                        <div className="start-modal-header">
+                            <h3>
+                                {editingPlace
+                                    ? `Edit Inward Starting Place — ${editingPlace.busName}`
+                                    : "Configure Inward Bus Starting Place"}
+                            </h3>
                             <button
-                                className="inward-modal__close-btn"
+                                type="button"
+                                className="start-modal-close"
                                 onClick={handleCloseModal}
-                                aria-label="Close modal"
+                                aria-label="Close dialog"
                             >
-                                <MdClose size={20} />
+                                &times;
                             </button>
                         </div>
 
-                        <form onSubmit={handleSubmit}>
-                            <div className="inward-modal__body">
-                                {/* Search helper */}
-                                <div className="inward-form-group">
-                                    <label>Search & Auto-Fill Coordinates (Optional)</label>
-                                    <LocationSearchBox
-                                        placeholder="Search bus stand, hub or area (e.g. Mattuthavani Bus Stand)..."
-                                        onSelectLocation={handleLocationSelect}
-                                    />
-                                </div>
+                        {modalError && (
+                            <div className="start-modal-error">
+                                ⚠ {modalError}
+                            </div>
+                        )}
 
-                                <div className="inward-form-group">
-                                    <label>Starting Place Name *</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Mattuthavani Bus Stand"
-                                        value={formData.name}
-                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                        required
-                                    />
-                                </div>
-
-                                <div className="inward-form-group">
-                                    <label>Address / Landmark</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Melur Main Road, Madurai"
-                                        value={formData.address}
-                                        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="inward-form-row">
-                                    <div className="inward-form-group">
-                                        <label>Latitude *</label>
-                                        <input
-                                            type="number"
-                                            step="any"
-                                            placeholder="e.g. 9.9408"
-                                            value={formData.latitude}
-                                            onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
-                                            required
-                                        />
-                                    </div>
-                                    <div className="inward-form-group">
-                                        <label>Longitude *</label>
-                                        <input
-                                            type="number"
-                                            step="any"
-                                            placeholder="e.g. 78.1565"
-                                            value={formData.longitude}
-                                            onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="inward-toggle-row">
-                                    <input
-                                        type="checkbox"
-                                        id="activeToggle"
-                                        checked={formData.active}
-                                        onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
-                                    />
-                                    <label htmlFor="activeToggle" style={{ cursor: "pointer", textTransform: "none" }}>
-                                        Active (Included as an available hub for Inward AI route generation)
-                                    </label>
-                                </div>
+                        <form onSubmit={handleSave} className="start-modal-form">
+                            <div className="start-modal-group">
+                                <label>Bus</label>
+                                <select
+                                    className="start-modal-select"
+                                    value={modalBusId}
+                                    onChange={(e) => setModalBusId(e.target.value)}
+                                    disabled={Boolean(editingPlace)}
+                                >
+                                    <option value="">-- Select Available Bus --</option>
+                                    {vehicleList.map((b) => (
+                                        <option
+                                            key={b._id || b.id}
+                                            value={String(b._id || b.id)}
+                                        >
+                                            {getBusName(b)} - {getBusCapacity(b)} Seats
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
-                            <div className="inward-modal__footer">
+                            <div className="start-modal-group">
+                                <label>Starting Hub / Location</label>
+                                <LocationSearchBox
+                                    placeholder="Search starting hub: bus stand, area, junction, terminal..."
+                                    selectedLocation={modalLocation}
+                                    onSelectLocation={(loc) => setModalLocation(loc)}
+                                    onClear={() => setModalLocation(null)}
+                                />
+                                {modalLocation && (
+                                    <div className="loc-selected-summary">
+                                        <span>📍</span>
+                                        <span>
+                                            {modalLocation.name || modalLocation.displayName} (
+                                            {Number(modalLocation.latitude).toFixed(4)},{" "}
+                                            {Number(modalLocation.longitude).toFixed(4)})
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="start-modal-actions">
                                 <button
                                     type="button"
-                                    className="inward-btn-cancel"
+                                    className="start-modal-btn-cancel"
                                     onClick={handleCloseModal}
+                                    disabled={saving}
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="inward-btn-submit"
-                                    disabled={saving}
+                                    className="start-modal-btn-submit"
+                                    disabled={saving || !modalBusId || !modalLocation}
                                 >
-                                    {saving ? "Saving..." : editId ? "Update Starting Place" : "Save Starting Place"}
+                                    {saving ? "Saving..." : "Save Bus Starting Place"}
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Delete Confirmation Modal ── */}
-            {deleteTarget && (
-                <div className="inward-modal-overlay" onClick={() => setDeleteTarget(null)}>
-                    <div
-                        className="inward-modal inward-delete-modal"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="inward-modal__header">
-                            <h2>Delete Starting Place?</h2>
-                            <button
-                                className="inward-modal__close-btn"
-                                onClick={() => setDeleteTarget(null)}
-                                aria-label="Close modal"
-                            >
-                                <MdClose size={20} />
-                            </button>
-                        </div>
-                        <div className="inward-modal__body">
-                            <p>
-                                Are you sure you want to delete <b>{deleteTarget.name}</b>?
-                                This will remove it from the list of configured starting places for inward route generation.
-                            </p>
-                        </div>
-                        <div className="inward-modal__footer">
-                            <button
-                                type="button"
-                                className="inward-btn-cancel"
-                                onClick={() => setDeleteTarget(null)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="inward-btn-delete"
-                                onClick={handleDelete}
-                                disabled={deleting}
-                            >
-                                {deleting ? "Deleting..." : "Delete Starting Place"}
-                            </button>
-                        </div>
                     </div>
                 </div>
             )}

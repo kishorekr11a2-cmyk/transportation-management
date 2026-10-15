@@ -4,6 +4,8 @@ import authMiddleware
     from "../middleware/authMiddleware.js";
 import adminMiddleware
     from "../middleware/adminMiddleware.js";
+import { sensitiveActionLimiter }
+    from "../middleware/rateLimiter.js";
 
 import {
     getUsers,
@@ -107,6 +109,7 @@ router.put(
     "/reset-travel-status",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     resetAllUsersTravelStatus
 );
 
@@ -119,6 +122,7 @@ router.put(
     "/:userId/reset-travel-status",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     resetUserTravelStatus
 );
 
@@ -130,6 +134,8 @@ router.put(
 router.post(
     "/",
     authMiddleware,
+    adminMiddleware,
+    sensitiveActionLimiter,
     addUser
 );
 
@@ -141,6 +147,8 @@ router.post(
 router.delete(
     "/:id",
     authMiddleware,
+    adminMiddleware,
+    sensitiveActionLimiter,
     deleteUser
 );
 

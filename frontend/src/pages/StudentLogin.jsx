@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { HiArrowLeft } from "react-icons/hi2";
+import { MdDirectionsBus } from "react-icons/md";
 
 import api from "../services/api";
-
 import "../css/login.css";
 
 function StudentLogin() {
-
     const navigate = useNavigate();
 
     const [formData, setFormData] = useState({
@@ -25,11 +25,9 @@ function StudentLogin() {
     };
 
     const handleSubmit = async (e) => {
-
         e.preventDefault();
 
         try {
-
             setLoading(true);
 
             const response = await api.post(
@@ -53,76 +51,107 @@ function StudentLogin() {
 
             toast.success("Login Successful");
             navigate("/student-dashboard");
-
         } catch (error) {
-
-            console.log(error.response);
-
+            console.error(error.response);
             toast.error(
-                error.response?.data?.message ||
-                "Login Failed"
+                error.response?.data?.message || "Login Failed"
             );
-
         } finally {
-
             setLoading(false);
-
         }
-
     };
 
     return (
-
-        <div className="login-page">
-
+        <main className="login-page">
             <button
+                type="button"
                 className="back-btn"
                 onClick={() => navigate(-1)}
+                aria-label="Go back"
             >
-                ← Back
+                <HiArrowLeft size={16} aria-hidden="true" />
+                <span>Back</span>
             </button>
 
-            <div className="login-card">
+            <div className="login-split-card">
+                {/* Left Showcase Panel */}
+                <div className="login-visual-panel login-visual-panel--student">
+                    <div className="login-visual-top">
+                        <div className="login-visual-badge">
+                            <MdDirectionsBus aria-hidden="true" />
+                            <span>Passenger Transit</span>
+                        </div>
+                    </div>
 
-                <h1>User Login</h1>
+                    <div className="login-visual-bottom">
+                        <h2 className="login-visual-title">Passenger Transit Access</h2>
+                        <p className="login-visual-desc">
+                            Submit your daily travel confirmation, check your allocated bus number, and view designated pickup stops.
+                        </p>
+                    </div>
+                </div>
 
-                <p>AI Transportation Management System</p>
+                {/* Right Form Panel */}
+                <div className="login-form-panel">
+                    <div className="login-form-topbar">
+                        <span className="login-portal-label">User Access</span>
+                    </div>
 
-                <form onSubmit={handleSubmit}>
+                    <div className="login-form-header">
+                        <h1>User Login</h1>
+                        <p>AI Transportation Management System</p>
+                    </div>
 
-                    <input
-                        type="text"
-                        name="userId"
-                        placeholder="User ID"
-                        value={formData.userId}
-                        onChange={handleChange}
-                        required
-                    />
+                    <form className="login-form" onSubmit={handleSubmit}>
+                        <div className="login-field-group">
+                            <label htmlFor="student-userId" className="login-field-label">
+                                User ID
+                            </label>
+                            <input
+                                id="student-userId"
+                                type="text"
+                                name="userId"
+                                placeholder="User ID"
+                                value={formData.userId}
+                                onChange={handleChange}
+                                autoComplete="username"
+                                required
+                            />
+                        </div>
 
-                    <input
-                        type="password"
-                        name="password"
-                        placeholder="Password"
-                        value={formData.password}
-                        onChange={handleChange}
-                        required
-                    />
+                        <div className="login-field-group">
+                            <label htmlFor="student-password" className="login-field-label">
+                                Password
+                            </label>
+                            <input
+                                id="student-password"
+                                type="password"
+                                name="password"
+                                placeholder="Password"
+                                value={formData.password}
+                                onChange={handleChange}
+                                autoComplete="current-password"
+                                required
+                            />
+                        </div>
 
-                    <button
-                        type="submit"
-                        disabled={loading}
-                    >
-                        {loading ? "Please Wait..." : "Login"}
-                    </button>
+                        <button
+                            type="submit"
+                            className="student-submit-btn"
+                            disabled={loading}
+                            id="btn-student-submit"
+                        >
+                            {loading ? "Please Wait..." : "Login"}
+                        </button>
+                    </form>
 
-                </form>
-
+                    <div className="login-form-footer">
+                        Registered student and staff passenger credentials
+                    </div>
+                </div>
             </div>
-
-        </div>
-
+        </main>
     );
-
 }
 
 export default StudentLogin;

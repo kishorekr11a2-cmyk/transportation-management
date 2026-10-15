@@ -8,6 +8,17 @@ export default function ResetManualPlanModal({
     isResetting = false,
     direction = null
 }) {
+    React.useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = "hidden";
+            return () => {
+                document.body.style.overflow = "";
+            };
+        } else {
+            document.body.style.overflow = "";
+        }
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     const dirLabel = direction === "OUTWARD" ? "Outward" : direction === "INWARD" ? "Inward" : "";

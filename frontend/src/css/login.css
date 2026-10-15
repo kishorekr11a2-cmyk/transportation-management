@@ -1,335 +1,336 @@
-/* Login Page */
+/* =========================================================
+   LOGIN PAGES — Institutional Split-Screen Layout
+   Used by AdminLogin.jsx and StudentLogin.jsx
+   ========================================================= */
 
 .login-page {
-
-    min-height:100vh;
-
-    display:flex;
-
-    justify-content:center;
-
-    align-items:center;
-
-    background:#e8f0ff;
-
-    font-family:'Segoe UI',sans-serif;
-
-    position:relative;
-
-    overflow:hidden;
-
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #f8fafc;
+    padding: 1.5rem;
+    font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #0f172a;
+    position: relative;
 }
 
-
-
-/* Soft Background Shapes */
-
-.login-page::before {
-
-    content:"";
-
-    position:absolute;
-
-    width:600px;
-
-    height:600px;
-
-    background:#dbeafe;
-
-    border-radius:50%;
-
-    top:-250px;
-
-    left:-200px;
-
+/* Split-Screen Main Card */
+.login-split-card {
+    width: 100%;
+    max-width: 900px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 520px;
 }
 
-
-
-.login-page::after {
-
-    content:"";
-
-    position:absolute;
-
-    width:500px;
-
-    height:500px;
-
-    background:#bfdbfe;
-
-    border-radius:50%;
-
-    bottom:-220px;
-
-    right:-150px;
-
+/* =========================================================
+   Left Visual Panel
+   ========================================================= */
+.login-visual-panel {
+    position: relative;
+    background-color: #0f172a;
+    background-size: cover;
+    background-position: center center;
+    background-repeat: no-repeat;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 2.25rem 2rem;
+    color: #ffffff;
 }
 
-
-
-
-
-/* Back Button */
-
-.back-btn {
-
-    position:absolute;
-
-    top:25px;
-
-    left:25px;
-
-    background:white;
-
-    color:#2563eb;
-
-    border:none;
-
-    padding:10px 22px;
-
-    border-radius:25px;
-
-    font-size:15px;
-
-    font-weight:600;
-
-    cursor:pointer;
-
-    box-shadow:
-
-    0 5px 15px rgba(0,0,0,0.12);
-
-    z-index:2;
-
-    transition:0.3s;
-
+/* Background image bindings */
+.login-visual-panel--admin {
+    background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.45) 0%, rgba(15, 23, 42, 0.88) 100%),
+        url('/images/admin-campus-bus.jpg');
 }
 
-
-
-.back-btn:hover {
-
-    background:#2563eb;
-
-    color:white;
-
+.login-visual-panel--student {
+    background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.45) 0%, rgba(15, 23, 42, 0.90) 100%),
+        url('/images/transit-student.jpg');
 }
 
-
-
-
-
-/* Login Card */
-
-.login-card {
-
-    width:380px;
-
-    padding:40px;
-
-    background:white;
-
-    border-radius:18px;
-
-    box-shadow:
-
-    0 15px 35px rgba(0,0,0,0.15);
-
-    z-index:1;
-
-    text-align:center;
-
+.login-visual-top {
+    z-index: 2;
 }
 
-
-
-
-
-/* Top Accent */
-
-.login-card::before {
-
-    content:"";
-
-    display:block;
-
-    width:70px;
-
-    height:5px;
-
-    background:#2563eb;
-
-    border-radius:10px;
-
-    margin:0 auto 25px;
-
+.login-visual-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.8rem;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 9999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #f1f5f9;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
 }
 
-
-
-
-
-/* Heading */
-
-.login-card h1 {
-
-    color:#1e293b;
-
-    font-size:32px;
-
-    margin-bottom:10px;
-
-    font-weight:700;
-
+.login-visual-badge svg {
+    color: #60a5fa;
+    font-size: 0.95rem;
 }
 
-
-
-.login-card h1::before {
-
-    content:"👨‍💼 ";
-
+.login-visual-bottom {
+    z-index: 2;
+    margin-top: auto;
 }
 
-
-
-.login-card p {
-
-    color:#64748b;
-
-    font-size:15px;
-
-    margin-bottom:30px;
-
+.login-visual-title {
+    font-size: 1.45rem;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+    color: #ffffff;
+    margin-bottom: 0.5rem;
 }
 
-
-
-
-
-/* Input Fields */
-
-.login-card input {
-
-    width:100%;
-
-    padding:14px;
-
-    margin-bottom:18px;
-
-    border:1px solid #cbd5e1;
-
-    border-radius:10px;
-
-    outline:none;
-
-    font-size:15px;
-
-    box-sizing:border-box;
-
-    background:#f8fafc;
-
-    transition:0.3s;
-
+.login-visual-desc {
+    font-size: 0.88rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+    margin: 0;
 }
 
-
-
-.login-card input:focus {
-
-    background:white;
-
-    border-color:#2563eb;
-
-    box-shadow:
-
-    0 0 8px rgba(37,99,235,0.2);
-
+/* =========================================================
+   Right Form Panel
+   ========================================================= */
+.login-form-panel {
+    padding: 2.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: #ffffff;
 }
 
-
-
-
-
-/* Login Button */
-
-.login-card button[type="submit"] {
-
-
-    width:100%;
-
-    padding:14px;
-
-    background:#2563eb;
-
-    color:white;
-
-    border:none;
-
-    border-radius:10px;
-
-    font-size:17px;
-
-    font-weight:600;
-
-    cursor:pointer;
-
-    transition:0.3s;
-
+/* Top Bar in Form Panel */
+.login-form-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 1.25rem;
 }
 
-
-
-.login-card button[type="submit"]:hover {
-
-
-    background:#1d4ed8;
-
-    transform:translateY(-2px);
-
-    box-shadow:
-
-    0 8px 20px rgba(37,99,235,0.3);
-
+/* Page Back Button (Kept at original top-left position) */
+.login-page .back-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 50;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.45rem 1rem;
+    background: #ffffff;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-
-
-
-
-.login-card button:disabled {
-
-    opacity:0.6;
-
-    cursor:not-allowed;
-
+.login-page .back-btn:hover {
+    border-color: #2563eb;
+    color: #2563eb;
+    background: #f8fafc;
 }
 
+.login-page .back-btn:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
 
+.login-portal-label {
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+}
 
+/* Form Header */
+.login-form-header {
+    margin-bottom: 1.5rem;
+}
 
+.login-form-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.3rem 0;
+}
 
-/* Responsive */
+.login-form-header p {
+    font-size: 0.86rem;
+    color: #64748b;
+    margin: 0;
+}
 
-@media(max-width:600px){
+/* Form and Inputs */
+.login-card form,
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+}
 
+.login-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
 
-    .login-card {
+.login-field-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #334155;
+    letter-spacing: 0.01em;
+}
 
-        width:85%;
+.login-form input,
+.login-card form input {
+    width: 100%;
+    padding: 0.72rem 0.95rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 0.92rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-sizing: border-box;
+}
 
-        padding:30px;
+.login-form input::placeholder,
+.login-card form input::placeholder {
+    color: #94a3b8;
+}
 
+.login-form input:focus,
+.login-card form input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* Submit Button */
+.login-form button[type="submit"],
+.login-card form button[type="submit"] {
+    width: 100%;
+    margin-top: 0.35rem;
+    padding: 0.75rem 1.25rem;
+    background: #0f172a;
+    color: #ffffff;
+    border: 1px solid #0f172a;
+    border-radius: 6px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.login-form button[type="submit"]:hover:not(:disabled),
+.login-card form button[type="submit"]:hover:not(:disabled) {
+    background: #1e293b;
+    border-color: #1e293b;
+}
+
+.login-form button[type="submit"]:disabled,
+.login-card form button[type="submit"]:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+/* Secondary Submit Button style for student if needed */
+.login-form button.student-submit-btn {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.login-form button.student-submit-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+/* Form Footer Hint */
+.login-form-footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #f1f5f9;
+    font-size: 0.78rem;
+    color: #94a3b8;
+    text-align: center;
+}
+
+/* =========================================================
+   Mobile Responsiveness
+   ========================================================= */
+@media (max-width: 768px) {
+    .login-split-card {
+        grid-template-columns: 1fr;
+        max-width: 440px;
+        min-height: auto;
     }
 
-
-
-    .login-card h1 {
-
-        font-size:26px;
-
+    .login-visual-panel {
+        min-height: 180px;
+        padding: 1.5rem 1.5rem;
     }
 
+    .login-visual-title {
+        font-size: 1.2rem;
+    }
 
+    .login-visual-desc {
+        display: none; /* keep concise on mobile */
+    }
+
+    .login-form-panel {
+        padding: 1.75rem 1.5rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .login-page {
+        padding: 0.75rem 0.5rem;
+    }
+
+    .login-split-card {
+        border-radius: 12px;
+        margin-top: 2rem;
+    }
+
+    .login-form-panel {
+        padding: 1.5rem 1.15rem;
+    }
+
+    .back-btn {
+        top: 10px;
+        left: 10px;
+        font-size: 0.8rem;
+        padding: 0.35rem 0.75rem;
+    }
 }

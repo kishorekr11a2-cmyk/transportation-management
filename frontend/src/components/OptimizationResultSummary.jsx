@@ -1,3 +1,4 @@
+import React, { memo } from "react";
 import {
     FiCheckCircle,
     FiAlertTriangle,
@@ -9,7 +10,7 @@ import {
     FiCheckSquare
 } from "react-icons/fi";
 
-export default function OptimizationResultSummary({
+function OptimizationResultSummary({
     plan = {},
     summary = {},
     direction,
@@ -50,7 +51,9 @@ export default function OptimizationResultSummary({
     const usersCovered = Number(
         aiPlan?.allocatedUsers ??
         aiPlan?.assignedUsers ??
-        totalComing
+        summary?.allocatedUsers ??
+        summary?.assignedUsers ??
+        0
     );
 
     const busesAllocated = Number(
@@ -81,6 +84,15 @@ export default function OptimizationResultSummary({
         busesAllocated
     );
 
+    const theoreticalMin = Number(
+        aiPlan?.fleetBalancing?.theoreticalMinimum ??
+        summary?.fleetBalancing?.theoreticalMinimum ??
+        aiPlan?.theoreticalMinimum ??
+        aiPlan?.minimumCapacityBuses ??
+        summary?.minimumCapacityBuses ??
+        minimumCapacityBuses
+    );
+
     const allocatedSeats = Number(
         aiPlan?.allocatedSeats ??
         aiPlan?.totalCapacity ??
@@ -105,9 +117,7 @@ export default function OptimizationResultSummary({
     );
 
     const seatUtilizationRate = Number(
-        aiPlan?.routeAllocationUtilization ??
-        aiPlan?.utilizationMetrics?.allocatedVehicleSeatUtilization?.rate ??
-        (allocatedSeats > 0 ? (usersCovered / allocatedSeats) * 100 : 100)
+        allocatedSeats > 0 ? (usersCovered / allocatedSeats) * 100 : 0
     ).toFixed(2);
 
     const fleetCapacityUtilizationRate = Number(
@@ -171,13 +181,6 @@ export default function OptimizationResultSummary({
          plan?.status === "generated")
     );
 
-    // isRoadVerified: true if ALL buses are OSRM-verified
-    const isRoadVerified = Array.isArray(aiPlan?.buses) && aiPlan.buses.length > 0
-        ? aiPlan.buses.every((b) => b.isRoadVerified === true)
-        : false;
-    const roadValidationText = canonicalDirection === "OUTWARD"
-        ? "Continuous OSRM road progression verified"
-        : "OSRM road connectivity verified";
 
     const rawCreatedAt =
         aiPlan?.createdAt ||
@@ -297,9 +300,9 @@ export default function OptimizationResultSummary({
                             <small className="metric-fraction"> / {totalComing.toLocaleString()}</small>
                         </strong>
                         <span className="metric-sub-label">
-                            {isApproved
-                                ? (usersCovered === totalComing ? "Passengers Allocated (100%)" : `${unallocatedUsers} Shortfall`)
-                                : (isPendingApproval ? "Allocation: Pending Approval" : "Planned Passengers (Not Allocated)")}
+                            {unallocatedUsers > 0
+                                ? `${unallocatedUsers} Unallocated Passengers`
+                                : "100% Demand Allocated (0 Unallocated)"}
                         </span>
                     </div>
                 </div>
@@ -314,11 +317,7 @@ export default function OptimizationResultSummary({
                             <small className="metric-fraction"> / {availableVehiclesCount} avail.</small>
                         </strong>
                         <span className="metric-sub-label">
-                            {fleetBalancing?.theoreticalMinimum
-                                ? `Operationally Required (Capacity Min: ${fleetBalancing.theoreticalMinimum})`
-                                : (feasibleBusCount > minimumCapacityBuses
-                                    ? `Operationally Required (Capacity Min: ${minimumCapacityBuses})`
-                                    : "Operationally Required (Optimal)")}
+                            Actual Fleet Selected (Theoretical Min: {theoreticalMin})
                         </span>
                     </div>
                 </div>
@@ -332,7 +331,7 @@ export default function OptimizationResultSummary({
                             {usersCovered} / {allocatedSeats}
                         </strong>
                         <span className="metric-sub-label">
-                            Seats Occupied ({unusedSeats} unused)
+                            Seats Occupied ({unusedSeats} unused in selected fleet)
                         </span>
                     </div>
                 </div>
@@ -346,7 +345,7 @@ export default function OptimizationResultSummary({
                             {seatUtilizationRate}%
                         </strong>
                         <span className="metric-sub-label">
-                            Seat Utilization ({usersCovered}/{allocatedSeats})
+                            Seat Utilization ({usersCovered} / {allocatedSeats} seats)
                         </span>
                     </div>
                 </div>
@@ -367,75 +366,6 @@ export default function OptimizationResultSummary({
             </div>
 
 
-            {/* Fleet Balancing & Shared Fleet Principle (Transportation Manager Optimization) */}
-            {fleetBalancing && (
-                <div style={{
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "12px",
-                    padding: "16px 20px",
-                    margin: "18px 0"
-                }}>
-                    <h4 style={{ margin: 0, fontSize: "14px", fontWeight: "700", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span>⚖️ Transportation Manager Fleet Balancing</span>
-                    </h4>
-                    <div style={{ fontSize: "13px", color: "#334155", marginTop: "8px", lineHeight: "1.5" }}>
-                        <div>
-                            <strong>Theoretical Minimum Fleet (Capacity): </strong>
-                            <span>{fleetBalancing.theoreticalMinimum || minimumCapacityBuses} Buses</span>
-                            {" • "}
-                            <strong>Operationally Required Fleet: </strong>
-                            <span>{busesAllocated} Buses</span>
-                        </div>
-                        {fleetBalancing.decisionReason && (
-                            <div style={{ marginTop: "6px", color: "#475569" }}>
-                                {fleetBalancing.decisionReason}
-                            </div>
-                        )}
-                    </div>
-                    {fleetBalancing.reusedVehicleNames?.length > 0 && (
-                        <div style={{ fontSize: "13px", color: "#334155", marginTop: "8px" }}>
-                            <strong>Reused Fleet Vehicles: </strong>
-                            {fleetBalancing.reusedVehicleNames.join(", ")}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Validation & Highlights Bar */}
-            <div className="opt-validation-highlights">
-                <div className="highlight-pill">
-                    <span className="highlight-check">✓</span>
-                    <span>No duplicate passenger assignments</span>
-                </div>
-
-                <div className="highlight-pill">
-                    <span className="highlight-check">✓</span>
-                    <span>{usersCovered === totalComing ? "All confirmed Coming users allocated" : `${usersCovered} of ${totalComing} allocated`}</span>
-                </div>
-
-                <div className="highlight-pill">
-                    <span className="highlight-check">✓</span>
-                    <span>Vehicle capacities strictly respected</span>
-                </div>
-
-                <div className="highlight-pill">
-                    <span className="highlight-check">✓</span>
-                    <span>Only available vehicles from schedule assigned</span>
-                </div>
-
-                {sharedStops > 0 && (
-                    <div className="highlight-pill info-pill">
-                        <span className="highlight-check">ℹ</span>
-                        <span>{sharedStops} shared stop visits used for passenger capacity</span>
-                    </div>
-                )}
-
-                <div className="highlight-pill" id="pill-road-validation">
-                    <span className="highlight-check">{isRoadVerified || roadValidationText.includes("verified") ? "✓" : "⚠️"}</span>
-                    <span>Road Validation: <strong>{roadValidationText.replace(/^[✓⚠⚠️ℹ️\s]+/, "")}</strong></span>
-                </div>
-            </div>
 
             {/* Primary Action Buttons */}
             <div className="opt-result-actions-bar">
@@ -452,3 +382,5 @@ export default function OptimizationResultSummary({
         </div>
     );
 }
+
+export default memo(OptimizationResultSummary);

@@ -1,5 +1,8 @@
 import express from "express";
 import multer from "multer";
+import authMiddleware from "../middleware/authMiddleware.js";
+import { requireAdmin } from "../middleware/authorizeMiddleware.js";
+import { sensitiveActionLimiter } from "../middleware/rateLimiter.js";
 import { uploadExcel } from "../controllers/excelController.js";
 
 const router = express.Router();
@@ -12,9 +15,12 @@ const upload = multer({
     }
 });
 
-// Upload Excel with error handling wrapper to ensure requests never hang
+// Upload Excel: JWT Auth -> Admin Authorization -> Rate Limiter -> Multer -> Controller
 router.post(
     "/upload",
+    authMiddleware,
+    requireAdmin,
+    sensitiveActionLimiter,
     (req, res, next) => {
         upload.single("file")(req, res, (err) => {
             if (err) {

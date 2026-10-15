@@ -1,18 +1,34 @@
-/* =========================================================
-   ADMIN DASHBOARD — BENTO MANAGEMENT LAYOUT
-   Uses existing AdminDashboard.jsx class names
-   ========================================================= */
+/* ==========================================================================
+   TRANSPORTATION MANAGEMENT — ADMIN DASHBOARD
+   Ocean Breeze Edition (Exact Recreation from Reference Design)
+   Full-Screen 3x2 Grid, Soft Pastel Module Cards, Minimal Floating Header
+   ALL ILLUSTRATIONS 100% STATIC (Zero Animations / Zero Blinking)
+   ========================================================================== */
 
-.admin-dashboard {
-  min-height: 100vh;
-  min-height: 100dvh;
+/* ── Container & Global Baseline ── */
+.admin-dashboard,
+.admin-dashboard.studio-dashboard {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary, #f6f9fc);
-  color: var(--text-primary, #172033);
+  background-color: #F0F7FA;
+  color: #183153;
   padding: 0;
+  margin: 0;
   box-sizing: border-box;
-  animation: fadeIn 0.45s ease-out;
+  font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-dashboard::-webkit-scrollbar,
+.admin-dashboard *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .admin-dashboard *,
@@ -21,674 +37,663 @@
   box-sizing: border-box;
 }
 
-/* ======================== HEADER ======================== */
-
-.dash-header {
+/* ──────────────────────────────────────────────────────────────────────────
+   1. FLOATING HEADER DESIGN
+   ────────────────────────────────────────────────────────────────────────── */
+.dash-header,
+.admin-dashboard .studio-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.75rem clamp(1rem, 3vw, 2.5rem);
-  background: rgba(255, 255, 255, 0.96);
-  border-bottom: 1px solid var(--border-color, #dce5f0);
-  position: relative;
-  z-index: 10;
+  width: calc(100% - 2rem);
+  max-width: 1320px;
+  margin: 1.35rem auto 0.35rem;
+  padding: 0.5rem 1.25rem;
+  background: #FFFFFF;
+  border: 1px solid #DCE9ED;
+  border-radius: 14px;
+  box-shadow: 0 2px 12px rgba(24, 49, 83, 0.04);
   flex-shrink: 0;
+  position: relative;
+  z-index: 20;
 }
 
 .dash-header__left,
-.dash-header__right {
+.admin-dashboard .studio-header__left {
   display: flex;
   align-items: center;
-  gap: 1rem;
   min-width: 0;
 }
 
-.dash-back-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.45rem 1rem;
-  background: #fff;
-  color: var(--text-secondary, #64748b);
-  border: 1px solid var(--border-color, #dce5f0);
-  border-radius: 999px;
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.85rem;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: border-color 0.2s ease, color 0.2s ease;
-}
-
-.dash-back-btn:hover {
-  border-color: #3b82f6;
-  color: #2563eb;
-}
-
-.dash-back-btn:focus-visible,
-.dash-logout-btn:focus-visible {
-  outline: 2px solid #3b82f6;
-  outline-offset: 3px;
-}
-
-.dash-brand {
+/* Left: Branding & Bus Icon */
+.dash-brand,
+.admin-dashboard .studio-brand {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.dash-brand__icon,
+.admin-dashboard .studio-brand__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #D7F0F2;
+  color: #183153;
+  border: 1px solid #B8E3E9;
+  box-shadow: 0 1px 3px rgba(24, 49, 83, 0.04);
+  flex-shrink: 0;
+}
+
+.admin-dashboard .studio-brand__text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
-.dash-brand__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-  color: #fff;
-}
-
-.dash-brand__label {
-  margin: 0 0 0.25rem;
-  color: #3278ed;
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.dash-brand__title {
+.dash-brand__title,
+.admin-dashboard .studio-brand__title {
   margin: 0;
-  color: var(--text-primary, #172033);
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.3px;
+  color: #183153;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
 }
 
-.dash-admin-badge {
+.dash-brand__subtitle,
+.admin-dashboard .studio-brand__subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.76rem;
+  color: #64748b;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Right: Administrator Capsule & Logout */
+.dash-header__right,
+.admin-dashboard .studio-header__right {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.4rem 0.85rem 0.4rem 0.4rem;
-  background: var(--bg-primary, #f6f9fc);
-  border: 1px solid var(--border-color, #dce5f0);
-  border-radius: 999px;
+  gap: 0.85rem;
   flex-shrink: 0;
 }
 
-.dash-admin-avatar {
+.dash-admin-badge,
+.admin-dashboard .studio-admin-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.85rem 0.35rem 0.45rem;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(24, 49, 83, 0.03);
+}
+
+.dash-admin-avatar,
+.admin-dashboard .studio-admin-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-  color: #fff;
-  font-size: 0.85rem;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: #183153;
+  color: #FFFFFF;
+  font-size: 0.82rem;
   font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 
-.dash-admin-info {
+.dash-admin-info,
+.admin-dashboard .studio-admin-info {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+}
+
+.admin-dashboard .studio-admin-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.dash-admin-role,
+.admin-dashboard .studio-admin-role {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #183153;
   line-height: 1.2;
 }
 
-.dash-admin-name {
-  color: var(--text-primary, #172033);
-  font-size: 0.875rem;
-  font-weight: 700;
+.admin-dashboard .studio-admin-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
 }
 
-.dash-admin-role {
-  color: var(--text-secondary, #64748b);
+.dash-admin-status-dot,
+.admin-dashboard .studio-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10B981;
+  flex-shrink: 0;
+}
+
+.admin-dashboard .studio-admin-status-text {
   font-size: 0.72rem;
+  color: #64748b;
+  font-weight: 500;
+  line-height: 1;
 }
 
-.dash-logout-btn {
+/* Logout Button */
+.dash-logout-btn,
+.admin-dashboard .studio-logout-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.85rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 9px;
-  background: #fff;
-  color: #ef4444;
-  font-family: 'Outfit', sans-serif;
+  gap: 0.45rem;
+  padding: 0.45rem 0.95rem;
+  background: #FFFFFF;
+  color: #183153;
+  border: 1px solid #DCE9ED;
+  border-radius: 10px;
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 1px 3px rgba(24, 49, 83, 0.03);
 }
 
-.dash-logout-btn:hover {
-  background: #fff7f7;
-  border-color: #fecaca;
+.dash-logout-btn:hover,
+.admin-dashboard .studio-logout-btn:hover {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
 }
 
-/* ======================== PAGE INTRO ======================== */
-
-.dash-intro {
+/* ──────────────────────────────────────────────────────────────────────────
+   2. WELCOME / INTRO SECTION
+   ────────────────────────────────────────────────────────────────────────── */
+.dash-intro,
+.admin-dashboard .studio-welcome {
+  padding: 0.3rem 1rem 0.2rem;
   width: 100%;
-  max-width: 1440px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: clamp(1.25rem, 2.5vh, 1.75rem) clamp(1rem, 3vw, 2.5rem) 0.65rem;
-  flex-shrink: 0;
-}
-
-.dash-intro__heading {
-  margin: 0;
-  color: var(--text-primary, #172033);
-  font-size: clamp(1.25rem, 1.8vw, 1.65rem);
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  line-height: 1.25;
-}
-
-.dash-intro__sub {
-  margin: 0.3rem 0 0;
-  color: var(--text-secondary, #64748b);
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-
-/* ======================== BENTO GRID ======================== */
-
-.bento-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-auto-flow: row;
-  grid-template-rows: repeat(2, minmax(220px, 1fr));
-  align-items: stretch;
-  align-content: stretch;
-  gap: clamp(0.75rem, 1.25vw, 1.1rem);
-  width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 0.65rem clamp(1rem, 3vw, 2.5rem) 1.25rem;
-  flex: 1;
-  min-height: 0;
-}
-
-/* Keep the six cards in the requested order. */
-.bento-card--users {
-  order: 1;
-}
-
-.bento-card--vehicles {
-  order: 2;
-}
-
-.bento-card--routes {
-  order: 3;
-}
-
-.bento-card--automation {
-  order: 4;
-}
-
-.bento-card--ai {
-  order: 5;
-}
-
-.bento-card--confirmation {
-  order: 6;
-}
-
-/* ======================== BASE CARD ======================== */
-
-.admin-dashboard .bento-card {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  padding: clamp(1rem, 1.5vw, 1.4rem);
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #dce5f0);
-  border-radius: 15px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  color: inherit;
-  text-decoration: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.admin-dashboard .bento-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(59, 130, 246, 0.4);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07);
-  color: inherit;
-  text-decoration: none;
-}
-
-.admin-dashboard .bento-card:focus-visible {
-  outline: 2px solid #3b82f6;
-  outline-offset: 3px;
-}
-
-/* Card header: icon on left, category tag on right. */
-.bento-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.85rem;
-  flex-shrink: 0;
-}
-
-.bento-card__icon-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border: 1px solid var(--border-color, #dce5f0);
-  border-radius: 11px;
-  background: #f7f9fc;
-  color: #347cf4;
-  transition: background 0.2s ease, transform 0.2s ease;
-}
-
-.bento-card:hover .bento-card__icon-wrap {
-  transform: translateY(-1px);
-  background: #eff6ff;
-}
-
-.bento-card__tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 75%;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid #e0e8f3;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #526780;
-  font-size: 0.67rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  line-height: 1.25;
-  text-align: center;
-  text-transform: uppercase;
-  white-space: normal;
-}
-
-.bento-card__body {
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.bento-card__title {
-  margin: 0 0 0.35rem;
-  color: var(--text-primary, #172033);
-  font-size: clamp(1.05rem, 1.25vw, 1.2rem);
-  font-weight: 700;
-  letter-spacing: -0.3px;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-
-.bento-card__desc {
-  margin: 0;
-  color: var(--text-secondary, #64748b);
-  font-size: clamp(0.8rem, 0.95vw, 0.88rem);
-  font-weight: 400;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-/* Keep the blue action link near the description.
-   Do not use margin-top: auto, which creates a large gap. */
-.bento-card__action {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  width: fit-content;
-  max-width: 100%;
-  margin-top: 0.8rem;
-  padding: 0;
-  color: #2878f5;
-  font-size: 0.84rem;
-  font-weight: 600;
-  line-height: 1.4;
-  flex-shrink: 0;
-}
-
-.bento-card__action-text {
-  overflow-wrap: anywhere;
-}
-
-.bento-card__arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: transform 0.2s ease;
-}
-
-.bento-card:hover .bento-card__arrow {
-  transform: translateX(3px);
-}
-
-/* Decorative circle used by selected cards. */
-.bento-card__deco {
-  position: absolute;
-  right: -32px;
-  bottom: -38px;
-  width: 110px;
-  height: 110px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #60a5fa, #93c5fd);
-  opacity: 0.055;
-  pointer-events: none;
-  transition: transform 0.25s ease;
-}
-
-.bento-card:hover .bento-card__deco {
-  transform: scale(1.12);
-}
-
-/* ======================== AI CARD ======================== */
-
-.admin-dashboard .bento-card--ai {
-  border-color: rgba(99, 102, 241, 0.28);
-  background: linear-gradient(145deg, #f0f7ff 0%, #eef2ff 55%, #f5f3ff 100%);
-}
-
-.admin-dashboard .bento-card--ai:hover {
-  border-color: rgba(99, 102, 241, 0.5);
-}
-
-.bento-card__icon-wrap--ai {
-  border: none;
-  background: linear-gradient(135deg, #6366f1, #3b82f6);
-  color: #fff;
-}
-
-.bento-card--ai:hover .bento-card__icon-wrap--ai {
-  background: linear-gradient(135deg, #4f46e5, #2563eb);
-}
-
-.bento-card__tag--ai {
-  border-color: rgba(99, 102, 241, 0.2);
-  background: rgba(99, 102, 241, 0.08);
-  color: #6366f1;
-}
-
-.bento-card__title--ai {
-  color: #1e1b4b;
-}
-
-.bento-card--ai .bento-card__action {
-  color: #5b5ce2;
-}
-
-.bento-card__ai-statement {
-  display: inline-block;
-  max-width: 100%;
-  margin: 0.55rem 0 0;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 999px;
-  background: rgba(99, 102, 241, 0.07);
-  color: #5b5ce2;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.bento-card__ai-geo {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.ai-geo-circle {
-  position: absolute;
-  border: 1px solid rgba(99, 102, 241, 0.1);
-  border-radius: 50%;
-}
-
-.ai-geo-circle--1 {
-  right: -35px;
-  bottom: -70px;
-  width: 160px;
-  height: 160px;
-}
-
-.ai-geo-circle--2 {
-  right: 55px;
-  bottom: -25px;
-  width: 100px;
-  height: 100px;
-  border-color: rgba(99, 102, 241, 0.07);
-}
-
-/* Keep card content above decorative geometry. */
-.bento-card--ai> :not(.bento-card__ai-geo) {
-  position: relative;
-  z-index: 1;
-}
-
-/* ======================== LATE RESPONSE ALERT ======================== */
-
-.dash-late-alert-container {
-  width: 100%;
-  max-width: 1440px;
-  margin: 0.75rem auto 0;
-  padding: 0 clamp(1rem, 3vw, 2.5rem);
   box-sizing: border-box;
   flex-shrink: 0;
-  animation: fadeIn 0.35s ease-out;
 }
 
-.dash-late-alert-card {
-  padding: 1.25rem 1.5rem;
-  border: 1.5px solid #fde68a;
-  border-left: 5px solid #f59e0b;
-  border-radius: 15px;
-  background: #fff;
-  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.08);
+.admin-dashboard .studio-welcome__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.16rem 0.65rem;
+  background: #FFFFFF;
+  border: 1px solid #DCE9ED;
+  border-radius: 20px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #0F766E;
+  margin-bottom: 0.2rem;
+  box-shadow: 0 1px 3px rgba(24, 49, 83, 0.03);
+}
+
+.admin-dashboard .studio-welcome__badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #D4A84B;
+  flex-shrink: 0;
+}
+
+.dash-intro__heading,
+.admin-dashboard .studio-welcome__heading {
+  margin: 0;
+  font-size: clamp(1.2rem, 1.7vw, 1.5rem);
+  font-weight: 800;
+  color: #183153;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.dash-intro__sub,
+.admin-dashboard .studio-welcome__sub {
+  margin: 0.15rem 0 0;
+  font-size: clamp(0.78rem, 0.85vw, 0.86rem);
+  color: #526B83;
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   3. LATE TRAVEL ALERTS (PRESERVED FUNCTIONALITY)
+   ────────────────────────────────────────────────────────────────────────── */
+.dash-late-alert-container,
+.admin-dashboard .studio-late-container {
+  padding: 0.4rem clamp(1rem, 2vw, 2.25rem);
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+}
+
+.dash-late-alert-card,
+.admin-dashboard .studio-late-card {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 12px;
+  padding: 0.85rem 1.25rem;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.08);
 }
 
 .dash-late-alert-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 1.25rem;
+  gap: 1rem;
   flex-wrap: wrap;
 }
 
 .dash-late-alert-title-wrap {
   display: flex;
-  align-items: flex-start;
-  gap: 0.85rem;
-  flex: 1;
-  min-width: 240px;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
 }
 
-.dash-late-alert-icon-box {
+.dash-late-alert-icon-box,
+.admin-dashboard .studio-late-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #FEF3C7;
+  color: #D97706;
   flex-shrink: 0;
-  border-radius: 11px;
-  background: #fef3c7;
-  color: #d97706;
 }
 
-.dash-late-alert-badge {
-  display: inline-block;
-  margin-bottom: 0.3rem;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: #fef3c7;
-  color: #b45309;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+.dash-late-alert-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-late-alert-topline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dash-late-alert-badge,
+.admin-dashboard .studio-late-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #FDE68A;
+  color: #92400E;
+  letter-spacing: 0.04em;
 }
 
 .dash-late-alert-heading {
   margin: 0;
-  color: #0f172a;
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  line-height: 1.3;
+  color: #92400E;
 }
 
 .dash-late-alert-sub {
-  max-width: 700px;
-  margin: 0.3rem 0 0;
-  color: #64748b;
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-
-.dash-late-alert-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-}
-
-.dash-late-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.6rem 1rem;
-  border-radius: 9px;
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.2s ease, transform 0.2s ease;
-}
-
-.dash-late-btn--inspect {
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  color: #1e293b;
-}
-
-.dash-late-btn--inspect:hover {
-  background: #f8fafc;
-  border-color: #3b82f6;
-  color: #2563eb;
-}
-
-.dash-late-btn--reallocate {
-  border: none;
-  background: linear-gradient(135deg, #d97706, #b45309);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.2);
-}
-
-.dash-late-btn--reallocate:hover {
-  transform: translateY(-1px);
-  background: linear-gradient(135deg, #b45309, #92400e);
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #B45309;
+  line-height: 1.4;
 }
 
 .dash-late-chips {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #f1f5f9;
-  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.dash-late-chip {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.45rem 0.8rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 9px;
-  background: #f8fafc;
-}
-
-.dash-late-chip__label {
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.dash-late-chip__val {
-  font-size: 1rem;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.dash-late-chip__val--warning {
-  color: #d97706;
-}
-
-.dash-late-chip__val--danger {
-  color: #dc2626;
-}
-
-.dash-late-chip__dirs {
+.dash-late-chip,
+.admin-dashboard .studio-late-chip {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  background: #FFFFFF;
+  border: 1px solid #FDE68A;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
-.dash-dir-tag {
+.dash-late-chip__val--warning {
+  color: #D97706;
+}
+
+.dash-late-chip__val--danger {
+  color: #DC2626;
+}
+
+.dash-late-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dash-late-btn {
+  padding: 0.45rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.dash-late-btn--inspect,
+.admin-dashboard .studio-btn--inspect {
+  background: #FFFFFF;
+  color: #78350F;
+  border-color: #FCD34D;
+}
+
+.dash-late-btn--inspect:hover,
+.admin-dashboard .studio-btn--inspect:hover {
+  background: #FEF3C7;
+}
+
+.dash-late-btn--primary,
+.admin-dashboard .studio-btn--reallocate {
+  background: #D97706;
+  color: #FFFFFF;
+}
+
+.dash-late-btn--primary:hover,
+.admin-dashboard .studio-btn--reallocate:hover {
+  background: #B45309;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   4. SIX DASHBOARD CARDS (3x2 GRID DESKTOP COMPOSITION)
+   ────────────────────────────────────────────────────────────────────────── */
+.bento-grid,
+.admin-dashboard .studio-scenes-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0.2rem 1rem 0.65rem;
+  width: 100%;
+  max-width: 1320px;
+  max-height: min(580px, calc(100vh - 170px));
+  margin: 0 auto;
+  box-sizing: border-box;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Base Scene Card */
+.bento-card,
+.admin-dashboard .studio-scene {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  padding: 0.7rem 0.95rem 0.75rem;
+  border-radius: 14px;
+  text-decoration: none;
+  color: inherit;
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+  box-shadow: 0 3px 14px rgba(24, 49, 83, 0.04);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.bento-card:hover,
+.admin-dashboard .studio-scene:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px rgba(24, 49, 83, 0.08);
+}
+
+.admin-dashboard .studio-scene:focus-visible {
+  outline: 2px solid #0F766E;
+  outline-offset: 3px;
+}
+
+/* ── Individual Card Colors (Exact Ocean Breeze Palette) ── */
+
+/* Card 1: User Management */
+.admin-dashboard .studio-scene--users,
+.admin-dashboard .studio-scene--management {
+  background-color: #D7F0F2;
+  border: 1px solid #BFE4E8;
+}
+
+.admin-dashboard .studio-scene--users:hover,
+.admin-dashboard .studio-scene--management:hover {
+  background-color: #CEECEE;
+  border-color: #A2D6DC;
+}
+
+/* Card 2: Vehicle Management */
+.admin-dashboard .studio-scene--vehicles {
+  background-color: #AFDDE5;
+  border: 1px solid #9CD2DC;
+}
+
+.admin-dashboard .studio-scene--vehicles:hover {
+  background-color: #A2D7E0;
+  border-color: #183153; /* Active/selected navy border as seen in screenshot */
+  box-shadow: 0 8px 24px rgba(24, 49, 83, 0.12);
+}
+
+/* Card 3: Route Management */
+.admin-dashboard .studio-scene--routes {
+  background-color: #A8D9DC;
+  border: 1px solid #95CBD0;
+}
+
+.admin-dashboard .studio-scene--routes:hover {
+  background-color: #9CD0D4;
+  border-color: #82BFC4;
+}
+
+/* Card 4: Automation */
+.admin-dashboard .studio-scene--automation {
+  background-color: #CFE9E6;
+  border: 1px solid #BCE0DC;
+}
+
+.admin-dashboard .studio-scene--automation:hover {
+  background-color: #C3E3DF;
+  border-color: #A6D4CE;
+}
+
+/* Card 5: AI Route Optimization */
+.admin-dashboard .studio-scene--ai {
+  background-color: #D7E9F5;
+  border: 1px solid #C4DDF0;
+}
+
+.admin-dashboard .studio-scene--ai:hover {
+  background-color: #CCE3F2;
+  border-color: #B2D3E9;
+}
+
+/* Card 6: Final Decision */
+.admin-dashboard .studio-scene--confirmation {
+  background-color: #C4E0DA;
+  border: 1px solid #B0D6CE;
+}
+
+.admin-dashboard .studio-scene--confirmation:hover {
+  background-color: #B6D9D2;
+  border-color: #96C8BE;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   5. CARD ILLUSTRATIONS (100% STATIC — ZERO ANIMATIONS)
+   ────────────────────────────────────────────────────────────────────────── */
+.admin-dashboard .studio-scene__visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: clamp(95px, 13.5vh, 122px);
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0.2rem 0 0.35rem;
+  background: transparent;
+  overflow: hidden;
+  position: relative;
+  border-radius: 10px;
+}
+
+.admin-dashboard .studio-scene__img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  pointer-events: none;
+  border-radius: 10px;
+  user-select: none;
+  -webkit-user-drag: none;
+  opacity: 1 !important;
+  filter: none !important;
+  box-shadow: 0 2px 6px rgba(24, 49, 83, 0.05);
+}
+
+.admin-dashboard .studio-scene__svg {
+  width: 100%;
+  height: 100%;
+  max-height: 140px;
+  display: block;
+  overflow: visible;
+}
+
+/* STRICT ZERO ANIMATIONS: Guarantee no movement, rotation, or blinking anywhere */
+.admin-dashboard .studio-scene img,
+.admin-dashboard .studio-scene svg,
+.admin-dashboard .studio-scene svg * {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   6. CARD TYPOGRAPHY, BADGE & ARROW
+   ────────────────────────────────────────────────────────────────────────── */
+.admin-dashboard .studio-scene__content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.admin-dashboard .studio-scene__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* Category Badge (White Pill) */
+.bento-card__tag,
+.admin-dashboard .studio-scene__tag {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
+  padding: 0.2rem 0.6rem;
   border-radius: 6px;
-  font-size: 0.74rem;
+  background: #FFFFFF;
+  color: #0F766E;
+  border: 1px solid rgba(15, 118, 110, 0.15);
+  font-size: 0.68rem;
   font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.2;
 }
 
-.dash-dir-tag--inward {
-  border: 1px solid #c7d2fe;
-  background: #e0e7ff;
-  color: #3730a3;
+.admin-dashboard .studio-scene__tag--ai {
+  color: #183153;
+  border-color: rgba(24, 49, 83, 0.15);
 }
 
-.dash-dir-tag--outward {
-  border: 1px solid #f5d0fe;
-  background: #fae8ff;
-  color: #86198f;
+/* Small Circular Navigation Arrow */
+.bento-card__arrow,
+.admin-dashboard .studio-scene__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  color: #183153;
+  border: 1px solid rgba(24, 49, 83, 0.1);
+  box-shadow: 0 1px 3px rgba(24, 49, 83, 0.04);
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  flex-shrink: 0;
 }
 
-.dash-dir-tag--none {
-  border: 1px solid #e2e8f0;
-  background: #f1f5f9;
-  color: #94a3b8;
+/* On card hover, arrow button becomes dark navy with white arrow */
+.bento-card:hover .bento-card__arrow,
+.admin-dashboard .studio-scene:hover .studio-scene__arrow {
+  background: #183153;
+  color: #FFFFFF;
+  border-color: #183153;
 }
 
-/* ======================== INSPECT MODAL ======================== */
+/* Heading */
+.bento-card__title,
+.admin-dashboard .studio-scene__title {
+  margin: 0;
+  font-size: clamp(0.92rem, 1.05vw, 1.02rem);
+  font-weight: 700;
+  color: #183153;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
 
-.dash-modal-overlay {
+/* Description */
+.bento-card__desc,
+.admin-dashboard .studio-scene__desc {
+  margin: 0.12rem 0 0;
+  font-size: clamp(0.7rem, 0.78vw, 0.76rem);
+  color: #3A526E;
+  line-height: 1.35;
+  font-weight: 400;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   7. INSPECT USERS MODAL (PRESERVED STYLING)
+   ────────────────────────────────────────────────────────────────────────── */
+.dash-modal-overlay,
+.admin-dashboard .studio-modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -696,104 +701,107 @@
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: rgba(15, 23, 42, 0.48);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: fadeIn 0.2s ease-out;
+  background: rgba(24, 49, 83, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
-.dash-modal-card {
+.dash-modal-card,
+.admin-dashboard .studio-modal-card {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 860px;
-  max-height: 88vh;
-  max-height: 88dvh;
+  max-width: min(820px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  background: #FFFFFF;
+  border: 1px solid #DCE9ED;
+  border-radius: 16px;
   overflow: hidden;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.16);
-  animation: modalPop 0.25s ease-out;
+  box-shadow: 0 20px 48px rgba(24, 49, 83, 0.16);
+  margin: auto;
 }
 
-.dash-modal-header {
+.dash-modal-header,
+.admin-dashboard .studio-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
   padding: 1.1rem 1.4rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid #E2E8F0;
+  background: #FFFFFF;
 }
 
 .dash-modal-title-group {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
-  min-width: 0;
+  gap: 0.75rem;
 }
 
-.dash-modal-icon-badge {
+.dash-modal-icon-badge,
+.admin-dashboard .studio-modal-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #FEF3C7;
+  color: #D97706;
   flex-shrink: 0;
-  border-radius: 10px;
-  background: #fef3c7;
-  color: #d97706;
 }
 
-.dash-modal-title {
+.dash-modal-title,
+.admin-dashboard .studio-modal-title {
   margin: 0;
-  color: #0f172a;
   font-size: 1.05rem;
   font-weight: 700;
-  line-height: 1.3;
+  color: #183153;
 }
 
 .dash-modal-subtitle {
-  margin: 0.2rem 0 0;
-  color: #64748b;
+  margin: 0.15rem 0 0;
   font-size: 0.8rem;
+  color: #64748b;
 }
 
-.dash-modal-close {
+.dash-modal-close,
+.admin-dashboard .studio-modal-close {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  padding: 6px;
-  border: none;
-  border-radius: 8px;
   background: transparent;
-  color: #94a3b8;
+  border: none;
+  color: #64748b;
   cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
 }
 
-.dash-modal-close:hover {
-  background: #f1f5f9;
-  color: #0f172a;
+.dash-modal-close:hover,
+.admin-dashboard .studio-modal-close:hover {
+  background: #F1F5F9;
+  color: #183153;
 }
 
-.dash-modal-body {
+.dash-modal-body,
+.admin-dashboard .studio-modal-body {
   padding: 1.25rem 1.4rem;
-  overflow: auto;
+  overflow-y: auto;
   flex: 1;
 }
 
-.dash-modal-info-banner {
+.dash-modal-info-banner,
+.admin-dashboard .studio-modal-info {
   display: flex;
   align-items: flex-start;
-  gap: 0.7rem;
-  margin-bottom: 1.1rem;
-  padding: 0.8rem 1rem;
-  border: 1px solid #e2e8f0;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
   border-radius: 10px;
-  background: #f8fafc;
-  color: #475569;
+  margin-bottom: 1.15rem;
   font-size: 0.84rem;
+  color: #475569;
   line-height: 1.5;
 }
 
@@ -801,56 +809,53 @@
   margin: 0;
 }
 
-.dash-modal-info-icon {
-  flex-shrink: 0;
-}
-
-.dash-table-wrapper {
+.dash-table-wrapper,
+.admin-dashboard .studio-table-wrapper {
   overflow-x: auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #E2E8F0;
   border-radius: 10px;
 }
 
-.dash-inspect-table {
+.dash-inspect-table,
+.admin-dashboard .studio-inspect-table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
   font-size: 0.83rem;
 }
 
-.dash-inspect-table th {
-  padding: 0.7rem 0.85rem;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
+.dash-inspect-table th,
+.admin-dashboard .studio-inspect-table th {
+  padding: 0.7rem 0.9rem;
+  background: #F8FAFC;
   color: #64748b;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #E2E8F0;
 }
 
-.dash-inspect-table td {
-  padding: 0.75rem 0.85rem;
-  border-bottom: 1px solid #f1f5f9;
-  color: #1e293b;
+.dash-inspect-table td,
+.admin-dashboard .studio-inspect-table td {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #F1F5F9;
+  color: #183153;
 }
 
 .dash-inspect-table tr:last-child td {
   border-bottom: none;
 }
 
-.dash-inspect-table tr:hover td {
-  background: #fafafa;
-}
-
-.dash-uid-pill {
+.dash-uid-pill,
+.admin-dashboard .studio-uid-pill {
   padding: 2px 7px;
-  border-radius: 5px;
-  background: #f1f5f9;
+  background: #F1F5F9;
   color: #334155;
   font-family: monospace;
   font-size: 0.8rem;
   font-weight: 700;
+  border-radius: 4px;
 }
 
 .dash-uname {
@@ -862,299 +867,329 @@
   font-size: 0.8rem;
 }
 
-.dash-status-pending-realloc {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.dash-status-pending-realloc,
+.admin-dashboard .studio-status-pending {
   padding: 3px 8px;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  background: #fef3c7;
-  color: #b45309;
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+  border-radius: 5px;
   font-size: 0.74rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
-.dash-modal-footer {
+.dash-modal-footer,
+.admin-dashboard .studio-modal-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.7rem;
-  padding: 1rem 1.4rem;
-  border-top: 1px solid #f1f5f9;
-  background: #fafafa;
+  gap: 0.75rem;
+  padding: 0.9rem 1.4rem;
+  border-top: 1px solid #E2E8F0;
+  background: #FAFAFA;
 }
 
 .dash-modal-btn {
-  padding: 0.6rem 1.1rem;
-  border-radius: 9px;
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.85rem;
+  padding: 0.55rem 1.15rem;
+  border-radius: 8px;
+  font-size: 0.84rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease;
 }
 
-.dash-modal-btn--secondary {
-  border: 1px solid #cbd5e1;
-  background: #fff;
+.dash-modal-btn--secondary,
+.admin-dashboard .studio-modal-btn--sec {
+  background: #FFFFFF;
   color: #475569;
+  border: 1px solid #CBD5E1;
 }
 
-.dash-modal-btn--secondary:hover {
-  background: #f1f5f9;
+.dash-modal-btn--secondary:hover,
+.admin-dashboard .studio-modal-btn--sec:hover {
+  background: #F1F5F9;
 }
 
-.dash-modal-btn--primary {
+.dash-modal-btn--primary,
+.admin-dashboard .studio-modal-btn--pri {
+  background: #0F766E;
+  color: #FFFFFF;
   border: none;
-  background: #2563eb;
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
 }
 
-.dash-modal-btn--primary:hover {
-  background: #1d4ed8;
+.dash-modal-btn--primary:hover,
+.admin-dashboard .studio-modal-btn--pri:hover {
+  background: #115E59;
 }
 
-/* ======================== ANIMATIONS ======================== */
+/* ──────────────────────────────────────────────────────────────────────────
+   8. RESPONSIVE DESIGN (DESKTOP, TABLET, MOBILE)
+   ────────────────────────────────────────────────────────────────────────── */
 
-@keyframes modalPop {
-  from {
-    transform: scale(0.97) translateY(6px);
-    opacity: 0;
-  }
-
-  to {
-    transform: scale(1) translateY(0);
-    opacity: 1;
-  }
-}
-
-/* ======================== TABLET ======================== */
-
-@media (max-width: 1023px) {
-  .admin-dashboard {
-    min-height: 100vh;
-    min-height: 100dvh;
+/* Tablet (768px – 1199px): 2 columns x 3 rows */
+@media (max-width: 1199px) {
+  .admin-dashboard,
+  .admin-dashboard.studio-dashboard {
     height: auto;
+    min-height: 100vh;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
-  .bento-grid {
+  .bento-grid,
+  .admin-dashboard .studio-scenes-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: auto;
-    grid-auto-rows: minmax(210px, auto);
-    flex: 0 0 auto;
     gap: 1rem;
-    padding-top: 0.75rem;
-    padding-bottom: 1.5rem;
+    padding-bottom: 2rem;
+    flex: 1 1 auto;
+    overflow: visible;
   }
 
-  .dash-intro {
-    padding-top: 1.25rem;
+  .bento-card,
+  .admin-dashboard .studio-scene {
+    min-height: 270px;
+    height: auto;
+    overflow: visible;
   }
 
-  .bento-card {
-    min-height: 210px;
+  .admin-dashboard .studio-scene__visual {
+    height: 155px;
+    flex: 0 0 auto;
+    margin: 0.35rem 0 0.5rem;
+    border-radius: 12px;
+  }
+
+  .admin-dashboard .studio-scene__img,
+  .admin-dashboard .studio-scene__svg {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
   }
 }
 
-/* ======================== MOBILE ======================== */
-
-@media (max-width: 599px) {
-  .dash-header {
-    padding: 0.7rem 0.85rem;
+/* Mobile (below 768px): 1 column x 6 rows */
+@media (max-width: 767px) {
+  .dash-header,
+  .admin-dashboard .studio-header {
+    width: calc(100% - 1.7rem);
+    max-width: 100%;
+    margin: 0.85rem auto 0.25rem;
+    padding: 0.45rem 0.65rem;
+    border-radius: 12px;
     gap: 0.5rem;
+    box-sizing: border-box;
   }
 
-  .dash-header__left {
-    gap: 0.65rem;
+  .dash-header__left,
+  .admin-dashboard .studio-header__left {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
-  .dash-header__right {
-    gap: 0.5rem;
-  }
-
-  .dash-brand {
-    gap: 0.5rem;
-  }
-
-  .dash-brand__icon {
-    width: 36px;
-    height: 36px;
-  }
-
-  .dash-brand__label {
-    font-size: 0.58rem;
-    letter-spacing: 0.04em;
-  }
-
-  .dash-brand__title {
-    font-size: 0.95rem;
-  }
-
-  .dash-back-btn {
-    padding: 0.4rem 0.65rem;
-    font-size: 0.78rem;
-  }
-
-  .dash-admin-badge {
-    padding: 0.25rem;
-  }
-
-  .dash-admin-avatar {
-    width: 30px;
-    height: 30px;
-  }
-
-  .dash-admin-info {
-    display: none;
-  }
-
-  .dash-logout-btn {
-    padding: 0.5rem 0.6rem;
-    font-size: 0.76rem;
-  }
-
-  .dash-intro {
-    padding: 1.25rem 1rem 0.5rem;
-  }
-
-  .dash-intro__heading {
-    font-size: 1.2rem;
-  }
-
-  .dash-intro__sub {
-    font-size: 0.82rem;
-  }
-
-  .bento-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-    grid-auto-rows: minmax(175px, auto);
-    gap: 0.85rem;
-    padding: 0.6rem 1rem 1.5rem;
-  }
-
-  .admin-dashboard .bento-card {
-    height: auto;
-    min-height: 175px;
-    padding: 1.1rem;
-  }
-
-  .bento-card__icon-wrap {
-    width: 40px;
-    height: 40px;
-  }
-
-  .bento-card__title {
-    font-size: 1.05rem;
-  }
-
-  .bento-card__desc {
-    font-size: 0.82rem;
-  }
-
-  .bento-card__action {
-    margin-top: 0.7rem;
-  }
-
-  .dash-late-alert-container {
-    padding: 0 1rem;
-  }
-
-  .dash-late-alert-card {
-    padding: 1rem;
-  }
-
-  .dash-late-alert-title-wrap {
+  .dash-brand,
+  .admin-dashboard .studio-brand {
+    gap: 0.45rem;
     min-width: 0;
   }
 
-  .dash-late-alert-actions {
-    width: 100%;
+  .admin-dashboard .studio-brand__text {
+    min-width: 0;
   }
 
-  .dash-late-btn {
-    white-space: normal;
+  .dash-brand__title,
+  .admin-dashboard .studio-brand__title {
+    font-size: clamp(0.68rem, 2.9vw, 0.92rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: -0.02em;
   }
 
-  .dash-modal-overlay {
-    padding: 0.6rem;
+  .dash-brand__subtitle,
+  .admin-dashboard .studio-brand__subtitle {
+    font-size: 0.68rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .dash-modal-header,
-  .dash-modal-body,
-  .dash-modal-footer {
-    padding: 0.9rem;
-  }
-}
-
-@media (max-width: 400px) {
-  .dash-brand {
+  .dash-admin-info,
+  .admin-dashboard .studio-admin-info {
     display: none;
   }
 
-  .dash-header__left {
-    gap: 0.5rem;
+  .dash-admin-badge,
+  .admin-dashboard .studio-admin-badge {
+    padding: 0.2rem 0.3rem;
+    border-radius: 8px;
+    flex-shrink: 0;
   }
 
-  .dash-late-alert-actions {
+  .dash-header__right,
+  .admin-dashboard .studio-header__right {
+    gap: 0.45rem;
+    flex-shrink: 0;
+  }
+
+  .dash-logout-btn span,
+  .admin-dashboard .studio-logout-btn span {
+    display: none;
+  }
+
+  .dash-logout-btn,
+  .admin-dashboard .studio-logout-btn {
+    padding: 0.4rem;
+    width: 32px;
+    height: 32px;
+    justify-content: center;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+
+  .dash-intro,
+  .admin-dashboard .studio-welcome {
+    padding: 0.75rem 0.85rem 0.35rem;
+  }
+
+  .dash-intro__heading,
+  .admin-dashboard .studio-welcome__heading {
+    font-size: 1.35rem;
+  }
+
+  .dash-intro__sub,
+  .admin-dashboard .studio-welcome__sub {
+    font-size: 0.84rem;
+  }
+
+  .bento-grid,
+  .admin-dashboard .studio-scenes-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 0.85rem;
+    padding: 0.45rem 0.85rem 1.75rem;
+  }
+
+  .bento-card,
+  .admin-dashboard .studio-scene {
+    min-height: auto;
+    padding: 1rem;
+  }
+
+  .admin-dashboard .studio-scene__visual {
+    height: 145px;
+    flex: 0 0 auto;
+    margin: 0.35rem 0 0.5rem;
+    border-radius: 12px;
+  }
+
+  .admin-dashboard .studio-scene__img,
+  .admin-dashboard .studio-scene__svg {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .dash-late-alert-header {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .dash-late-btn {
+  .dash-late-alert-actions {
     width: 100%;
   }
-}
 
-/* Short desktop screens: keep cards usable and allow natural page scrolling. */
-@media (min-width: 1024px) and (max-height: 699px) {
-  .admin-dashboard {
-    min-height: 100vh;
-    min-height: 100dvh;
-    height: auto;
-  }
-
-  .bento-grid {
-    grid-template-rows: repeat(2, minmax(190px, auto));
-    flex: 0 0 auto;
-  }
-
-  .admin-dashboard .bento-card {
-    height: 100%;
+  .dash-late-btn {
+    flex: 1;
+    text-align: center;
   }
 }
 
-/* Keep all six card action links aligned consistently */
-.bento-card {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.bento-card__body {
-  flex: 1 1 auto;
-}
-
-.bento-card__action {
-  margin-top: 1rem;
-  padding-top: 0;
-  flex-shrink: 0;
-}
-
-/* Remove the special spacing previously applied to the AI card */
-.bento-card--ai .bento-card__action {
-  margin-top: 1rem;
-}
-
-/* Keep consistent card heights on desktop */
-@media (min-width: 1024px) {
-  .bento-grid {
-    align-items: stretch;
+/* Small mobile (below 480px) */
+@media (max-width: 480px) {
+  .dash-brand__icon,
+  .admin-dashboard .studio-brand__icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
   }
 
-  .bento-card {
-    height: 100%;
+  .dash-brand__title,
+  .admin-dashboard .studio-brand__title {
+    font-size: clamp(0.66rem, 2.8vw, 0.82rem);
+    letter-spacing: -0.025em;
+  }
+
+  .dash-brand__subtitle,
+  .admin-dashboard .studio-brand__subtitle {
+    font-size: 0.65rem;
+  }
+}
+
+/* Extra small mobile (below 380px) */
+@media (max-width: 379px) {
+  .dash-header,
+  .admin-dashboard .studio-header {
+    padding: 0.35rem 0.45rem;
+    gap: 0.35rem;
+  }
+
+  .dash-brand,
+  .admin-dashboard .studio-brand {
+    gap: 0.35rem;
+  }
+
+  .dash-brand__icon,
+  .admin-dashboard .studio-brand__icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+  }
+
+  .dash-brand__title,
+  .admin-dashboard .studio-brand__title {
+    font-size: 0.65rem;
+    letter-spacing: -0.03em;
+  }
+
+  .dash-brand__subtitle,
+  .admin-dashboard .studio-brand__subtitle {
+    font-size: 0.62rem;
+  }
+
+  .dash-admin-avatar,
+  .admin-dashboard .studio-admin-avatar {
+    width: 26px;
+    height: 26px;
+  }
+
+  .dash-admin-badge,
+  .admin-dashboard .studio-admin-badge {
+    padding: 0.15rem 0.25rem;
+  }
+
+  .dash-header__right,
+  .admin-dashboard .studio-header__right {
+    gap: 0.35rem;
+  }
+
+  .dash-logout-btn,
+  .admin-dashboard .studio-logout-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0.3rem;
+    border-radius: 7px;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   9. PREFERS-REDUCED-MOTION (ACCESSIBILITY)
+   ────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .admin-dashboard * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

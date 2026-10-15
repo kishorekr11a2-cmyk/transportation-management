@@ -4,11 +4,10 @@ import VehicleManagement from "./VehicleManagement";
 /**
  * ScheduleManagement
  * Maintains backwards compatibility for direct URL access (/schedule).
- * Reuses the redesigned unified Vehicle & Schedule Management component
- * with the Schedule tab active by default.
+ * Renders the unified Vehicle & Schedule Management page.
  */
 const ScheduleManagement = () => {
-  return <VehicleManagement initialTab="schedules" />;
+  return <VehicleManagement />;
 };
 
 export default ScheduleManagement;

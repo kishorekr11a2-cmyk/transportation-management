@@ -130,6 +130,10 @@ export const normalizeCanonicalStopName = (str = "") => {
             mergedTokens.push(token);
         }
     }
+    if (singleCharBuffer) {
+        mergedTokens.push(singleCharBuffer);
+        singleCharBuffer = "";
+    }
     let normalized = mergedTokens.join(" ");
     if (normalized === "arappayalam") normalized = "arappalayam";
     else if (normalized === "tiruparankundram") normalized = "thiruparankundram";
@@ -1046,7 +1050,8 @@ export const getAIData = async (options = {}) => {
         return await getAIMetrics();
     }
 
-    if (!options.forceRefresh && aiDataCache && Date.now() < aiDataCacheExpiresAt) {
+    const isForceRefresh = options?.forceRefresh === true || options?.forceRefresh === "true";
+    if (!isForceRefresh && aiDataCache && Date.now() < aiDataCacheExpiresAt) {
         return aiDataCache;
     }
 
@@ -6674,6 +6679,40 @@ export const calculateStopMatchScore = (studentStop, routeStopName) => {
         return 90;
     }
 
+    // Consonant collapse / spelling normalization (e.g. Arapalayam vs Arappalayam, Melur vs Mellur)
+    const sNorm = sClean.replace(/(.)\1+/g, "$1");
+    const rNorm = rClean.replace(/(.)\1+/g, "$1");
+    if (sNorm === rNorm || (sNorm.length >= 4 && (sNorm.includes(rNorm) || rNorm.includes(sNorm)))) {
+        if (stopScoreCache.size < MAX_STOP_SCORE_CACHE_SIZE) stopScoreCache.set(cacheKey, 95);
+        return 95;
+    }
+
+    // Regional transliteration: Thiruparankundram / Tiruparankundram
+    const sThiru = sClean.replace(/th/g, "t");
+    const rThiru = rClean.replace(/th/g, "t");
+    if (sThiru === rThiru || (sThiru.length >= 5 && (sThiru.includes(rThiru) || rThiru.includes(sThiru)))) {
+        if (stopScoreCache.size < MAX_STOP_SCORE_CACHE_SIZE) stopScoreCache.set(cacheKey, 95);
+        return 95;
+    }
+
+    // Corridor & transit stop mapping
+    if ((sClean.includes("thiruparankundram") || sClean.includes("tiruparankundram")) &&
+        (rClean.includes("thirunagar") || rClean.includes("alagappan nagar") || rClean.includes("palanganatham"))) {
+        if (stopScoreCache.size < MAX_STOP_SCORE_CACHE_SIZE) stopScoreCache.set(cacheKey, 85);
+        return 85;
+    }
+
+    if (sClean.includes("samayanallur") &&
+        (rClean.includes("koodal nagar") || rClean.includes("vilangudi") || rClean.includes("kochadai") || rClean.includes("arappalayam") || rClean.includes("arapalayam"))) {
+        if (stopScoreCache.size < MAX_STOP_SCORE_CACHE_SIZE) stopScoreCache.set(cacheKey, 85);
+        return 85;
+    }
+
+    if (sClean.includes("periyar") && rClean.includes("periyar")) {
+        if (stopScoreCache.size < MAX_STOP_SCORE_CACHE_SIZE) stopScoreCache.set(cacheKey, 90);
+        return 90;
+    }
+
     // Significant non-generic token overlap
     const sSig = getStopSignificantTokens(studentStop);
     const rSig = getStopSignificantTokens(routeStopName);
@@ -6983,6 +7022,61 @@ export const buildManualTransportationPlan = async (options = {}) => {
         });
     });
 
+    // 6.5. Secondary pass: Allocate any remaining unallocated students to available fleet seats
+    const unallocatedAfterPrimary = comingStudents.filter(
+        (stud) => !assignedUserGlobalSet.has(String(stud._id || stud.userId || "").toLowerCase().trim())
+    );
+
+    if (unallocatedAfterPrimary.length > 0) {
+        for (const stud of unallocatedAfterPrimary) {
+            const sMongoId = stud._id ? String(stud._id).toLowerCase().trim() : null;
+            const sUserId = stud.userId ? String(stud.userId).toLowerCase().trim() : null;
+            if (sMongoId && assignedUserGlobalSet.has(sMongoId)) continue;
+            if (sUserId && assignedUserGlobalSet.has(sUserId)) continue;
+
+            const busesWithSeats = allocatedBuses.filter((b) => b.remainingSeats > 0);
+            if (busesWithSeats.length === 0) break;
+
+            let bestBus = null;
+            let bestStop = null;
+            let bestScore = -1;
+
+            for (const b of busesWithSeats) {
+                for (const st of b.stops) {
+                    const score = calculateStopMatchScore(stud.stoppings, st.name);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestBus = b;
+                        bestStop = st;
+                    }
+                }
+            }
+
+            if (!bestBus) {
+                bestBus = busesWithSeats[0];
+                bestStop = bestBus.stops && bestBus.stops.length > 0 ? bestBus.stops[0] : null;
+            }
+
+            if (bestBus && bestBus.remainingSeats > 0) {
+                const sIdToPush = sMongoId || sUserId;
+                if (sMongoId) assignedUserGlobalSet.add(sMongoId);
+                if (sUserId) assignedUserGlobalSet.add(sUserId);
+
+                bestBus.users.push(sIdToPush);
+                bestBus.assignedUsers += 1;
+                bestBus.remainingSeats = Math.max(0, bestBus.capacity - bestBus.assignedUsers);
+                bestBus.utilization = bestBus.capacity > 0 ? Number(((bestBus.assignedUsers / bestBus.capacity) * 100).toFixed(2)) : 0;
+
+                if (bestStop) {
+                    bestStop.userCount = (bestStop.userCount || 0) + 1;
+                    bestStop.passengersBoarded = (bestStop.passengersBoarded || 0) + 1;
+                    if (!Array.isArray(bestStop.userIds)) bestStop.userIds = [];
+                    bestStop.userIds.push(sIdToPush);
+                }
+            }
+        }
+    }
+
     // 7. Unallocated students check
     const unallocatedStudents = comingStudents.filter(
         (s) => !assignedUserGlobalSet.has(String(s._id || s.userId).toLowerCase().trim())
@@ -7078,7 +7172,8 @@ export const buildManualTransportationPlan = async (options = {}) => {
                 { direction: canonicalDirection.toLowerCase() },
                 { direction: new RegExp(`^${canonicalDirection}$`, "i") }
             ],
-            isSubmitted: true
+            isSubmitted: true,
+            status: { $nin: ["reset", "superseded", "stale"] }
         });
         if (subDoc) {
             isSubmitted = true;
@@ -7143,7 +7238,7 @@ export const buildManualTransportationPlan = async (options = {}) => {
         isApproved,
         hasLateResponses: Boolean(hasLateResponses),
         pendingReallocation: Boolean(hasLateResponses),
-        adminApprovalStatus: (isApproved && !hasLateResponses) ? "Approved" : (hasLateResponses ? "Pending Reallocation" : "Pending Admin Approval"),
+        adminApprovalStatus: (isApproved && !hasLateResponses) ? "Approved" : (hasLateResponses ? "Pending Reallocation" : (isSubmitted ? "Pending Admin Approval" : "Not Approved")),
         approvedAt,
         isSubmitted: isSubmitted || isApproved,
         submittedAt,
@@ -8621,7 +8716,7 @@ export const persistPlanToUsers = async (
             });
         }
 
-        // Check if the OPPOSITE direction is legitimately active and approved in ai_selected_plans
+        // Check if the OPPOSITE direction is legitimately active and approved in ai_selected_plans OR aiplans
         const oppositeDirection = isOutward ? "INWARD" : "OUTWARD";
         let isOppositeApproved = false;
         if (mongoose.connection.db) {
@@ -8641,6 +8736,14 @@ export const persistPlanToUsers = async (
                 { projection: { _id: 1 } }
             );
             isOppositeApproved = Boolean(activeOppositeDoc);
+            if (!isOppositeApproved) {
+                const activeAiOpposite = await AiPlan.findOne({
+                    active: true,
+                    status: "active",
+                    direction: oppositeDirection
+                }).select("_id").lean();
+                isOppositeApproved = Boolean(activeAiOpposite);
+            }
         }
 
         const bulkOps = [];
@@ -8658,7 +8761,8 @@ export const persistPlanToUsers = async (
 
             if (isExplicitlyAssigned || student.travelStatus === "Coming") {
                 const match = (uUserId && userToBusMap.get(uUserId)) ||
-                    (uId && userToBusMap.get(uId));
+                    (uId && userToBusMap.get(uId)) ||
+                    (uStop && stopToBusMap.get(uStop));
 
                 if (match) {
                     const { bus, stop, allocBase } = match;
@@ -8691,17 +8795,22 @@ export const persistPlanToUsers = async (
                         }))
                     };
                 } else {
-                    directionAllocObj = {
-                        isAllocated: false,
-                        approved: true,
-                        allocationStatus: "Unallocated",
-                        adminApprovalStatus: "Approved",
-                        direction: canonicalDirection,
-                        planType: planType || "AI",
-                        unallocatedReason: plan?.unassignedReason || "VEHICLE_CAPACITY",
-                        updatedAt: new Date(),
-                        message: "All seats on this route are fully occupied. You are on the standby list. Please contact transportation administrator."
-                    };
+                    const existingCurrentDir = isOutward ? student.allocatedBus?.outward : student.allocatedBus?.inward;
+                    if (existingCurrentDir && existingCurrentDir.isAllocated && (existingCurrentDir.vehicleName || existingCurrentDir.vehicleNumber)) {
+                        directionAllocObj = { ...existingCurrentDir };
+                    } else {
+                        directionAllocObj = {
+                            isAllocated: false,
+                            approved: true,
+                            allocationStatus: "Unallocated",
+                            adminApprovalStatus: "Approved",
+                            direction: canonicalDirection,
+                            planType: planType || "AI",
+                            unallocatedReason: plan?.unassignedReason || "VEHICLE_CAPACITY",
+                            updatedAt: new Date(),
+                            message: "All seats on this route are fully occupied. You are on the standby list. Please contact transportation administrator."
+                        };
+                    }
                 }
             } else if (student.travelStatus === "Not Coming") {
                 directionAllocObj = {
@@ -8727,13 +8836,13 @@ export const persistPlanToUsers = async (
                 };
             }
 
-            // Opposite direction is preserved ONLY if opposite direction is currently active and approved!
+            // Opposite direction is preserved if opposite direction is approved OR if already allocated on user!
             const existingAlloc = (student.allocatedBus && typeof student.allocatedBus === "object") ? student.allocatedBus : {};
             let oppositeAlloc = null;
-            if (isOppositeApproved) {
-                const cand = isOutward ? existingAlloc.inward : existingAlloc.outward;
-                if (cand && cand.isAllocated && (cand.approved === true || cand.adminApprovalStatus === "Approved")) {
-                    oppositeAlloc = { ...cand, approved: true };
+            const cand = isOutward ? existingAlloc.inward : existingAlloc.outward;
+            if (cand && cand.isAllocated) {
+                if (isOppositeApproved || cand.approved === true || cand.adminApprovalStatus === "Approved" || cand.vehicleNumber || cand.vehicleName) {
+                    oppositeAlloc = { ...cand };
                 }
             }
 
@@ -9751,7 +9860,9 @@ export const saveSelectedPlan = async (selection) => {
                 checks.noMissingPassengers === false ||
                 checks.vehicleUniquenessValid === false ||
                 checks.onlyAvailableVehiclesAssigned === false ||
-                checks.demandConservation === false;
+                checks.demandConservation === false ||
+                checks.noPassengerUnallocated === false ||
+                checks.everyPassengerStopRepresentedInAssignedBus === false;
 
             if (hasCriticalSafetyViolation) {
                 return {
@@ -9799,6 +9910,17 @@ export const saveSelectedPlan = async (selection) => {
             }
         }
 
+        if (effectivePlan && (effectivePlan.aiPlan || effectivePlan.plan)) {
+            const inner = effectivePlan.aiPlan || effectivePlan.plan;
+            if (inner && (Array.isArray(inner.buses) || Array.isArray(inner.routes))) {
+                effectivePlan = {
+                    ...inner,
+                    ...effectivePlan,
+                    buses: (Array.isArray(inner.buses) && inner.buses.length > 0) ? inner.buses : (effectivePlan.buses || inner.routes || effectivePlan.routes)
+                };
+            }
+        }
+
         const explicitAllocationMode = selection?.allocationMode || ((planType === "ADMIN" || planType === "MANUAL") ? "MANUAL" : "AI");
         if (planType === "ADMIN" || planType === "MANUAL") {
             const hasUsersAllocated = Array.isArray(plan?.buses) && plan.buses.some((b) => Array.isArray(b.users) && b.users.length > 0);
@@ -9833,6 +9955,29 @@ export const saveSelectedPlan = async (selection) => {
                 success: false,
                 code: "STALE_PLAN_DEMAND_MISMATCH",
                 message: `Cannot activate plan: Demand mismatch. Plan was generated for ${planDemandCount} passengers, but current demand is ${currentLiveComingCount} confirmed Coming students. Please regenerate the plan before activating.`
+            };
+        }
+
+        // Validation Gate 4B: Enforce Complete Demand Coverage (Zero Unallocated Passengers Gate)
+        const effectiveBuses = Array.isArray(effectivePlan?.buses) ? effectivePlan.buses : (Array.isArray(effectivePlan?.routes) ? effectivePlan.routes : []);
+        const totalAssignedInPlan = effectiveBuses.reduce((sum, b) => {
+            const count = (Array.isArray(b.users) && b.users.length > 0)
+                ? b.users.length
+                : Number(b.assignedUsers || b.passengerCount || (b.stops || []).reduce((s, st) => s + (st.userCount || 0), 0) || 0);
+            return sum + count;
+        }, 0);
+        const effectivePlanDemand = planDemandCount > 0 ? planDemandCount : currentLiveComingCount;
+        const unassignedInPlan = typeof effectivePlan?.unassignedUsers === "number"
+            ? effectivePlan.unassignedUsers
+            : (typeof effectivePlan?.unallocatedUsers === "number"
+                ? effectivePlan.unallocatedUsers
+                : Math.max(0, effectivePlanDemand - totalAssignedInPlan));
+
+        if (unassignedInPlan > 0 && effectivePlanDemand > 0) {
+            return {
+                success: false,
+                code: "UNCERTIFIED_PLAN",
+                message: `Cannot activate incomplete transportation plan: ${unassignedInPlan} passenger(s) remain unallocated (${totalAssignedInPlan} / ${effectivePlanDemand} allocated). All confirmed Coming students must be assigned to an eligible vehicle before plan activation.`
             };
         }
 
@@ -10018,6 +10163,23 @@ export const saveSelectedPlan = async (selection) => {
                         generatedAt: approvalTime
                     });
                 }
+            } else if (planType === "ADMIN" || planType === "MANUAL") {
+                await AiPlan.updateMany(
+                    {
+                        active: true,
+                        $or: [
+                            { direction: canonicalDirection },
+                            { tripMode: canonicalDirection },
+                            { tripMode: canonicalDirection === "OUTWARD" ? "FROM_SOURCE" : "TO_DESTINATION" }
+                        ]
+                    },
+                    {
+                        $set: {
+                            active: false,
+                            status: "superseded"
+                        }
+                    }
+                ).catch(() => {});
             }
 
             if (canonicalDirection === "OUTWARD") {
@@ -10269,8 +10431,10 @@ export const getActiveAIPlan = async (options = {}) => {
         const canonicalType = options?.planType ? String(options.planType).toUpperCase().trim() : "ALL";
         const canonicalKey = `${canonicalDir}_${canonicalType}`;
 
+        const isForceRefresh = options?.forceRefresh === true || options?.forceRefresh === "true";
+
         // Fast-path: Check memory cache first (<0.05ms)
-        if (!options?.forceRefresh) {
+        if (!isForceRefresh) {
             const cached = activeAIPlanCache.get(canonicalKey);
             if (cached && (Date.now() - cached.timestamp < ACTIVE_AI_PLAN_CACHE_TTL_MS)) {
                 return cached.data;
@@ -10289,12 +10453,26 @@ export const getActiveAIPlan = async (options = {}) => {
         const formatPlanResponse = async (planDoc, selectedDoc = null) => {
             if (!planDoc && !selectedDoc) return null;
             const base = planDoc || {};
-            const innerPlan = base.aiPlan || selectedDoc?.plan || base;
-            const summary = base.summary || innerPlan.summary || {};
+            const isSelectedAuthoritative = Boolean(
+                selectedDoc && (
+                    selectedDoc.approved === true ||
+                    selectedDoc.isApproved === true ||
+                    selectedDoc.planType === "ADMIN" ||
+                    selectedDoc.planType === "MANUAL"
+                )
+            );
+            const innerPlan = isSelectedAuthoritative
+                ? (selectedDoc.plan || base.aiPlan || base)
+                : (base.aiPlan || selectedDoc?.plan || base);
+            const summary = isSelectedAuthoritative
+                ? (selectedDoc.plan?.summary || selectedDoc.summary || base.summary || innerPlan.summary || {})
+                : (base.summary || innerPlan.summary || selectedDoc?.plan?.summary || {});
             const isApproved = Boolean(base.isApproved === true || (selectedDoc && (selectedDoc.approved === true || selectedDoc.isApproved === true)));
             const isActive = Boolean(selectedDoc?.active || base.active);
             const isSubmitted = Boolean(base.isSubmitted === true || selectedDoc?.isSubmitted === true || base.status === "pending_approval" || selectedDoc?.status === "pending_approval" || isApproved);
-            const buses = Array.isArray(innerPlan.buses) ? innerPlan.buses : (Array.isArray(base.buses) ? base.buses : []);
+            const buses = Array.isArray(innerPlan.buses)
+                ? innerPlan.buses
+                : (Array.isArray(base.buses) ? base.buses : (Array.isArray(selectedDoc?.plan?.buses) ? selectedDoc.plan.buses : []));
 
             const rawPlanType = String(selectedDoc?.planType || base.planType || "AI").toUpperCase().trim();
             const planType = (rawPlanType === "ADMIN" || rawPlanType === "MANUAL") ? "ADMIN" : "AI";
@@ -10366,10 +10544,10 @@ export const getActiveAIPlan = async (options = {}) => {
                 aiPlan: innerPlan,
                 buses,
                 routes: buses,
-                assignedUsers: innerPlan.assignedUsers || summary.allocatedUsers || summary.assignedUsers || buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0),
-                allocatedUsers: innerPlan.assignedUsers || summary.allocatedUsers || summary.assignedUsers || buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0),
-                totalCapacity: innerPlan.totalCapacity || innerPlan.allocatedSeats || summary.allocatedSeats || summary.totalSeats || buses.reduce((s, b) => s + (b.capacity || 0), 0),
-                allocatedSeats: innerPlan.allocatedSeats || innerPlan.totalCapacity || summary.allocatedSeats || summary.totalSeats || buses.reduce((s, b) => s + (b.capacity || 0), 0),
+                assignedUsers: Number(innerPlan.assignedUsers ?? summary.allocatedUsers ?? summary.assignedUsers ?? buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0)),
+                allocatedUsers: Number(innerPlan.assignedUsers ?? summary.allocatedUsers ?? summary.assignedUsers ?? buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0)),
+                totalCapacity: Number(innerPlan.totalCapacity ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)),
+                allocatedSeats: Number(innerPlan.allocatedSeats ?? innerPlan.totalCapacity ?? summary.allocatedSeats ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)),
                 unassignedUsers: innerPlan.unassignedUsers ?? summary.unallocatedUsers ?? 0,
                 unallocatedUsers: innerPlan.unassignedUsers ?? summary.unallocatedUsers ?? 0,
                 standingPassengers: innerPlan.totalStandingPassengers || innerPlan.standingPassengers || 0,
@@ -10379,12 +10557,14 @@ export const getActiveAIPlan = async (options = {}) => {
                 summary: {
                     ...summary,
                     totalBuses: buses.length,
-                    allocatedSeats: innerPlan.allocatedSeats || innerPlan.totalCapacity || summary.allocatedSeats || buses.reduce((s, b) => s + (b.capacity || 0), 0),
-                    allocatedUsers: innerPlan.assignedUsers || summary.allocatedUsers || summary.assignedUsers || buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0),
+                    totalSeats: Number(innerPlan.totalCapacity ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)),
+                    totalCapacity: Number(innerPlan.totalCapacity ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)),
+                    allocatedSeats: Number(innerPlan.allocatedSeats ?? innerPlan.totalCapacity ?? summary.allocatedSeats ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)),
+                    allocatedUsers: Number(innerPlan.assignedUsers ?? summary.allocatedUsers ?? summary.assignedUsers ?? buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0)),
                     unallocatedUsers: innerPlan.unassignedUsers ?? summary.unallocatedUsers ?? 0,
-                    unusedSeats: Math.max(0, (innerPlan.totalCapacity || summary.allocatedSeats || 0) - (innerPlan.assignedUsers || summary.allocatedUsers || 0))
+                    unusedSeats: Math.max(0, Number(innerPlan.totalCapacity ?? summary.totalSeats ?? summary.totalCapacity ?? buses.reduce((s, b) => s + (b.capacity || 0), 0)) - Number(innerPlan.assignedUsers ?? summary.allocatedUsers ?? summary.assignedUsers ?? buses.reduce((s, b) => s + (b.assignedUsers || (Array.isArray(b.users) ? b.users.length : 0)), 0)))
                 },
-                createdAt: base.createdAt || selectedDoc?.selectedAt || selectedDoc?.createdAt
+                createdAt: selectedDoc?.approvedAt || selectedDoc?.selectedAt || selectedDoc?.createdAt || base.createdAt
             };
         };
 
@@ -10624,7 +10804,7 @@ export const getActiveAIPlan = async (options = {}) => {
             const resetTime = new Date(resetDoc.resetAt || resetDoc.updatedAt || 0).getTime();
             const opDoc = dir === "OUTWARD" ? operationalOutward : operationalInward;
             if (opDoc) {
-                const opTime = new Date(opDoc.createdAt || opDoc.generatedAt || 0).getTime();
+                const opTime = new Date(opDoc.approvedAt || opDoc.selectedAt || opDoc.createdAt || opDoc.generatedAt || opDoc.updatedAt || 0).getTime();
                 if (opTime > resetTime) return false;
             }
             return true;
@@ -10646,6 +10826,17 @@ export const getActiveAIPlan = async (options = {}) => {
             resetDirection = (outReset && inReset) ? "BOTH" : (outReset ? "OUTWARD" : (inReset ? "INWARD" : null));
         }
 
+        const buildStaleMetadata = (p) => p ? {
+            _id: p._id,
+            direction: p.direction,
+            planDemandCount: p.planDemandCount,
+            currentDemandCount: p.currentDemandCount,
+            requiresReset: Boolean(p.requiresReset),
+            isStale: Boolean(p.isStale),
+            staleReason: p.staleReason,
+            hasLateResponses: Boolean(p.hasLateResponses)
+        } : null;
+
         const finalResult = {
             success: true,
             wasReset,
@@ -10656,8 +10847,8 @@ export const getActiveAIPlan = async (options = {}) => {
             plan: selectedPlan,
             outwardPlan: operationalOutward,
             inwardPlan: operationalInward,
-            staleOutwardPlan: operationalOutward?.requiresReset ? operationalOutward : null,
-            staleInwardPlan: operationalInward?.requiresReset ? operationalInward : null,
+            staleOutwardPlan: operationalOutward?.requiresReset ? buildStaleMetadata(operationalOutward) : null,
+            staleInwardPlan: operationalInward?.requiresReset ? buildStaleMetadata(operationalInward) : null,
             staleReason: operationalOutward?.staleReason || operationalInward?.staleReason || null,
             requiresReset: Boolean(
                 requestedDirection === "OUTWARD"
@@ -12445,8 +12636,9 @@ export const getPlanStatus = async (options = {}) => {
     }
 
     try {
+        const isForceRefresh = options?.forceRefresh === true || options?.forceRefresh === "true";
         const [activePlans, selOutward, selInward, subOutward, subInward, outwardAllocCount, inwardAllocCount, activeLateLifecycle] = await Promise.all([
-            getActiveAIPlan({ forceRefresh: true }),
+            getActiveAIPlan({ forceRefresh: isForceRefresh }),
             mongoose.connection.db ? mongoose.connection.db.collection("ai_selected_plans").findOne({
                 active: true,
                 status: { $in: ["active", "pending_approval"] },

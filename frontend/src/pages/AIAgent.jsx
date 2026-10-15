@@ -19,11 +19,7 @@ import {
     getPlanStatus,
     fetchLateResponses,
     getLateResponseDraft,
-    getInwardStartingPlaces,
-    addInwardStartingPlace,
-    updateInwardStartingPlace,
-    deleteInwardStartingPlace,
-    toggleInwardStartingPlaceStatus
+    getInwardStartingPlaces
 } from "../services/aiAgentService";
 import LocationSearchBox from "../components/LocationSearchBox";
 import OptimizationWorkspace from "../components/OptimizationWorkspace";
@@ -348,16 +344,42 @@ export default function AIAgent() {
 
 
     const [loading, setLoading] = useState(true);
+    const [planChecking, setPlanChecking] = useState(() => !planData);
+    const activePlanFetchIdRef = useRef(0);
 
-    // Inward Bus Starting Places State
-    const [inwardStartingPlaces, setInwardStartingPlaces] = useState([]);
+    // Inward Bus Starting Places State (for dynamic fleet readiness & route generation)
+    const [inwardStartingPlaces, setInwardStartingPlaces] = useState(() => {
+        try {
+            const cached = localStorage.getItem("cached_inward_starting_places");
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            }
+        } catch { }
+        return [];
+    });
     const [inwardStartingPlacesLoading, setInwardStartingPlacesLoading] = useState(false);
-    const [showStartPlaceModal, setShowStartPlaceModal] = useState(false);
-    const [editingStartPlace, setEditingStartPlace] = useState(null);
-    const [modalBusId, setModalBusId] = useState("");
-    const [modalLocation, setModalLocation] = useState(null);
-    const [modalSaving, setModalSaving] = useState(false);
-    const [modalError, setModalError] = useState("");
+
+    // Ensure document body is always scrollable on page mount and unmount
+    useEffect(() => {
+        document.body.style.overflow = "";
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, []);
+
+    // Lock page background scrolling when any modal is open
+    useEffect(() => {
+        const hasOpenModal = Boolean(showResetModal || showSelectRouteModal || isMapModalOpen);
+        if (hasOpenModal) {
+            document.body.style.overflow = "hidden";
+            return () => {
+                document.body.style.overflow = "";
+            };
+        } else {
+            document.body.style.overflow = "";
+        }
+    }, [showResetModal, showSelectRouteModal, isMapModalOpen]);
 
     const loadInwardStartingPlaces = async () => {
         try {
@@ -365,6 +387,9 @@ export default function AIAgent() {
             const res = await getInwardStartingPlaces();
             if (res?.success && Array.isArray(res.startingPlaces)) {
                 setInwardStartingPlaces(res.startingPlaces);
+                try {
+                    localStorage.setItem("cached_inward_starting_places", JSON.stringify(res.startingPlaces));
+                } catch { }
             }
         } catch (err) {
             console.warn("Unable to load inward starting places:", err);
@@ -373,113 +398,9 @@ export default function AIAgent() {
         }
     };
 
-    const handleOpenStartingPlaceModal = (existing = null) => {
-        setModalError("");
-        if (existing) {
-            setEditingStartPlace(existing);
-            setModalBusId(existing.vehicleId || existing.busId || existing._id || "");
-            setModalLocation({
-                name: existing.locationName || existing.name,
-                displayName: existing.address || existing.name,
-                address: existing.address || "",
-                latitude: existing.latitude,
-                longitude: existing.longitude
-            });
-        } else {
-            setEditingStartPlace(null);
-            setModalBusId("");
-            setModalLocation(null);
-        }
-        setShowStartPlaceModal(true);
-    };
-
-    const handleSaveStartingPlace = async (e) => {
-        if (e) e.preventDefault();
-        setModalError("");
-        if (!modalBusId) {
-            setModalError("Please select an available bus.");
-            return;
-        }
-        if (!modalLocation || !modalLocation.latitude || !modalLocation.longitude) {
-            setModalError("Please select a valid starting location.");
-            return;
-        }
-
-        const candidateBuses = data?.availableVehicles || data?.vehicles || [];
-        const chosenBus = candidateBuses.find((b) => String(b._id || b.id) === String(modalBusId));
-        const busName = chosenBus ? getBusName(chosenBus) : (editingStartPlace?.busName || modalBusId);
-        const capacity = chosenBus ? getBusCapacity(chosenBus) : (editingStartPlace?.capacity || 0);
-
-        try {
-            setModalSaving(true);
-            const payload = {
-                vehicleId: String(modalBusId),
-                busId: String(modalBusId),
-                busName,
-                capacity,
-                locationName: modalLocation.name || modalLocation.displayName,
-                name: modalLocation.name || modalLocation.displayName,
-                address: modalLocation.address || modalLocation.displayName || "",
-                latitude: Number(modalLocation.latitude),
-                longitude: Number(modalLocation.longitude),
-                active: true
-            };
-
-            let res;
-            if (editingStartPlace?._id) {
-                res = await updateInwardStartingPlace(editingStartPlace._id, payload);
-            } else {
-                res = await addInwardStartingPlace(payload);
-            }
-
-            if (res?.success) {
-                toast.success(res.message || "Starting place saved successfully");
-                setShowStartPlaceModal(false);
-                loadInwardStartingPlaces();
-            } else {
-                setModalError(res?.message || "Failed to save starting place");
-            }
-        } catch (err) {
-            const msg = err?.response?.data?.message || err.message || "Failed to save starting place";
-            setModalError(msg);
-        } finally {
-            setModalSaving(false);
-        }
-    };
-
-    const handleToggleStartingPlace = async (id) => {
-        try {
-            const res = await toggleInwardStartingPlaceStatus(id);
-            if (res?.success) {
-                toast.success(res.message);
-                loadInwardStartingPlaces();
-            } else {
-                toast.error(res?.message || "Failed to toggle status");
-            }
-        } catch (err) {
-            toast.error(err?.response?.data?.message || err.message || "Failed to toggle status");
-        }
-    };
-
-    const handleDeleteStartingPlace = async (id) => {
-        if (!window.confirm("Are you sure you want to remove this inward starting place configuration?")) {
-            return;
-        }
-        try {
-            const res = await deleteInwardStartingPlace(id);
-            if (res?.success) {
-                toast.success("Starting place removed");
-                loadInwardStartingPlaces();
-            } else {
-                toast.error(res?.message || "Failed to delete");
-            }
-        } catch (err) {
-            toast.error(err?.response?.data?.message || err.message || "Failed to delete");
-        }
-    };
-
     const handleSelectAiRouteToView = (route) => {
         setShowSelectRouteModal(false);
+        document.body.style.overflow = "";
         if (!route) {
             toast.error("Unable to load the selected AI route.");
             return;
@@ -573,6 +494,7 @@ export default function AIAgent() {
         if (isMounted) {
             initialHydratedRef.current = true;
             setLoading(false);
+            setPlanChecking(false);
         }
     };
 
@@ -607,9 +529,17 @@ export default function AIAgent() {
             return;
         }
 
+        const fetchId = ++activePlanFetchIdRef.current;
+        const currentDir = overrideDir || planDirectionTabRef.current || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+
         try {
-            const currentDir = overrideDir || planDirectionTabRef.current || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
+            // Keep existing route cards visible during background refresh — do not clear planData here
             const response = await getActivePlan({ direction: currentDir, planType: "AI", forceRefresh });
+
+            // Discard stale in-flight response if direction changed or newer fetch dispatched
+            if (fetchId !== activePlanFetchIdRef.current || isGeneratingRef.current) {
+                return;
+            }
 
             if (isGeneratingRef.current) {
                 return;
@@ -766,6 +696,10 @@ export default function AIAgent() {
             }
         } catch (error) {
             console.error("Unable to load active AI plan:", error);
+        } finally {
+            if (fetchId === activePlanFetchIdRef.current) {
+                setPlanChecking(false);
+            }
         }
     };
 
@@ -825,19 +759,9 @@ export default function AIAgent() {
     const loadLateResponseDraft = async (targetDirection = null) => {
         try {
             const currentDir = targetDirection || manualPlanDirection || planDirectionTab || (tripMode === "FROM_SOURCE" ? "OUTWARD" : "INWARD");
-            const [draftRes, lateRes, statusRes] = await Promise.allSettled([
-                getLateResponseDraft({ direction: currentDir }),
-                fetchLateResponses(),
-                getPlanStatus()
-            ]);
-            if (lateRes.status === "fulfilled" && lateRes.value?.success) {
-                setLateResponsesData(lateRes.value);
-            }
-            if (statusRes.status === "fulfilled" && statusRes.value?.success) {
-                setPlanStatusData(statusRes.value);
-            }
-            if (draftRes.status === "fulfilled" && draftRes.value?.success && draftRes.value?.draft) {
-                return draftRes.value.draft;
+            const draftRes = await getLateResponseDraft({ direction: currentDir });
+            if (draftRes?.success && draftRes?.draft) {
+                return draftRes.draft;
             }
             return null;
         } catch (error) {
@@ -1681,41 +1605,26 @@ export default function AIAgent() {
     return (
         <div className="ai-page">
 
+            {/* Campus & Bus Background Illustration */}
+            <div className="ai-hero-bg" aria-hidden="true">
+                <div className="ai-hero-illustration"></div>
+            </div>
+
             {/* Header */}
             <div className="ai-header">
-                <div>
+                <div className="ai-header-left">
                     <button
                         type="button"
                         className="ai-back-btn"
                         onClick={() => navigate("/admin-dashboard")}
                         aria-label="Go back"
-                        style={{ marginBottom: "14px" }}
                     >
                         <HiArrowLeft size={16} />
                         Back
                     </button>
-                    <div>
-                        <span className="ai-header-label">
-                            AI TRANSPORTATION ENGINE
-                        </span>
-
-                        <h1>
-                            AI Route Optimization
-                        </h1>
-                    </div>
-
-                    <p>
-                        The AI Agent independently
-                        generates optimized,
-                        continuous road routes
-                        using confirmed Coming users,
-                        stopping areas, vehicle
-                        capacities, and schedule
-                        availability. Map
-                        visualization is managed in
-                        Route Management, and the
-                        administrator makes the final
-                        decision.
+                    <h1 className="ai-page-title">AI ROUTE OPTIMIZATION</h1>
+                    <p className="ai-page-subtitle">
+                        The AI Agent independently generates optimized transportation routes using confirmed student demand, stopping areas, vehicle capacities, and availability.
                     </p>
                 </div>
 
@@ -1959,7 +1868,7 @@ export default function AIAgent() {
             </section>
 
             {/* Section 1 */}
-            <section className="ai-section">
+            <section className="ai-section endpoint-section">
 
                 <div className="section-number">
                     01
@@ -2154,97 +2063,84 @@ export default function AIAgent() {
 
                     </div>
 
-                    {/* INWARD BUS STARTING PLACES */}
-                    <div className="inward-starting-places-section">
-                        <div className="inward-starting-header">
-                            <div>
-                                <h3>Inward Bus Starting Places</h3>
-                                <p>Configure the starting hub / location for each inward bus. Each inward bus starts from its configured place.</p>
-                                {summary.confirmedUsers > 0 && inwardStartingPlaces.length > 0 && (
-                                    <div style={{
-                                        marginTop: "8px",
-                                        padding: "8px 12px",
-                                        background: hasSufficientStartingPlaces
-                                            ? "rgba(16, 185, 129, 0.1)"
-                                            : "rgba(245, 158, 11, 0.1)",
-                                        border: `1px solid ${hasSufficientStartingPlaces ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)"}`,
-                                        borderRadius: "6px",
-                                        color: hasSufficientStartingPlaces ? "#065f46" : "#92400e",
-                                        fontSize: "13px",
-                                        fontWeight: "500",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: "6px"
-                                    }}>
-                                        <span>{hasSufficientStartingPlaces ? "✓" : "⚠️"}</span>
-                                        <span>
-                                            {hasSufficientStartingPlaces
-                                                ? (hasActivePlan && feasibleBusesCount !== theoreticalMinBuses
-                                                    ? `${feasibleBusesCount} buses operationally required for ${summary.confirmedUsers} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses, operationally required fleet: ${feasibleBusesCount} buses). All selected inward buses have configured starting places. Ready to generate.`
-                                                    : `${feasibleBusesCount || theoreticalMinBuses} buses operationally required for ${summary.confirmedUsers} passengers (theoretical capacity minimum: ${theoreticalMinBuses} buses). All selected inward buses have configured starting places. Ready to generate.`)
-                                                : `Theoretical capacity minimum: ${theoreticalMinBuses} buses for ${summary.confirmedUsers} passengers. Starting locations configured for ${activeStartingPlacesCount} buses.`}
-                                        </span>
-                                    </div>
-                                )}
+                    {/* COMPACT INWARD BUS STARTING PLACES NAVIGATION CARD */}
+                    <div
+                        className="inward-starting-nav-card"
+                        onClick={() => navigate("/admin/inward-starting-places")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                navigate("/admin/inward-starting-places");
+                            }
+                        }}
+                    >
+                        <div className="inward-nav-card-left">
+                            <div className="inward-nav-icon-box">
+                                <span className="inward-nav-icon">📍</span>
                             </div>
-                            <button
-                                type="button"
-                                className="configure-start-place-btn"
-                                onClick={() => handleOpenStartingPlaceModal()}
-                            >
-                                + Configure Bus Starting Place
-                            </button>
+                            <div className="inward-nav-body">
+                                <div className="inward-nav-title-row">
+                                    <h3 className="inward-nav-title">Inward Bus Starting Places</h3>
+                                    <span
+                                        className={`inward-nav-status-badge ${
+                                            hasSufficientStartingPlaces ? "ready" : "warning"
+                                        }`}
+                                    >
+                                        {hasSufficientStartingPlaces
+                                            ? "✓ Ready to Generate"
+                                            : "⚠️ Configuration Required"}
+                                    </span>
+                                </div>
+                                <p className="inward-nav-desc">
+                                    Configure and manage the starting hub/location for each inward bus.
+                                </p>
+                                <div className="inward-nav-readiness-row">
+                                    <span className="inward-nav-metric-text">
+                                        <strong>{feasibleBusesCount || theoreticalMinBuses}</strong>{" "}
+                                        {(feasibleBusesCount || theoreticalMinBuses) === 1
+                                            ? "bus"
+                                            : "buses"}{" "}
+                                        operationally required for{" "}
+                                        <strong>
+                                            {summary?.confirmedUsers ?? (data?.confirmedUserCount ?? 0)}
+                                        </strong>{" "}
+                                        passengers.
+                                    </span>
+                                    <span className="inward-nav-dot">•</span>
+                                    <span className="inward-nav-metric-text">
+                                        Theoretical minimum: <strong>{theoreticalMinBuses}</strong>{" "}
+                                        {theoreticalMinBuses === 1 ? "bus" : "buses"}.
+                                    </span>
+                                    <span className="inward-nav-dot">•</span>
+                                    <span className="inward-nav-metric-text">
+                                        Configured active hubs:{" "}
+                                        <strong>{activeStartingPlacesCount}</strong>.
+                                    </span>
+                                    {hasSufficientStartingPlaces && (
+                                        <>
+                                            <span className="inward-nav-dot">•</span>
+                                            <span className="inward-nav-ready-text">
+                                                All selected inward buses have configured starting places.
+                                            </span>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
                         </div>
-
-                        {inwardStartingPlacesLoading ? (
-                            <div style={{ padding: "16px", textAlign: "center", color: "#64748b" }}>Loading inward starting places...</div>
-                        ) : inwardStartingPlaces.length === 0 ? (
-                            <div className="no-places-notice">
-                                <p>No inward bus starting places configured yet. Click <strong>+ Configure Bus Starting Place</strong> to assign starting locations for available buses.</p>
-                            </div>
-                        ) : (
-                            <div className="bus-start-cards-grid">
-                                {inwardStartingPlaces.map((sp) => (
-                                    <div key={sp._id} className={`bus-start-card ${sp.active ? "active-place" : "inactive-place"}`}>
-                                        <div className="bus-start-info">
-                                            <div className="bus-badge-row">
-                                                <span className="bus-name-badge">{sp.busName}</span>
-                                                {sp.capacity > 0 && <span className="bus-cap-badge">{sp.capacity} seats</span>}
-                                                <span className={`status-pill ${sp.active ? "active" : "inactive"}`}>
-                                                    {sp.active ? "Active" : "Inactive"}
-                                                </span>
-                                            </div>
-                                            <div className="location-detail">
-                                                <span className="loc-icon">📍</span>
-                                                <div>
-                                                    <strong>{sp.locationName || sp.name}</strong>
-                                                    {sp.address && <p>{sp.address}</p>}
-                                                    <small>{Number(sp.latitude).toFixed(5)}, {Number(sp.longitude).toFixed(5)}</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="bus-start-actions">
-                                            <button type="button" onClick={() => handleOpenStartingPlaceModal(sp)}>
-                                                Edit
-                                            </button>
-                                            <button type="button" onClick={() => handleToggleStartingPlace(sp._id)}>
-                                                {sp.active ? "Deactivate" : "Activate"}
-                                            </button>
-                                            <button type="button" className="btn-remove" onClick={() => handleDeleteStartingPlace(sp._id)}>
-                                                Remove
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                        <div className="inward-nav-card-right">
+                            <span className="inward-nav-link-btn">
+                                View &amp; Manage Starting Places{" "}
+                                <span className="inward-nav-arrow">→</span>
+                            </span>
+                        </div>
                     </div>
 
                 </div>
             </section>
 
             {/* Section 2 */}
-            <section className="ai-section">
+            <section className="ai-section plan-section">
 
                 <div className="section-number">
                     02
@@ -2416,7 +2312,7 @@ export default function AIAgent() {
                     )}
 
                     {/* Section-Level Saved AI Plan Loader */}
-                    {!aiPlan && !generating && loading && (
+                    {!aiPlan && !generating && (loading || planChecking) && (
                         <div className="empty-ai-box">
                             <span className="spinner" style={{ width: 28, height: 28 }}></span>
                             <div className="empty-ai-text">
@@ -2430,6 +2326,7 @@ export default function AIAgent() {
                     {!aiPlan &&
                         !generating &&
                         !loading &&
+                        !planChecking &&
                         summary.confirmedUsers ===
                         0 && (
                             <div className="empty-ai-box zero-demand-box">
@@ -2477,6 +2374,7 @@ export default function AIAgent() {
                     {!aiPlan &&
                         !generating &&
                         !loading &&
+                        !planChecking &&
                         summary.confirmedUsers >
                         0 && (
                             <div className="empty-ai-box">
@@ -2559,8 +2457,25 @@ export default function AIAgent() {
                                     type="button"
                                     id="btn-tab-inward-plan"
                                     onClick={() => {
-                                        const validInward = (inwardPlan && (inwardPlan.direction === "INWARD" || inwardPlan.tripMode === "TO_DESTINATION" || !inwardPlan.direction) && inwardPlan.status !== "ZERO_DEMAND" && Array.isArray(inwardPlan.buses) && inwardPlan.buses.length > 0) ? inwardPlan : null;
-                                        setPlanData(validInward);
+                                        if (planDirectionTab === "INWARD") return;
+                                        let targetPlan = (inwardPlan && (inwardPlan.direction === "INWARD" || inwardPlan.tripMode === "TO_DESTINATION" || !inwardPlan.direction) && inwardPlan.status !== "ZERO_DEMAND" && Array.isArray(inwardPlan.buses) && inwardPlan.buses.length > 0) ? inwardPlan : null;
+                                        if (!targetPlan) {
+                                            try {
+                                                const cached = localStorage.getItem("active_inward_plan");
+                                                if (cached) {
+                                                    const parsed = JSON.parse(cached);
+                                                    if (parsed && parsed.status !== "ZERO_DEMAND" && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
+                                                        targetPlan = parsed;
+                                                    }
+                                                }
+                                            } catch { }
+                                        }
+                                        if (targetPlan) {
+                                            setPlanData(targetPlan);
+                                            setPlanChecking(false);
+                                        } else {
+                                            setPlanChecking(true);
+                                        }
                                         setPlanDirectionTab("INWARD");
                                         planDirectionTabRef.current = "INWARD";
                                         setActiveEndpointField("destination");
@@ -2569,7 +2484,6 @@ export default function AIAgent() {
                                             localStorage.setItem("active_plan_direction", "INWARD");
                                         } catch { }
                                         loadLastSelection("INWARD");
-                                        loadActivePlan(false, "INWARD");
                                     }}
                                     style={{
                                         padding: "8px 18px",
@@ -2590,8 +2504,25 @@ export default function AIAgent() {
                                     type="button"
                                     id="btn-tab-outward-plan"
                                     onClick={() => {
-                                        const validOutward = (outwardPlan && (outwardPlan.direction === "OUTWARD" || outwardPlan.tripMode === "FROM_SOURCE" || !outwardPlan.direction) && outwardPlan.status !== "ZERO_DEMAND" && Array.isArray(outwardPlan.buses) && outwardPlan.buses.length > 0) ? outwardPlan : null;
-                                        setPlanData(validOutward);
+                                        if (planDirectionTab === "OUTWARD") return;
+                                        let targetPlan = (outwardPlan && (outwardPlan.direction === "OUTWARD" || outwardPlan.tripMode === "FROM_SOURCE" || !outwardPlan.direction) && outwardPlan.status !== "ZERO_DEMAND" && Array.isArray(outwardPlan.buses) && outwardPlan.buses.length > 0) ? outwardPlan : null;
+                                        if (!targetPlan) {
+                                            try {
+                                                const cached = localStorage.getItem("active_outward_plan");
+                                                if (cached) {
+                                                    const parsed = JSON.parse(cached);
+                                                    if (parsed && parsed.status !== "ZERO_DEMAND" && (parsed.aiPlan || (Array.isArray(parsed.buses) && parsed.buses.length > 0))) {
+                                                        targetPlan = parsed;
+                                                    }
+                                                }
+                                            } catch { }
+                                        }
+                                        if (targetPlan) {
+                                            setPlanData(targetPlan);
+                                            setPlanChecking(false);
+                                        } else {
+                                            setPlanChecking(true);
+                                        }
                                         setPlanDirectionTab("OUTWARD");
                                         planDirectionTabRef.current = "OUTWARD";
                                         setActiveEndpointField("source");
@@ -2600,7 +2531,6 @@ export default function AIAgent() {
                                             localStorage.setItem("active_plan_direction", "OUTWARD");
                                         } catch { }
                                         loadLastSelection("OUTWARD");
-                                        loadActivePlan(false, "OUTWARD");
                                     }}
                                     style={{
                                         padding: "8px 18px",
@@ -2722,6 +2652,63 @@ export default function AIAgent() {
                                                     )
                                                 );
 
+                                            const isOutward =
+                                                bus.direction === "OUTWARD" ||
+                                                bus.tripMode === "OUTWARD" ||
+                                                bus.tripMode === "FROM_SOURCE" ||
+                                                planDirectionTab === "OUTWARD";
+
+                                            const firstStop = Array.isArray(bus.stops) && bus.stops.length > 0 ? bus.stops[0] : null;
+                                            const lastStop = Array.isArray(bus.stops) && bus.stops.length > 0 ? bus.stops[bus.stops.length - 1] : null;
+
+                                            const inwardStartName =
+                                                bus.inwardStartLocation?.name ||
+                                                bus.inwardStartLocation?.locationName ||
+                                                bus.startLocation?.name ||
+                                                bus.startLocation?.locationName ||
+                                                firstStop?.name ||
+                                                "Starting Hub (Vehicle Depot Origin)";
+                                            const inwardStartCoords =
+                                                (firstStop?.latitude || bus.inwardStartLocation?.latitude || bus.startLocation?.latitude)
+                                                    ? `${Number(firstStop?.latitude || bus.inwardStartLocation?.latitude || bus.startLocation?.latitude).toFixed(4)}, ${Number(firstStop?.longitude || bus.inwardStartLocation?.longitude || bus.startLocation?.longitude).toFixed(4)}`
+                                                    : null;
+
+                                            const outwardStartName =
+                                                bus.sourceHub?.name ||
+                                                planData?.source?.name ||
+                                                sourceLocation?.name ||
+                                                "K. L. N. College of Engineering (Campus Departure Terminal)";
+                                            const outwardStartCoords =
+                                                (sourceLocation?.latitude || planData?.source?.latitude || bus.sourceHub?.latitude)
+                                                    ? `${Number(sourceLocation?.latitude || planData?.source?.latitude || bus.sourceHub?.latitude).toFixed(4)}, ${Number(sourceLocation?.longitude || planData?.source?.longitude || bus.sourceHub?.longitude).toFixed(4)}`
+                                                    : null;
+
+                                            const startingHubName = isOutward ? outwardStartName : inwardStartName;
+                                            const startingHubCoords = isOutward ? outwardStartCoords : inwardStartCoords;
+
+                                            const outwardEndName =
+                                                bus.destinationHub?.name ||
+                                                lastStop?.name ||
+                                                "Outward Terminus (Final Drop-off Stop)";
+                                            const outwardEndCoords =
+                                                (lastStop?.latitude || bus.destinationHub?.latitude)
+                                                    ? `${Number(lastStop?.latitude || bus.destinationHub?.latitude).toFixed(4)}, ${Number(lastStop?.longitude || bus.destinationHub?.longitude).toFixed(4)}`
+                                                    : null;
+
+                                            const inwardEndName =
+                                                bus.destinationHub?.name ||
+                                                planData?.destination?.name ||
+                                                destinationLocation?.name ||
+                                                planData?.startingPoint?.name ||
+                                                "K. L. N. College of Engineering (Campus Terminal)";
+                                            const inwardEndCoords =
+                                                (destinationLocation?.latitude || planData?.destination?.latitude || bus.destinationHub?.latitude)
+                                                    ? `${Number(destinationLocation?.latitude || planData?.destination?.latitude || bus.destinationHub?.latitude).toFixed(4)}, ${Number(destinationLocation?.longitude || planData?.destination?.longitude || bus.destinationHub?.longitude).toFixed(4)}`
+                                                    : null;
+
+                                            const tripEndPointName = isOutward ? outwardEndName : inwardEndName;
+                                            const tripEndPointCoords = isOutward ? outwardEndCoords : inwardEndCoords;
+
                                             return (
                                                 <div
                                                     className="ai-bus-card"
@@ -2730,7 +2717,6 @@ export default function AIAgent() {
                                                         `bus-card-${busIndex}`
                                                     }
                                                 >
-
                                                     <div className="bus-header">
 
                                                         <div>
@@ -2740,7 +2726,7 @@ export default function AIAgent() {
                                                             </span>
 
                                                             <div>
-                                                                <small>
+                                                                <small className="bus-sector-label">
                                                                     {(bus.sectorName || "INSTITUTIONAL TRANSIT LINE")
                                                                         .replace(/\s*\((North|South|East|West|North-East|North-West|South-East|South-West|NE|NW|SE|SW)[^)]*\)\s*$/i, "")
                                                                         .trim()}
@@ -2754,61 +2740,63 @@ export default function AIAgent() {
                                                             </div>
                                                         </div>
 
-                                                        <span
-                                                            className={`seat-capacity${bus.isOverCapacity ? " over-capacity" : ""}`}
-                                                        >
-                                                            🚌{" "}
-                                                            {
-                                                                bus.vehicleName || getBusName(bus, busIndex)
-                                                            }{" "}
-                                                            •{" "}
-                                                            {
-                                                                assigned
-                                                            }{" "}
-                                                            /{" "}
-                                                            {
-                                                                capacity
-                                                            }{" "}
-                                                            passengers
-                                                            {Boolean(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) ? (
-                                                                ` ⚠️ (+${bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)} standing)`
-                                                            ) : null}
-                                                        </span>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                            {bus.vehicleNumber && (
+                                                                <span className="bus-plate-badge" title="Vehicle Registration Number">
+                                                                    📋 {bus.vehicleNumber}
+                                                                </span>
+                                                            )}
+                                                            <span
+                                                                className={`seat-capacity${bus.isOverCapacity ? " over-capacity" : ""}`}
+                                                            >
+                                                                🚌{" "}
+                                                                {
+                                                                    bus.vehicleName || getBusName(bus, busIndex)
+                                                                }{" "}
+                                                                •{" "}
+                                                                {
+                                                                    assigned
+                                                                }{" "}
+                                                                /{" "}
+                                                                {
+                                                                    capacity
+                                                                }{" "}
+                                                                passengers
+                                                                {Boolean(bus.isOverCapacity || (bus.standingPassengers && bus.standingPassengers > 0)) ? (
+                                                                    ` ⚠️ (+${bus.standingPassengers ?? bus.overCapacityCount ?? Math.max(0, assigned - capacity)} standing)`
+                                                                ) : null}
+                                                            </span>
+                                                        </div>
                                                     </div>
 
                                                     <div className="bus-stats">
 
                                                         {remaining > 0 ? (
-                                                            <span style={{ color: "#16a34a", fontWeight: "600" }}>
+                                                            <span className="bus-stat-pill" style={{ color: "#15803d", background: "#f0fdf4", borderColor: "#bbf7d0" }}>
                                                                 💺 <b>{remaining}</b> {remaining === 1 ? "seat available" : "seats available"}
                                                             </span>
                                                         ) : (!bus.isOverCapacity && (
-                                                            <span style={{ color: "#475467", fontWeight: "600" }}>
-                                                                💺 <b>Full capacity</b>
+                                                            <span className="bus-stat-pill" style={{ color: "#334155", background: "#f8fafc", borderColor: "#cbd5e1" }}>
+                                                                💺 <b>Full capacity ({capacity} seats)</b>
                                                             </span>
                                                         ))}
 
                                                         {bus.standingPassengers > 0 && (
-                                                            <span style={{ color: "#dc2626", fontWeight: "600" }}>
-                                                                🚶 <b>{bus.standingPassengers}</b> standing
+                                                            <span className="bus-stat-pill" style={{ color: "#b91c1c", background: "#fef2f2", borderColor: "#fecaca" }}>
+                                                                🚶 <b>{bus.standingPassengers}</b> standing passengers
                                                             </span>
                                                         )}
 
-                                                        <span>
-                                                            📍{" "}
-                                                            <b>
-                                                                {Array.isArray(bus.stops) ? bus.stops.length : 0}
-                                                            </b>{" "}
+                                                        <span className="bus-stat-pill">
+                                                            📍 <b>{Array.isArray(bus.stops) ? bus.stops.length : 0}</b>{" "}
                                                             {(bus.direction === "OUTWARD" || bus.tripMode === "OUTWARD" || bus.tripMode === "FROM_SOURCE" || planDirectionTab === "OUTWARD")
                                                                 ? "drop-off stops"
                                                                 : "pickup stops"}
                                                         </span>
 
                                                         {bus.routeDistanceKm && (
-                                                            <span>
-                                                                🛣️{" "}
-                                                                <b>{bus.routeDistanceKm} km</b>{" "}
-                                                                total route
+                                                            <span className="bus-stat-pill">
+                                                                🛣️ <b>{bus.routeDistanceKm} km</b> total route
                                                             </span>
                                                         )}
 
@@ -2816,15 +2804,31 @@ export default function AIAgent() {
                                                             const totalDuration = bus.routeDurationMin ?? bus.totalRouteDurationMin ?? bus.totalRouteDuration;
                                                             if (totalDuration != null && totalDuration > 0) {
                                                                 return (
-                                                                    <span>
-                                                                        ⏱️{" "}
-                                                                        <b>~{Math.round(totalDuration)} min</b>{" "}
-                                                                        total travel time
+                                                                    <span className="bus-stat-pill">
+                                                                        ⏱️ <b>~{Math.round(totalDuration)} min</b> total travel time
                                                                     </span>
                                                                 );
                                                             }
                                                             return null;
                                                         })()}
+
+                                                        {bus.longestPassengerTravelTime != null && bus.longestPassengerTravelTime > 0 && (
+                                                            <span className="bus-stat-pill">
+                                                                ⏳ Max passenger commute: <b>~{Math.round(bus.longestPassengerTravelTime)} min</b>
+                                                            </span>
+                                                        )}
+
+                                                        {bus.averagePassengerTravelTime != null && bus.averagePassengerTravelTime > 0 && (
+                                                            <span className="bus-stat-pill">
+                                                                📊 Avg commute: <b>~{Math.round(bus.averagePassengerTravelTime)} min</b>
+                                                            </span>
+                                                        )}
+
+                                                        {bus.driverName && (
+                                                            <span className="bus-stat-pill">
+                                                                👨‍✈️ Driver: <b>{bus.driverName}</b>
+                                                            </span>
+                                                        )}
 
                                                     </div>
 
@@ -2849,64 +2853,56 @@ export default function AIAgent() {
                                                     {/* Route Timeline */}
                                                     <div className="route-timeline">
 
-                                                        {(bus.direction === "OUTWARD" ||
-                                                            bus.tripMode === "OUTWARD" ||
-                                                            bus.tripMode === "FROM_SOURCE" ||
-                                                            planDirectionTab === "OUTWARD") ? (
-                                                            <div className="timeline-start source-terminal-hub">
-
-                                                                <span className="timeline-dot source-dot"></span>
-                                                                <span className="timeline-number">0</span>
-
-                                                                <div className="timeline-stop-content">
-                                                                    <strong>
-                                                                        🚩{" "}
-                                                                        {bus.sourceHub?.name ||
-                                                                            planData
-                                                                                ?.source
-                                                                                ?.name ||
-                                                                            sourceLocation?.name ||
-                                                                            "K. L. N. College of Engineering"}
+                                                        {/* Timeline Starting Hub (Origin) */}
+                                                        <div className="timeline-start source-terminal-hub corridor-timeline-hub">
+                                                            <span className="timeline-dot source-dot"></span>
+                                                            <span className="timeline-number">0</span>
+                                                            <div className="timeline-stop-content">
+                                                                <div className="timeline-hub-header" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                                    <span className="corridor-hub-tag origin-tag">
+                                                                        🚩 STARTING HUB
+                                                                    </span>
+                                                                    <strong style={{ fontSize: "14px", color: "#065f46" }}>
+                                                                        {startingHubName}
                                                                     </strong>
-
-                                                                    <small>Departure point</small>
                                                                 </div>
-
+                                                                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "3px" }}>
+                                                                    <small style={{ color: "#059669", fontWeight: "700" }}>
+                                                                        {isOutward
+                                                                            ? "Campus Departure Terminal · All students board here"
+                                                                            : "Vehicle Starting Hub · Depot Origin (Bus Departs Here)"}
+                                                                    </small>
+                                                                    
+                                                                </div>
                                                             </div>
-                                                        ) : (() => {
-                                                            const firstStop = Array.isArray(bus.stops) && bus.stops[0];
-                                                            const startingHubName = firstStop?.name || bus.inwardStartLocation?.name || bus.inwardStartLocation?.locationName || bus.startLocation?.name || bus.startLocation?.locationName || "Starting Hub";
-
-                                                            return (
-                                                                <div className="timeline-start source-terminal-hub" style={{ borderLeftColor: "#10b981", background: "rgba(16, 185, 129, 0.04)", padding: "8px 12px", borderRadius: "8px", marginBottom: "8px" }}>
-                                                                    <span className="timeline-dot" style={{ background: "#10b981", boxShadow: "0 0 8px rgba(16, 185, 129, 0.5)" }}></span>
-                                                                    <span className="timeline-number">0</span>
-                                                                    <div className="timeline-stop-content">
-                                                                        <strong style={{ fontSize: "13px", color: "#065f46" }}>
-                                                                            🚩 Starting Hub: {startingHubName}
-                                                                        </strong>
-                                                                        <small style={{ color: "#059669", display: "block", fontWeight: "600" }}>
-                                                                            Vehicle Starting Hub · Depot Origin (Bus Departs Here)
-                                                                        </small>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })()
-                                                        }
+                                                        </div>
 
                                                         {Array.isArray(
                                                             bus.stops
                                                         ) &&
-                                                            bus.stops.map(
-                                                                (
-                                                                    stop,
-                                                                    stopIndex
-                                                                ) => {
+                                                            bus.stops.map((stop, stopIndex) => {
                                                                     const isOutward =
                                                                         bus.direction === "OUTWARD" ||
                                                                         bus.tripMode === "OUTWARD" ||
                                                                         bus.tripMode === "FROM_SOURCE" ||
                                                                         planDirectionTab === "OUTWARD";
+
+                                                                    // Combine stop name with any merged / represented stops (e.g., "Pudur, K.Pudur")
+                                                                    const rawNames = [
+                                                                        stop.name,
+                                                                        ...(Array.isArray(stop.representedStops) ? stop.representedStops : []),
+                                                                        ...(Array.isArray(stop.originalStopNames) ? stop.originalStopNames : [])
+                                                                    ]
+                                                                        .map((n) => String(n || "").trim())
+                                                                        .filter(Boolean);
+
+                                                                    const uniqueNames = [];
+                                                                    rawNames.forEach((n) => {
+                                                                        if (!uniqueNames.some((existing) => existing.toLowerCase() === n.toLowerCase())) {
+                                                                            uniqueNames.push(n);
+                                                                        }
+                                                                    });
+                                                                    const stopDisplayName = uniqueNames.length > 0 ? uniqueNames.join(", ") : (stop.name || "Stop");
 
                                                                     return (
                                                                         <div
@@ -2924,7 +2920,7 @@ export default function AIAgent() {
                                                                                 <div className="stop-title-row" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
 
                                                                                     <strong>
-                                                                                        👥 {stop.name}
+                                                                                        👥 {stopDisplayName}
                                                                                     </strong>
 
                                                                                     {(isOutward || stopIndex > 0) &&
@@ -2954,35 +2950,32 @@ export default function AIAgent() {
                                                                 }
                                                             )}
 
-                                                        {(bus.direction !== "OUTWARD" &&
-                                                            bus.tripMode !== "OUTWARD" &&
-                                                            bus.tripMode !== "FROM_SOURCE" &&
-                                                            planDirectionTab !== "OUTWARD") && (
-                                                                <div className="timeline-start terminal-hub">
-
-                                                                    <span className="timeline-dot terminal-dot"></span>
-
-                                                                    <div>
-                                                                        <strong>
-                                                                            🏁{" "}
-                                                                            {bus.destinationHub?.name ||
-                                                                                planData
-                                                                                    ?.destination
-                                                                                    ?.name ||
-                                                                                destinationLocation?.name ||
-                                                                                planData
-                                                                                    ?.startingPoint
-                                                                                    ?.name ||
-                                                                                "K. L. N. College of Engineering"}
-                                                                        </strong>
-
-                                                                        <small>Final destination</small>
-                                                                    </div>
-
+                                                        {/* Timeline Trip End Point (Destination) */}
+                                                        <div className="timeline-start terminal-hub corridor-timeline-hub" style={{ borderLeftColor: isOutward ? "#7c3aed" : "#2563eb", background: isOutward ? "rgba(124, 58, 237, 0.08)" : "rgba(37, 99, 235, 0.08)", padding: "10px 14px", borderRadius: "10px", marginTop: "8px", border: `1px solid ${isOutward ? "rgba(124, 58, 237, 0.3)" : "rgba(37, 99, 235, 0.3)"}` }}>
+                                                            <span className="timeline-dot terminal-dot" style={{ background: isOutward ? "#7c3aed" : "#2563eb", boxShadow: `0 0 8px ${isOutward ? "rgba(124, 58, 237, 0.5)" : "rgba(37, 99, 235, 0.5)"}` }}></span>
+                                                            <span className="timeline-number" style={{ background: isOutward ? "#f5f3ff" : "#eff6ff", color: isOutward ? "#6d28d9" : "#1d4ed8" }}>🏁</span>
+                                                            <div className="timeline-stop-content">
+                                                                <div className="timeline-hub-header" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                                    <span className="corridor-hub-tag destination-tag">
+                                                                        🏁 TRIP END POINT
+                                                                    </span>
+                                                                    <strong style={{ fontSize: "14px", color: isOutward ? "#581c87" : "#1e3a8a" }}>
+                                                                        {tripEndPointName}
+                                                                    </strong>
                                                                 </div>
-                                                            )}
+                                                                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "3px" }}>
+                                                                    <small style={{ color: isOutward ? "#7c3aed" : "#2563eb", fontWeight: "700" }}>
+                                                                        {isOutward
+                                                                            ? "Outward Terminus · Final Drop-off Destination"
+                                                                            : "Institutional Campus Terminal · Final Destination Arrival"}
+                                                                    </small>
+                                                                    
+                                                                </div>
+                                                            </div>
+                                                        </div>
 
                                                     </div>
+
 
                                                 </div>
                                             );
@@ -3211,82 +3204,7 @@ export default function AIAgent() {
                 onConfirmSelect={handleSelectAiRouteToView}
             />
 
-            {/* Modal to configure inward bus starting place */}
-            {showStartPlaceModal && (
-                <div className="start-modal-overlay">
-                    <div className="start-modal-dialog">
-                        <div className="start-modal-header">
-                            <h3>{editingStartPlace ? `Edit Inward Starting Place — ${editingStartPlace.busName}` : "Configure Inward Bus Starting Place"}</h3>
-                            <button
-                                type="button"
-                                className="start-modal-close"
-                                onClick={() => setShowStartPlaceModal(false)}
-                            >
-                                &times;
-                            </button>
-                        </div>
 
-                        {modalError && (
-                            <div className="start-modal-error">
-                                ⚠ {modalError}
-                            </div>
-                        )}
-
-                        <form onSubmit={handleSaveStartingPlace} className="start-modal-form">
-                            <div className="start-modal-group">
-                                <label>Bus</label>
-                                <select
-                                    className="start-modal-select"
-                                    value={modalBusId}
-                                    onChange={(e) => setModalBusId(e.target.value)}
-                                    disabled={Boolean(editingStartPlace)}
-                                >
-                                    <option value="">-- Select Available Bus --</option>
-                                    {(data?.availableVehicles || data?.vehicles || []).map((b) => (
-                                        <option key={b._id || b.id} value={String(b._id || b.id)}>
-                                            {getBusName(b)} - {getBusCapacity(b)} Seats
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="start-modal-group">
-                                <label>Starting Hub / Location</label>
-                                <LocationSearchBox
-                                    placeholder="Search starting hub: bus stand, area, junction, terminal..."
-                                    selectedLocation={modalLocation}
-                                    onSelectLocation={(loc) => setModalLocation(loc)}
-                                    onClear={() => setModalLocation(null)}
-                                />
-                                {modalLocation && (
-                                    <div className="loc-selected-summary">
-                                        <span>📍</span>
-                                        <span>{modalLocation.name} ({Number(modalLocation.latitude).toFixed(4)}, {Number(modalLocation.longitude).toFixed(4)})</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="start-modal-actions">
-                                <button
-                                    type="button"
-                                    className="start-modal-btn-cancel"
-                                    onClick={() => setShowStartPlaceModal(false)}
-                                    disabled={modalSaving}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="start-modal-btn-submit"
-                                    disabled={modalSaving || !modalBusId || !modalLocation}
-                                >
-                                    {modalSaving ? "Saving..." : "Save Bus Starting Place"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
 
         </div>
     );

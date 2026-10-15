@@ -36,6 +36,18 @@ export default function SelectGeneratedRouteModal({
         }
     }, [isOpen, routes, selectedCode]);
 
+    // Lock body scroll while modal is active
+    React.useEffect(() => {
+        if (!isOpen) {
+            document.body.style.overflow = "";
+            return;
+        }
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     const activeRoute = routes.find(
@@ -44,6 +56,7 @@ export default function SelectGeneratedRouteModal({
 
     const handleConfirm = () => {
         if (activeRoute) {
+            document.body.style.overflow = "";
             onConfirmSelect(activeRoute);
         }
     };

@@ -187,8 +187,8 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
     await t.test("3. Seat display format string parity logic", async () => {
         // Verify formatting logic matches the specification:
         // Format: `${allocatedSeats} / ${totalSeats} seats allocated`
-        // If remaining > 0: `+${remainingSeats} standby seats available`
-        // If remaining === 0: `Bus full (0 seats left)`
+        // If remaining > 0: `+${remainingSeats} seats remaining`
+        // If remaining === 0: `Bus full (0 seats remaining)`
         // If no vehicle: `(No vehicle)`
         const formatAllocation = (route) => {
             const vehicleName = route.assignedVehicle?.vehicleName || route.vehicleName || "";
@@ -205,11 +205,11 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
             }
             return {
                 main: `${allocatedSeats} / ${capacity} seats allocated`,
-                badge: !isFull ? `+${remainingSeats} standby seats available` : "Bus full (0 seats left)"
+                badge: !isFull ? `+${remainingSeats} seats remaining` : "Bus full (0 seats remaining)"
             };
         };
 
-        // Example 1: 40 / 45 seats allocated (+5 standby seats available)
+        // Example 1: 40 / 45 seats allocated (+5 seats remaining)
         const ex1 = formatAllocation({
             assignedVehicle: { vehicleName: "Bus A", capacity: 45 },
             allocatedSeats: 40,
@@ -217,9 +217,9 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
             isFull: false
         });
         assert.equal(ex1.main, "40 / 45 seats allocated");
-        assert.equal(ex1.badge, "+5 standby seats available");
+        assert.equal(ex1.badge, "+5 seats remaining");
 
-        // Example 2: 53 / 60 seats allocated (+7 standby seats available)
+        // Example 2: 53 / 60 seats allocated (+7 seats remaining)
         const ex2 = formatAllocation({
             assignedVehicle: { vehicleName: "w1", capacity: 60 },
             allocatedSeats: 53,
@@ -227,9 +227,9 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
             isFull: false
         });
         assert.equal(ex2.main, "53 / 60 seats allocated");
-        assert.equal(ex2.badge, "+7 standby seats available");
+        assert.equal(ex2.badge, "+7 seats remaining");
 
-        // Example 3: 59 / 70 seats allocated (+11 standby seats available)
+        // Example 3: 59 / 70 seats allocated (+11 seats remaining)
         const ex3 = formatAllocation({
             assignedVehicle: { vehicleName: "k1", capacity: 70 },
             allocatedSeats: 59,
@@ -237,9 +237,9 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
             isFull: false
         });
         assert.equal(ex3.main, "59 / 70 seats allocated");
-        assert.equal(ex3.badge, "+11 standby seats available");
+        assert.equal(ex3.badge, "+11 seats remaining");
 
-        // Example 4: 45 / 45 seats allocated (Bus full (0 seats left))
+        // Example 4: 45 / 45 seats allocated (Bus full (0 seats remaining))
         const ex4 = formatAllocation({
             assignedVehicle: { vehicleName: "Bus Full", capacity: 45 },
             allocatedSeats: 45,
@@ -247,7 +247,7 @@ test("Route Management: Seat Allocation Display & Warning Parity Suite", async (
             isFull: true
         });
         assert.equal(ex4.main, "45 / 45 seats allocated");
-        assert.equal(ex4.badge, "Bus full (0 seats left)");
+        assert.equal(ex4.badge, "Bus full (0 seats remaining)");
 
         // Example 5: No vehicle assigned
         const ex5 = formatAllocation({

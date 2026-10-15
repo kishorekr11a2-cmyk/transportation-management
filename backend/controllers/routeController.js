@@ -7,7 +7,8 @@ import {
     saveSelectedPlan,
     resetGeneratedAIRoute,
     clearActiveAIPlanCache,
-    clearAIDataCache
+    clearAIDataCache,
+    getActiveAIPlan
 } from "../services/aiAgentService.js";
 import { generateManualPlanRecommendations } from "../services/manualPlanRecommendationService.js";
 import { clearActiveApprovedPlansCache } from "../services/studentTransportStatusService.js";
@@ -75,8 +76,30 @@ export const getAuthoritativeRouteAllocations = async (direction) => {
     let activeOrSubmittedBuses = [];
     let hasPlan = false;
 
-    if (mongoose.connection?.db) {
-        // 1. Check approved active plan in ai_selected_plans with fast projection (<2KB vs 15MB)
+    // 1. Authoritative check: retrieve active AI / approved plan via getActiveAIPlan
+    try {
+        const activeRes = await getActiveAIPlan({ direction: canonicalDirection });
+        const activePlan = (canonicalDirection === "OUTWARD" ? activeRes?.outwardPlan : activeRes?.inwardPlan) || activeRes?.plan;
+        const isPlanSubmittedOrApproved = Boolean(
+            activePlan && (
+                activePlan.isApproved === true ||
+                activePlan.isSubmitted === true ||
+                activePlan.status === "active" ||
+                activePlan.status === "approved" ||
+                activePlan.status === "pending_approval" ||
+                activePlan.status === "submitted"
+            )
+        );
+        if (isPlanSubmittedOrApproved && Array.isArray(activePlan.buses) && activePlan.buses.length > 0) {
+            activeOrSubmittedBuses = activePlan.buses;
+            hasPlan = true;
+        }
+    } catch (err) {
+        console.warn("[getAuthoritativeRouteAllocations] Error checking active plan:", err.message);
+    }
+
+    if (!hasPlan && mongoose.connection?.db) {
+        // 2. Check approved active plan in ai_selected_plans with fast projection (<2KB vs 15MB)
         const approvedDoc = await mongoose.connection.db.collection("ai_selected_plans").findOne({
             active: true,
             status: "active",
@@ -97,15 +120,19 @@ export const getAuthoritativeRouteAllocations = async (direction) => {
                 "plan.buses.capacity": 1,
                 "plan.buses.assignedUsers": 1,
                 "plan.buses.remainingSeats": 1,
-                "plan.buses.users": 1
+                "plan.buses.users": 1,
+                "buses": 1
             }
         });
 
-        if (approvedDoc?.plan?.buses && approvedDoc.plan.buses.length > 0) {
+        if (Array.isArray(approvedDoc?.plan?.buses) && approvedDoc.plan.buses.length > 0) {
             activeOrSubmittedBuses = approvedDoc.plan.buses;
             hasPlan = true;
+        } else if (Array.isArray(approvedDoc?.buses) && approvedDoc.buses.length > 0) {
+            activeOrSubmittedBuses = approvedDoc.buses;
+            hasPlan = true;
         } else {
-            // 2. Check submitted manual plan in manual_plan_submissions (must not be reset)
+            // 3. Check submitted manual plan in manual_plan_submissions (must not be reset)
             const subDoc = await mongoose.connection.db.collection("manual_plan_submissions").findOne({
                 $or: [
                     { direction: canonicalDirection },
@@ -242,24 +269,10 @@ export const getRoutes = async (req, res) => {
 
         routes.forEach((route) => {
             const dirUpper = String(route.direction || "").toUpperCase().trim();
-            const isOutward = dirUpper === "OUTWARD";
-            const isBoth   = dirUpper === "BOTH";
-            const allocInfo = queryCanonical === "INWARD"
-                ? inwardAlloc
-                : queryCanonical === "OUTWARD"
-                ? outwardAlloc
-                : (isOutward || isBoth) ? outwardAlloc : inwardAlloc;
-            const map = allocInfo.allocationMap;
-
             const routeId = String(route._id || "");
             const routeName = String(route.routeName || "").toLowerCase().trim();
             const vehicleId = String(route.assignedVehicle?._id || route.assignedVehicle || "");
             const vehicleName = String(route.assignedVehicle?.vehicleName || route.vehicleName || "").toLowerCase().trim();
-
-            const match = map.get(routeId) ||
-                map.get(routeName) ||
-                (vehicleId ? map.get(vehicleId) : null) ||
-                (vehicleName ? map.get(vehicleName) : null);
 
             const outwardMatch = outwardAlloc.allocationMap.get(routeId) ||
                 outwardAlloc.allocationMap.get(routeName) ||
@@ -272,17 +285,52 @@ export const getRoutes = async (req, res) => {
                 (vehicleName ? inwardAlloc.allocationMap.get(vehicleName) : null);
 
             const totalCapacity = Number(route.assignedVehicle?.capacity || route.capacity || 0);
-            const allocatedSeats = match ? match.assignedUsers : 0;
-            const remainingSeats = totalCapacity > 0 ? Math.max(0, totalCapacity - allocatedSeats) : 0;
-            const isFull = totalCapacity > 0 && remainingSeats === 0;
 
-            route.allocatedSeats = allocatedSeats;
-            route.outwardAllocatedSeats = outwardMatch ? outwardMatch.assignedUsers : 0;
-            route.inwardAllocatedSeats = inwardMatch ? inwardMatch.assignedUsers : 0;
+            // Outward calculations
+            const outwardAllocatedSeats = outwardMatch ? outwardMatch.assignedUsers : 0;
+            const outwardRemainingSeats = totalCapacity > 0 ? Math.max(0, totalCapacity - outwardAllocatedSeats) : 0;
+            const outwardIsFull = totalCapacity > 0 && outwardAlloc.hasPlan && outwardRemainingSeats === 0;
+
+            // Inward calculations
+            const inwardAllocatedSeats = inwardMatch ? inwardMatch.assignedUsers : 0;
+            const inwardRemainingSeats = totalCapacity > 0 ? Math.max(0, totalCapacity - inwardAllocatedSeats) : 0;
+            const inwardIsFull = totalCapacity > 0 && inwardAlloc.hasPlan && inwardRemainingSeats === 0;
+
             route.totalSeats = totalCapacity;
-            route.remainingSeats = remainingSeats;
-            route.isFull = isFull;
-            route.hasPlan = allocInfo.hasPlan;
+            route.outwardAllocatedSeats = outwardAllocatedSeats;
+            route.outwardRemainingSeats = outwardRemainingSeats;
+            route.outwardIsFull = outwardIsFull;
+            route.outwardHasPlan = outwardAlloc.hasPlan;
+
+            route.inwardAllocatedSeats = inwardAllocatedSeats;
+            route.inwardRemainingSeats = inwardRemainingSeats;
+            route.inwardIsFull = inwardIsFull;
+            route.inwardHasPlan = inwardAlloc.hasPlan;
+
+            // Direction-specific context defaults for callers relying on route.allocatedSeats / route.isFull
+            if (queryCanonical === "INWARD") {
+                route.allocatedSeats = inwardAllocatedSeats;
+                route.remainingSeats = inwardRemainingSeats;
+                route.isFull = inwardIsFull;
+                route.hasPlan = inwardAlloc.hasPlan;
+            } else if (queryCanonical === "OUTWARD") {
+                route.allocatedSeats = outwardAllocatedSeats;
+                route.remainingSeats = outwardRemainingSeats;
+                route.isFull = outwardIsFull;
+                route.hasPlan = outwardAlloc.hasPlan;
+            } else {
+                if (dirUpper === "INWARD") {
+                    route.allocatedSeats = inwardAllocatedSeats;
+                    route.remainingSeats = inwardRemainingSeats;
+                    route.isFull = inwardIsFull;
+                    route.hasPlan = inwardAlloc.hasPlan;
+                } else {
+                    route.allocatedSeats = outwardAllocatedSeats;
+                    route.remainingSeats = outwardRemainingSeats;
+                    route.isFull = outwardIsFull;
+                    route.hasPlan = outwardAlloc.hasPlan;
+                }
+            }
         });
 
         const responsePayload = {
@@ -689,7 +737,7 @@ export const getManualPlan = async (req, res) => {
 
         if (mongoose.connection?.db) {
             const sub = await mongoose.connection.db.collection("manual_plan_submissions")
-                .find({ isSubmitted: true })
+                .find({ isSubmitted: true, status: { $nin: ["reset", "superseded", "stale"] } })
                 .sort({ submittedAt: -1 })
                 .limit(1)
                 .toArray();

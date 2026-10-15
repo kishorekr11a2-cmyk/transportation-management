@@ -13,6 +13,18 @@ export default function RecommendedRouteMapModal({
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);
 
+    // Lock body scroll while modal is active
+    useEffect(() => {
+        if (!isOpen) {
+            document.body.style.overflow = "";
+            return;
+        }
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, [isOpen]);
+
     useEffect(() => {
         if (!isOpen || !mapContainerRef.current || !recommendation) return;
 
@@ -181,9 +193,9 @@ export default function RecommendedRouteMapModal({
             <div
                 className="ai-modal-card"
                 style={{
-                    maxWidth: "880px",
-                    width: "95%",
-                    maxHeight: "92vh",
+                    maxWidth: "min(880px, calc(100vw - 24px))",
+                    width: "100%",
+                    maxHeight: "calc(100dvh - 24px)",
                     display: "flex",
                     flexDirection: "column",
                     padding: 0,

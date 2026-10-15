@@ -44,6 +44,10 @@ function UserManagement() {
     const [deletingUser, setDeletingUser] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [addingUser, setAddingUser] = useState(false);
+
+    // Pagination states
+    const [currentPage, setCurrentPage] = useState(1);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
     const [newUser, setNewUser] = useState({
         userId: "",
         name: "",
@@ -55,6 +59,18 @@ function UserManagement() {
         country: "India",
         travelStatus: "Coming"
     });
+
+    // Lock page background scrolling when any modal is open
+    useEffect(() => {
+        const hasOpenModal = showAddModal || showResetModal || Boolean(userToDelete);
+        if (hasOpenModal) {
+            const originalOverflow = document.body.style.overflow;
+            document.body.style.overflow = "hidden";
+            return () => {
+                document.body.style.overflow = originalOverflow;
+            };
+        }
+    }, [showAddModal, showResetModal, userToDelete]);
 
     // =========================================================
     // 1. Fetch Users & Detect Late Coming Responses
@@ -194,6 +210,7 @@ function UserManagement() {
         setStatusFilter("All");
         setStopFilter("All");
         setSearchQuery("");
+        setCurrentPage(1);
 
         // Smoothly scroll to the table
         setTimeout(() => {
@@ -430,11 +447,47 @@ function UserManagement() {
 
     const isFiltered = searchQuery.trim() !== "" || statusFilter !== "All" || stopFilter !== "All" || allocationFilter !== "All";
 
+    // Auto reset to page 1 whenever search query or filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, statusFilter, stopFilter, allocationFilter]);
+
+    const totalFilteredCount = filteredUsers.length;
+    const totalPages = Math.max(1, Math.ceil(totalFilteredCount / rowsPerPage));
+
+    // Ensure currentPage stays within valid bounds after user deletion or filter changes
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    const endIndex = Math.min(startIndex + rowsPerPage, totalFilteredCount);
+    const paginatedUsers = useMemo(() => {
+        return filteredUsers.slice(startIndex, endIndex);
+    }, [filteredUsers, startIndex, endIndex]);
+
+    // Helper for pagination page numbers with ellipsis
+    const getPaginationRange = () => {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1);
+        }
+        if (currentPage <= 4) {
+            return [1, 2, 3, 4, 5, "...", totalPages];
+        }
+        if (currentPage >= totalPages - 3) {
+            return [1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+        }
+        return [1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages];
+    };
+
     const handleClearFilters = () => {
         setSearchQuery("");
         setStatusFilter("All");
         setStopFilter("All");
         setAllocationFilter("All");
+        setCurrentPage(1);
     };
 
     // =========================================================
@@ -675,6 +728,11 @@ function UserManagement() {
 
     return (
         <div className="user-page-container">
+            {/* Campus and Bus Background Illustration */}
+            <div className="user-hero-bg-container" aria-hidden="true">
+                <div className="user-hero-illustration"></div>
+            </div>
+
             {/* Floating Late Travel Response Notification Popup (5-Second Auto-Dismiss) */}
             {showLatePopup && (
                 <aside
@@ -984,15 +1042,11 @@ function UserManagement() {
                 <span className="counter-text">
                     {loading && users.length === 0 ? (
                         <span className="counter-loading">Loading users...</span>
-                    ) : filteredUsers.length === 0 ? (
+                    ) : totalFilteredCount === 0 ? (
                         <span className="counter-zero">No users found</span>
-                    ) : isFiltered ? (
-                        <>
-                            Showing <strong>{filteredUsers.length}</strong> of <strong>{users.length}</strong> users
-                        </>
                     ) : (
                         <>
-                            Showing <strong>{users.length}</strong> users
+                            Showing <strong>{startIndex + 1}–{endIndex}</strong> of <strong>{totalFilteredCount}</strong> users
                         </>
                     )}
                 </span>
@@ -1115,7 +1169,7 @@ function UserManagement() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredUsers.map((user, index) => {
+                                paginatedUsers.map((user, index) => {
                                     const status = user.travelStatus || "Pending";
                                     const uId = String(user.userId || "").toLowerCase().trim();
                                     const isLateComing = Boolean(
@@ -1141,7 +1195,7 @@ function UserManagement() {
                                         return (
                                             <tr key={user._id || user.userId} className="row-late-responder">
                                                 {/* # Index */}
-                                                <td className="col-index">{index + 1}</td>
+                                                <td className="col-index">{startIndex + index + 1}</td>
 
                                                 {/* User ID */}
                                                 <td>
@@ -1284,7 +1338,7 @@ function UserManagement() {
                                     return (
                                         <tr key={user._id || user.userId}>
                                             {/* # Index */}
-                                            <td className="col-index">{index + 1}</td>
+                                            <td className="col-index">{startIndex + index + 1}</td>
 
                                             {/* User ID */}
                                             <td>
@@ -1417,6 +1471,73 @@ function UserManagement() {
                         </tbody>
                     </table>
                 </div>
+
+                {/* Pagination Controls Inside Table Card at Bottom */}
+                {totalFilteredCount > 0 && (
+                    <div className="user-pagination-bar">
+                        <div className="pagination-nav-controls">
+                            <button
+                                type="button"
+                                className="pagination-btn pagination-prev"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                                title="Previous Page"
+                                aria-label="Previous Page"
+                            >
+                                ‹
+                            </button>
+
+                            {getPaginationRange().map((p, idx) => {
+                                if (p === "...") {
+                                    return (
+                                        <span key={`ellipsis-${idx}`} className="pagination-ellipsis">
+                                            ...
+                                        </span>
+                                    );
+                                }
+                                return (
+                                    <button
+                                        key={`page-${p}`}
+                                        type="button"
+                                        className={`pagination-btn pagination-number ${currentPage === p ? "active" : ""}`}
+                                        onClick={() => setCurrentPage(p)}
+                                        aria-label={`Page ${p}`}
+                                    >
+                                        {p}
+                                    </button>
+                                );
+                            })}
+
+                            <button
+                                type="button"
+                                className="pagination-btn pagination-next"
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={currentPage === totalPages}
+                                title="Next Page"
+                                aria-label="Next Page"
+                            >
+                                ›
+                            </button>
+                        </div>
+
+                        <div className="pagination-rows-selector">
+                            <select
+                                id="rows-per-page-select"
+                                className="rows-per-page-select"
+                                value={rowsPerPage}
+                                onChange={(e) => {
+                                    setRowsPerPage(Number(e.target.value));
+                                    setCurrentPage(1);
+                                }}
+                                aria-label="Rows per page"
+                            >
+                                <option value={10}>10 / page</option>
+                                <option value={20}>20 / page</option>
+                                <option value={50}>50 / page</option>
+                            </select>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* =========================================================
@@ -1429,10 +1550,20 @@ function UserManagement() {
                     <div className="user-modal-card" onClick={(e) => e.stopPropagation()}>
                         <div className="user-modal-header">
                             <div className="modal-icon-badge reset-icon-badge">🔄</div>
-                            <div>
+                            <div className="user-modal-header-text">
                                 <h3>Reset Travel Status Cycle</h3>
                                 <p className="modal-header-desc">Prepare users for a new journey cycle</p>
                             </div>
+                            <button
+                                type="button"
+                                className="user-modal-close-btn"
+                                onClick={() => !resettingGlobal && setShowResetModal(false)}
+                                aria-label="Close dialog"
+                                title="Close"
+                                disabled={resettingGlobal}
+                            >
+                                ✕
+                            </button>
                         </div>
 
                         <div className="user-modal-body">
@@ -1476,10 +1607,20 @@ function UserManagement() {
                     <div className="user-modal-card" onClick={(e) => e.stopPropagation()}>
                         <div className="user-modal-header">
                             <div className="modal-icon-badge delete-icon-badge">🗑️</div>
-                            <div>
+                            <div className="user-modal-header-text">
                                 <h3>Delete User</h3>
                                 <p className="modal-header-desc">Remove user from database</p>
                             </div>
+                            <button
+                                type="button"
+                                className="user-modal-close-btn"
+                                onClick={() => !deletingUser && setUserToDelete(null)}
+                                aria-label="Close dialog"
+                                title="Close"
+                                disabled={deletingUser}
+                            >
+                                ✕
+                            </button>
                         </div>
 
                         <div className="user-modal-body">
@@ -1520,13 +1661,23 @@ function UserManagement() {
                     <div className="user-modal-card modal-large" onClick={(e) => e.stopPropagation()}>
                         <div className="user-modal-header">
                             <div className="modal-icon-badge add-icon-badge">+</div>
-                            <div>
+                            <div className="user-modal-header-text">
                                 <h3>Add New User</h3>
                                 <p className="modal-header-desc">Create a single student record manually</p>
                             </div>
+                            <button
+                                type="button"
+                                className="user-modal-close-btn"
+                                onClick={() => !addingUser && setShowAddModal(false)}
+                                aria-label="Close dialog"
+                                title="Close"
+                                disabled={addingUser}
+                            >
+                                ✕
+                            </button>
                         </div>
 
-                        <form onSubmit={handleCreateUser}>
+                        <form onSubmit={handleCreateUser} className="user-modal-form">
                             <div className="user-modal-body">
                                 <div className="form-grid-two-col">
                                     <div className="form-group">

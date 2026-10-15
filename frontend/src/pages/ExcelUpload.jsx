@@ -133,17 +133,20 @@ const styles = {
         background: "#f8fafc",
         fontFamily: "Segoe UI, sans-serif",
         position: "relative",
-        padding: "20px"
+        padding: "clamp(12px, 3vw, 24px)",
+        boxSizing: "border-box"
     },
 
     card: {
-        width: "440px",
-        maxWidth: "100%",
+        width: "100%",
+        maxWidth: "min(440px, calc(100vw - 24px))",
         background: "#ffffff",
-        padding: "36px",
+        padding: "clamp(20px, 5vw, 36px)",
         borderRadius: "20px",
         textAlign: "center",
-        boxShadow: "0 15px 35px rgba(0,0,0,0.12)"
+        boxShadow: "0 15px 35px rgba(0,0,0,0.12)",
+        boxSizing: "border-box",
+        margin: "auto"
     },
 
     icon: {

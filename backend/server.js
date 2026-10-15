@@ -18,6 +18,8 @@ import aiAgentRoutes from "./routes/aiAgentRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import inwardStartingPlaceRoutes from "./routes/inwardStartingPlaceRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
+import secureRoutes from "./routes/secureRoutes.js";
+import { apiRateLimiter } from "./middleware/rateLimiter.js";
 
 import { getAIMetrics } from "./services/aiAgentService.js";
 import { seedHistoricalRoutesIfEmpty } from "./services/historicalRouteService.js";
@@ -71,8 +73,13 @@ app.use((req, res, next) => {
     next();
 });
 
-// Disable HTTP caching on all API endpoints
+// Security headers & disable HTTP caching on all API endpoints
 app.use("/api", (req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+
     res.set(
         "Cache-Control",
         "no-store, no-cache, must-revalidate, proxy-revalidate"
@@ -83,6 +90,9 @@ app.use("/api", (req, res, next) => {
 
     next();
 });
+
+// General API Rate Limiter
+app.use("/api", apiRateLimiter);
 
 app.use(
     "/uploads",
@@ -127,6 +137,9 @@ app.use("/api/inward-starting-places", inwardStartingPlaceRoutes);
 // WhatsApp and Automation API
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/automation", whatsappRoutes);
+
+// Hardened Security Pipeline API (JWT Auth -> RBAC Authorization -> Rate Limiter -> Strong Endpoint)
+app.use("/api/secure", secureRoutes);
 
 // Root
 app.get("/", (req, res) => {

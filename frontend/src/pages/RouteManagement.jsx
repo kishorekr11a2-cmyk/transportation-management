@@ -50,6 +50,7 @@ export default function RouteManagement() {
     const [schedules, setSchedules] = useState([]);
     const [outwardPlan, setOutwardPlan] = useState(null);
     const [inwardPlan, setInwardPlan] = useState(null);
+    const [confirmedDemandCount, setConfirmedDemandCount] = useState(0);
 
     // Single Unified Route Stop Form State
     const [routeName, setRouteName] = useState("");
@@ -60,7 +61,8 @@ export default function RouteManagement() {
     const [newStopCandidate, setNewStopCandidate] = useState(null);
 
     const [editingRoute, setEditingRoute] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [pageLoading, setPageLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [routingLoading, setRoutingLoading] = useState(false);
     const [error, setError] = useState("");
     const [successMessage, setSuccessMessage] = useState("");
@@ -152,6 +154,14 @@ export default function RouteManagement() {
     useEffect(() => {
         selectedRouteIdRef.current = selectedAiRouteId;
     }, [selectedAiRouteId]);
+
+    // Ensure document body is always scrollable on page mount and unmount
+    useEffect(() => {
+        document.body.style.overflow = "";
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, []);
 
     // Manual Plan Submission State (Submits configured routes directly to Final Confirmation page)
     const [planActionLoading, setPlanActionLoading] = useState(false);
@@ -266,39 +276,54 @@ export default function RouteManagement() {
 
     // Metric stats calculations for both directions
     const outwardAllocatedSeats = useMemo(() => {
-        return outwardPlan?.allocatedSeats ?? outwardRoutes.reduce((s, r) => s + Number(r.outwardAllocatedSeats ?? r.allocatedSeats ?? 0), 0);
-    }, [outwardPlan, outwardRoutes]);
+        return outwardRoutes.reduce((s, r) => s + Number(r.outwardAllocatedSeats ?? (r.direction !== "INWARD" ? r.allocatedSeats : 0) ?? 0), 0);
+    }, [outwardRoutes]);
 
     const outwardTotalCapacity = useMemo(() => {
-        return outwardPlan?.totalCapacity ?? outwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || 0), 0);
-    }, [outwardPlan, outwardRoutes]);
+        return outwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || r.totalSeats || 0), 0);
+    }, [outwardRoutes]);
 
     const outwardVehiclesCount = useMemo(() => {
         return outwardRoutes.filter(r => r.assignedVehicle || r.vehicleName).length;
     }, [outwardRoutes]);
 
     const outwardPlanStatus = useMemo(() => {
-        return outwardPlan
-            ? (outwardPlan.isApproved ? "Approved & Active" : (outwardPlan.isSubmitted ? "Submitted (Pending)" : "Saved Draft"))
-            : (outwardRoutes.length > 0 ? "Routes Configured" : "No Plan Available");
+        const isApproved = Boolean(
+            outwardPlan?.isApproved ||
+            outwardPlan?.status === "active" ||
+            outwardPlan?.status === "approved" ||
+            outwardRoutes.some((r) => r.outwardHasPlan)
+        );
+        if (isApproved) return "Approved & Active";
+        if (outwardPlan?.isSubmitted || outwardPlan?.status === "pending_approval" || outwardPlan?.status === "submitted") return "Submitted (Pending Approval)";
+        return "Not Submitted";
     }, [outwardPlan, outwardRoutes]);
 
     const inwardAllocatedSeats = useMemo(() => {
-        return inwardPlan?.allocatedSeats ?? inwardRoutes.reduce((s, r) => s + Number(r.inwardAllocatedSeats ?? r.allocatedSeats ?? 0), 0);
-    }, [inwardPlan, inwardRoutes]);
+        return inwardRoutes.reduce((s, r) => s + Number(r.inwardAllocatedSeats ?? (r.direction === "INWARD" ? r.allocatedSeats : 0) ?? 0), 0);
+    }, [inwardRoutes]);
 
     const inwardTotalCapacity = useMemo(() => {
-        return inwardPlan?.totalCapacity ?? inwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || 0), 0);
-    }, [inwardPlan, inwardRoutes]);
+        return inwardRoutes.reduce((s, r) => s + Number(r.assignedVehicle?.capacity || r.capacity || r.totalSeats || 0), 0);
+    }, [inwardRoutes]);
 
     const inwardVehiclesCount = useMemo(() => {
         return inwardRoutes.filter(r => r.assignedVehicle || r.vehicleName).length;
     }, [inwardRoutes]);
 
     const inwardPlanStatus = useMemo(() => {
-        return inwardPlan
-            ? (inwardPlan.isApproved ? "Approved & Active" : (inwardPlan.isSubmitted ? "Submitted (Pending)" : "Saved Draft"))
-            : (inwardRoutes.length > 0 ? "Routes Configured" : "No Plan Available");
+        if (inwardPlan?.status === "generated" && !inwardPlan?.isApproved && !inwardPlan?.isSubmitted) {
+            return "Not Submitted";
+        }
+        const isApproved = Boolean(
+            inwardPlan?.isApproved ||
+            (inwardPlan?.status === "active" && inwardRoutes.some((r) => r.inwardHasPlan)) ||
+            inwardPlan?.status === "approved" ||
+            inwardRoutes.some((r) => r.inwardHasPlan)
+        );
+        if (isApproved) return "Approved & Active";
+        if (inwardPlan?.isSubmitted || inwardPlan?.status === "pending_approval" || inwardPlan?.status === "submitted") return "Submitted (Pending Approval)";
+        return "Not Submitted";
     }, [inwardPlan, inwardRoutes]);
 
     // Ordered stops helper [1. Source -> 2. Stop -> ... -> Destination]
@@ -553,12 +578,12 @@ export default function RouteManagement() {
     // ==================================================
     const loadData = async () => {
         try {
-            setLoading(true);
-            const [routeRes, vehicleRes, scheduleRes, activePlanRes] = await Promise.all([
-                api.get("/routes"),
+            setPageLoading(true);
+            // Staged loading: fetch route list and vehicles immediately
+            const [routeRes, vehicleRes, scheduleRes] = await Promise.all([
+                api.get("/routes?excludeGeometry=true"),
                 api.get("/vehicles"),
-                api.get("/schedules").catch(() => ({ data: { schedules: [] } })),
-                getActivePlan({ forceRefresh: true }).catch(() => null)
+                api.get("/schedules").catch(() => ({ data: { schedules: [] } }))
             ]);
 
             const routeData = Array.isArray(routeRes.data)
@@ -571,33 +596,45 @@ export default function RouteManagement() {
                 : vehicleRes.data?.vehicles || vehicleRes.data?.data || [];
             setVehicles(vehicleData);
             setSchedules(scheduleRes.data?.schedules || []);
+            setPageLoading(false);
 
-            if (activePlanRes?.success) {
-                const outP = activePlanRes.outwardPlan || null;
-                const inP = activePlanRes.inwardPlan || null;
-                setOutwardPlan(outP);
-                setInwardPlan(inP);
-                // Selection is preserved through canonical selectedAiRouteId and derived selectedAiRoute.
-                // Never overwrite the user's selected route with buses[0]!
-            } else {
-                setOutwardPlan(null);
-                setInwardPlan(null);
-            }
+            // Fetch active plans fast in parallel without blocking route rendering
+            getActivePlan({ forceRefresh: false })
+                .then((activePlanRes) => {
+                    if (activePlanRes?.success) {
+                        setOutwardPlan(activePlanRes.outwardPlan || null);
+                        setInwardPlan(activePlanRes.inwardPlan || null);
+                    } else {
+                        setOutwardPlan(null);
+                        setInwardPlan(null);
+                    }
+                })
+                .catch(() => {
+                    setOutwardPlan(null);
+                    setInwardPlan(null);
+                });
+
+            api.get("/ai-agent/metrics")
+                .then((mRes) => {
+                    const demand = Number(mRes?.data?.confirmedUsers ?? mRes?.data?.comingUsers ?? mRes?.data?.totalUsers ?? 0);
+                    if (demand > 0) setConfirmedDemandCount(demand);
+                })
+                .catch(() => {});
         } catch (err) {
             console.error("Load Data Error:", err);
             setError("Unable to load routes and vehicle schedules.");
-        } finally {
-            setLoading(false);
+            setPageLoading(false);
         }
     };
 
     const loadDataSilently = async () => {
         try {
-            const [routeRes, vehicleRes, scheduleRes, activePlanRes] = await Promise.all([
-                api.get("/routes"),
+            const [routeRes, vehicleRes, scheduleRes, activePlanRes, metricsRes] = await Promise.all([
+                api.get("/routes?excludeGeometry=true"),
                 api.get("/vehicles"),
                 api.get("/schedules").catch(() => ({ data: { schedules: [] } })),
-                getActivePlan({ forceRefresh: true }).catch(() => null)
+                getActivePlan({ forceRefresh: false }).catch(() => null),
+                api.get("/ai-agent/metrics").catch(() => null)
             ]);
 
             const routeData = Array.isArray(routeRes.data)
@@ -615,6 +652,9 @@ export default function RouteManagement() {
                 setOutwardPlan(activePlanRes.outwardPlan || null);
                 setInwardPlan(activePlanRes.inwardPlan || null);
             }
+
+            const demand = Number(metricsRes?.data?.confirmedUsers ?? metricsRes?.data?.comingUsers ?? metricsRes?.data?.totalUsers ?? 0);
+            if (demand > 0) setConfirmedDemandCount(demand);
         } catch {
             // silent background sync
         }
@@ -650,6 +690,7 @@ export default function RouteManagement() {
                     localStorage.setItem("active_confirmation_plan_type", "ADMIN");
                 } catch (e) {}
                 // Open the existing Final Confirmation page with the manual plan data
+                document.body.style.overflow = "";
                 navigate(`/admin/plan-confirmation?direction=${dirToSubmit}&type=ADMIN`);
             }
         } catch (err) {
@@ -1137,7 +1178,7 @@ export default function RouteManagement() {
         const isBoth = String(routeDirection || "").toUpperCase().trim() === "BOTH";
 
         try {
-            setLoading(true);
+            setSaving(true);
             setError("");
             setSuccessMessage("");
 
@@ -1149,6 +1190,8 @@ export default function RouteManagement() {
                     longitude: p.lng
                 }));
             }
+
+            let savedRouteRecord = null;
 
             if (isBoth && !editingRoute) {
                 // BOTH: save ONE route record with direction "BOTH"
@@ -1167,7 +1210,8 @@ export default function RouteManagement() {
                     roadGeometry
                 };
 
-                await api.post("/routes", payload);
+                const saveRes = await api.post("/routes", payload);
+                savedRouteRecord = saveRes.data?.route || saveRes.data;
 
                 const msg = `Route "${routeName.trim()}" saved with BOTH directions (Outward + Inward)!`;
                 setSuccessMessage(msg);
@@ -1190,20 +1234,37 @@ export default function RouteManagement() {
                 };
 
                 if (editingRoute) {
-                    await api.put(`/routes/${editingRoute._id}`, payload);
+                    const putRes = await api.put(`/routes/${editingRoute._id}`, payload);
+                    savedRouteRecord = putRes.data?.route || putRes.data;
                     const msg = `Route "${routeName.trim()}" updated successfully!`;
                     setSuccessMessage(msg);
                     toast.success(msg);
                 } else {
-                    await api.post("/routes", payload);
+                    const postRes = await api.post("/routes", payload);
+                    savedRouteRecord = postRes.data?.route || postRes.data;
                     const msg = `Route "${routeName.trim()}" created successfully!`;
                     setSuccessMessage(msg);
                     toast.success(msg);
                 }
             }
 
-            await loadDataSilently();
+            // INSTANT UI UPDATE: reflect saved route in local state immediately without delay
+            if (savedRouteRecord && (savedRouteRecord._id || savedRouteRecord.routeName)) {
+                setRoutes((prevRoutes) => {
+                    const recId = String(savedRouteRecord._id || "");
+                    const existingIdx = prevRoutes.findIndex((r) => String(r._id) === recId);
+                    if (existingIdx >= 0) {
+                        const updated = [...prevRoutes];
+                        updated[existingIdx] = { ...updated[existingIdx], ...savedRouteRecord };
+                        return updated;
+                    } else {
+                        return [savedRouteRecord, ...prevRoutes];
+                    }
+                });
+            }
+
             clearRoute();
+            setSaving(false);
 
             // After saving:
             // - If route was BOTH: keep the current active filter tab (OUTWARD or INWARD), since BOTH route appears in both lists.
@@ -1220,13 +1281,15 @@ export default function RouteManagement() {
                     setActivePlanDirection("INWARD");
                 }
             }
+
+            // Re-verify in background silently without blocking the user
+            loadDataSilently();
         } catch (err) {
             console.error("Save Route Error:", err);
             const msg = err.response?.data?.message || err.message || "Unable to save route.";
             setError(msg);
             toast.error(msg);
-        } finally {
-            setLoading(false);
+            setSaving(false);
         }
     };
 
@@ -1289,18 +1352,20 @@ export default function RouteManagement() {
         }
 
         try {
-            setLoading(true);
+            setSaving(true);
             await api.delete(`/routes/${route._id}`);
-            await loadDataSilently();
+            // Instant UI update
+            setRoutes((prev) => prev.filter((r) => String(r._id) !== String(route._id)));
             if (editingRoute?._id === route._id) {
                 clearRoute();
             }
             setSuccessMessage(`Route "${route.routeName}" deleted successfully.`);
+            setSaving(false);
+            loadDataSilently();
         } catch (err) {
             console.error("Delete Route Error:", err);
             setError(err.response?.data?.message || err.message || "Unable to delete route.");
-        } finally {
-            setLoading(false);
+            setSaving(false);
         }
     };
 
@@ -1386,7 +1451,10 @@ export default function RouteManagement() {
                     <button
                         type="button"
                         className="route-back-btn"
-                        onClick={() => navigate("/admin-dashboard")}
+                        onClick={() => {
+                            document.body.style.overflow = "";
+                            navigate("/admin-dashboard");
+                        }}
                         aria-label="Go back"
                     >
                         <HiArrowLeft size={16} />
@@ -1504,7 +1572,10 @@ export default function RouteManagement() {
                                             cursor: "pointer",
                                             fontSize: "13px"
                                         }}
-                                        onClick={() => navigate("/ai-agent")}
+                                        onClick={() => {
+                                            document.body.style.overflow = "";
+                                            navigate("/ai-agent");
+                                        }}
                                     >
                                         ← Back to AI Route Optimizer
                                     </button>
@@ -1522,6 +1593,7 @@ export default function RouteManagement() {
                                             fontSize: "12px"
                                         }}
                                         onClick={() => {
+                                            document.body.style.overflow = "";
                                             setSelectedAiRouteId(null);
                                             selectedRouteIdRef.current = null;
                                             lastDrawnRouteIdRef.current = null;
@@ -1762,10 +1834,10 @@ export default function RouteManagement() {
                                     <button
                                         className="save-route-button"
                                         onClick={saveRoute}
-                                        disabled={loading}
+                                        disabled={saving}
                                     >
-                                        {loading
-                                            ? "Saving..."
+                                        {saving
+                                            ? (editingRoute ? "Updating..." : "Saving...")
                                             : editingRoute
                                             ? "✓ Update Route"
                                             : "✓ Save Route"}
@@ -1789,6 +1861,7 @@ export default function RouteManagement() {
                                             <h3 style={{ margin: 0, fontSize: "17px", color: "#0f172a" }}>Route Management</h3>
                                             <span style={{ fontSize: "12px", color: "#64748b" }}>
                                                 {routes.length} total saved routes ({outwardRoutes.length} Outward · {inwardRoutes.length} Inward)
+                                                {confirmedDemandCount > 0 && ` · 👥 ${confirmedDemandCount} Coming Users`}
                                             </span>
                                         </div>
 
@@ -1801,7 +1874,7 @@ export default function RouteManagement() {
                                                     setActivePlanDirection("OUTWARD");
                                                 }}
                                             >
-                                                🔵 OUTWARD ({loading ? "..." : outwardRoutesCount})
+                                                🔵 OUTWARD ({pageLoading ? "..." : outwardRoutesCount})
                                             </button>
                                             <button
                                                 type="button"
@@ -1811,7 +1884,7 @@ export default function RouteManagement() {
                                                     setActivePlanDirection("INWARD");
                                                 }}
                                             >
-                                                🟢 INWARD ({loading ? "..." : inwardRoutesCount})
+                                                🟢 INWARD ({pageLoading ? "..." : inwardRoutesCount})
                                             </button>
                                         </div>
                                     </div>
@@ -1831,16 +1904,20 @@ export default function RouteManagement() {
                                                 route.totalSeats ||
                                                 0
                                             );
+                                            const isOutward = displayDirection === "OUTWARD";
                                             const allocatedSeats = Number(
-                                                (displayDirection === "OUTWARD" ? route.outwardAllocatedSeats : route.inwardAllocatedSeats) ??
-                                                route.allocatedSeats ??
+                                                (isOutward ? route.outwardAllocatedSeats : route.inwardAllocatedSeats) ??
+                                                (isOutward ? (route.direction !== "INWARD" ? route.allocatedSeats : 0) : (route.direction === "INWARD" ? route.allocatedSeats : 0)) ??
                                                 0
                                             );
                                             const remainingSeats = Number(
                                                 Math.max(0, capacity - allocatedSeats)
                                             );
                                             const hasVehicle = Boolean(vehicleName && capacity > 0);
-                                            const isFull = hasVehicle && (remainingSeats === 0 || route.isFull);
+                                            const hasPlanForDirection = isOutward
+                                                ? Boolean(route.outwardHasPlan ?? (outwardPlan?.isApproved || outwardPlan?.isSubmitted))
+                                                : Boolean(route.inwardHasPlan ?? (inwardPlan?.isApproved || inwardPlan?.isSubmitted));
+                                            const isFull = hasVehicle && capacity > 0 && allocatedSeats >= capacity;
                                             const orderedStops = getRouteOrderedStops(route);
 
                                             // Determine effective direction for badge display:
@@ -1871,9 +1948,11 @@ export default function RouteManagement() {
                                                                         </span>
                                                                     </div>
                                                                     <span className={`route-standby-badge ${isFull ? "full" : "available"}`}>
-                                                                        {!isFull
-                                                                            ? `+${remainingSeats} standby seats available`
-                                                                            : "Bus full (0 seats left)"}
+                                                                        {isFull
+                                                                            ? "Bus full (0 seats remaining)"
+                                                                            : (!hasPlanForDirection
+                                                                                ? `+${remainingSeats} seats remaining (Plan Not Submitted)`
+                                                                                : `+${remainingSeats} seats remaining`)}
                                                                     </span>
                                                                 </>
                                                             ) : (
@@ -1921,9 +2000,14 @@ export default function RouteManagement() {
                                                 <div className="direction-plan-section">
                                                     <div className="direction-plan-section-header outward">
                                                         <div className="plan-section-title-group">
-                                                            <h4 className="plan-section-title">🔵 Outward Routes</h4>
+                                                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                                <h4 className="plan-section-title">🔵 Outward Routes</h4>
+                                                                <span className={`plan-status-pill ${outwardPlanStatus === "Approved & Active" ? "approved" : (outwardPlanStatus.includes("Pending") ? "pending" : "unsubmitted")}`}>
+                                                                    {outwardPlanStatus}
+                                                                </span>
+                                                            </div>
                                                             <span className="plan-section-stats">
-                                                                ({outwardRoutes.length} routes · {outwardAllocatedSeats} / {outwardTotalCapacity} seats allocated)
+                                                                ({outwardRoutes.length} routes · {outwardAllocatedSeats} / {outwardTotalCapacity} seats allocated · {Math.max(0, outwardTotalCapacity - outwardAllocatedSeats)} seats remaining)
                                                             </span>
                                                         </div>
                                                         <button
@@ -1942,8 +2026,14 @@ export default function RouteManagement() {
 
                                                     {outwardRoutes.length === 0 && !outwardPlan ? (
                                                         <div className="no-plan-card">
-                                                            <span className="no-plan-badge">No Plan Available</span>
-                                                            <p>No Outward plan or routes available. Configure an Outward route above or generate via AI.</p>
+                                                            {pageLoading ? (
+                                                                <p style={{ margin: "8px 0", color: "#64748b", fontSize: "13px" }}>Loading saved routes...</p>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="no-plan-badge">No Plan Available</span>
+                                                                    <p>No Outward plan or routes available. Configure an Outward route above or generate via AI.</p>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     ) : (
                                                         <div className="saved-routes">
@@ -1959,9 +2049,14 @@ export default function RouteManagement() {
                                             <div className="direction-plan-section">
                                                 <div className="direction-plan-section-header inward">
                                                     <div className="plan-section-title-group">
-                                                        <h4 className="plan-section-title">🟢 Inward Routes</h4>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                            <h4 className="plan-section-title">🟢 Inward Routes</h4>
+                                                            <span className={`plan-status-pill ${inwardPlanStatus === "Approved & Active" ? "approved" : (inwardPlanStatus.includes("Pending") ? "pending" : "unsubmitted")}`}>
+                                                                {inwardPlanStatus}
+                                                            </span>
+                                                        </div>
                                                         <span className="plan-section-stats">
-                                                            ({inwardRoutes.length} routes · {inwardAllocatedSeats} / {inwardTotalCapacity} seats allocated)
+                                                            ({inwardRoutes.length} routes · {inwardAllocatedSeats} / {inwardTotalCapacity} seats allocated · {Math.max(0, inwardTotalCapacity - inwardAllocatedSeats)} seats remaining)
                                                         </span>
                                                     </div>
                                                     <button
@@ -1980,8 +2075,14 @@ export default function RouteManagement() {
 
                                                 {inwardRoutes.length === 0 && !inwardPlan ? (
                                                     <div className="no-plan-card">
-                                                        <span className="no-plan-badge">No Plan Available</span>
-                                                        <p>No Inward plan or routes available. Configure an Inward route above or generate via AI.</p>
+                                                        {pageLoading ? (
+                                                            <p style={{ margin: "8px 0", color: "#64748b", fontSize: "13px" }}>Loading saved routes...</p>
+                                                        ) : (
+                                                            <>
+                                                                <span className="no-plan-badge">No Plan Available</span>
+                                                                <p>No Inward plan or routes available. Configure an Inward route above or generate via AI.</p>
+                                                            </>
+                                                        )}
                                                     </div>
                                                 ) : (
                                                     <div className="saved-routes">

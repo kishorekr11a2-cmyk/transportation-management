@@ -1,3 +1,4 @@
+import React, { useEffect } from "react";
 import { FiAlertTriangle, FiX } from "react-icons/fi";
 
 export default function ResetRouteModal({
@@ -7,6 +8,17 @@ export default function ResetRouteModal({
     isResetting = false,
     direction = null
 }) {
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = "hidden";
+            return () => {
+                document.body.style.overflow = "";
+            };
+        } else {
+            document.body.style.overflow = "";
+        }
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     const dirLabel = direction === "OUTWARD" ? "Outward" : direction === "INWARD" ? "Inward" : "";

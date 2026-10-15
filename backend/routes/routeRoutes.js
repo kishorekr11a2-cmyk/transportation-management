@@ -2,6 +2,7 @@ import express from "express";
 
 import authMiddleware from "../middleware/authMiddleware.js";
 import adminMiddleware from "../middleware/adminMiddleware.js";
+import { sensitiveActionLimiter } from "../middleware/rateLimiter.js";
 
 import {
     getRoutes,
@@ -42,6 +43,7 @@ router.post(
     "/confirm-plan",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     confirmManualPlan
 );
 
@@ -49,6 +51,7 @@ router.post(
     "/regenerate-plan",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     regenerateManualPlan
 );
 
@@ -56,6 +59,7 @@ router.post(
     "/approve-plan",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     approveManualPlan
 );
 
@@ -63,6 +67,7 @@ router.post(
     "/reset-plan",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     resetManualPlan
 );
 
@@ -70,12 +75,15 @@ router.post(
     "/reset-manual-allocations",
     authMiddleware,
     adminMiddleware,
+    sensitiveActionLimiter,
     resetManualAllocations
 );
 
 router.post(
     "/",
     authMiddleware,
+    adminMiddleware,
+    sensitiveActionLimiter,
     addRoute
 );
 
@@ -88,12 +96,16 @@ router.get(
 router.put(
     "/:id",
     authMiddleware,
+    adminMiddleware,
+    sensitiveActionLimiter,
     updateRoute
 );
 
 router.delete(
     "/:id",
     authMiddleware,
+    adminMiddleware,
+    sensitiveActionLimiter,
     deleteRoute
 );
 

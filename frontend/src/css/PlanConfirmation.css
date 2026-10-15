@@ -1,363 +1,659 @@
-/* =====================================================
-   FINAL PLAN CONFIRMATION PAGE
-   Clean Plan Selection + Compact Plan Summary + Confirmation
-   ===================================================== */
+/* ==========================================================================
+   FINAL PLAN CONFIRMATION — CLEAN TRANSPORT REVIEW (OCEAN BREEZE)
+   Normal-sized layout — fits desktop without scrolling
+   ========================================================================== */
 
+/* ── Page Layout & Outer Shell ─────────────────────────────────────────── */
 .final-plan-page {
     min-height: 100vh;
-    background: #f8fafc;
-    color: #0f172a;
-    padding: 40px 20px 80px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    min-height: 100dvh;
+    background-color: #f0f7fa;
+    color: #1e293b;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 14px 32px 22px;
     display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
     box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+    position: relative;
 }
+
+
 
 .final-plan-container {
-    max-width: 720px;
     width: 100%;
+    max-width: 1000px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 14px;
+    box-sizing: border-box;
+    margin: auto 0;
+    position: relative;
+    z-index: 1;
 }
 
-.final-plan-header {
-    text-align: center;
-    margin-bottom: 4px;
-}
-
-.final-plan-page-title {
-    margin: 0;
-    font-size: 26px;
-    font-weight: 800;
-    color: #0f172a;
-    letter-spacing: -0.4px;
-}
-
-/* 1. Plan Selection Controls */
-.plan-selection-controls {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 20px 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+/* ── Header: Back button + Title + Subtitle ─────────────────────────────── */
+.plan-confirmation-header {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 8px;
+    width: 100%;
 }
 
-.selector-group {
+.header-nav-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
+    justify-content: flex-start;
 }
 
-.selector-label {
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #475569;
-}
-
-.selector-buttons {
-    display: flex;
-    gap: 8px;
-    background: #f1f5f9;
-    padding: 4px;
-    border-radius: 10px;
-    border: 1px solid #e2e8f0;
-}
-
-.sel-btn {
-    padding: 8px 16px;
-    border-radius: 7px;
+.plan-back-btn {
+    background: #2563eb;
+    color: #ffffff;
     border: none;
-    background: transparent;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 700;
+    padding: 7px 14px;
+    height: 34px;
+    border-radius: 8px;
     cursor: pointer;
+    font-size: 13.5px;
+    font-weight: 600;
     transition: all 0.15s ease;
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+    width: fit-content;
 }
 
-.sel-btn:hover {
-    color: #0f172a;
+.plan-back-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
 }
 
-.sel-btn.active.outward {
-    background: #2563eb;
-    color: #ffffff;
-    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
+.plan-back-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
-.sel-btn.active.inward {
-    background: #059669;
-    color: #ffffff;
-    box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
-}
-
-.sel-btn.active.ai {
-    background: #0284c7;
-    color: #ffffff;
-    box-shadow: 0 1px 3px rgba(2, 132, 199, 0.3);
-}
-
-.sel-btn.active.admin {
-    background: #0d9488;
-    color: #ffffff;
-    box-shadow: 0 1px 3px rgba(13, 148, 136, 0.3);
-}
-
-/* 2. Compact Plan Summary Cards */
-.compact-summary-section {
+.header-titles {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 3px;
 }
 
-.compact-plan-card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 22px 26px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-    transition: all 0.2s ease;
-}
-
-.compact-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #f1f5f9;
-    padding-bottom: 12px;
-    margin-bottom: 16px;
-}
-
-.compact-card-title {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 800;
+.plan-main-title {
     color: #0f172a;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 0 0 2px 0;
+    text-transform: uppercase;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+}
+
+.plan-subtitle {
+    color: #334155;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+/* ── Plan Selection Card ────────────────────────────────────────────────── */
+.plan-selection-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE8EB;
+    border-radius: 16px;
+    padding: 18px 22px;
+    box-shadow: 0 1px 4px rgba(24, 49, 83, 0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.selection-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.selection-card-heading {
+    font-size: 15px;
+    font-weight: 700;
+    color: #183153;
+    margin: 0;
+}
+
+.selection-card-icon {
+    color: #607F8B;
+    display: flex;
+    align-items: center;
+}
+
+.selection-controls-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: center;
+}
+
+.segmented-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #F6FAFB;
+    border: 1px solid #E4EEF1;
+    border-radius: 12px;
+    padding: 6px 8px 6px 14px;
+    gap: 12px;
+}
+
+.segmented-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #607F8B;
+    white-space: nowrap;
+}
+
+.segmented-control {
+    display: inline-flex;
+    align-items: center;
+    background: #EEF3F5;
+    border: 1px solid #DCE8EB;
+    border-radius: 11px;
+    padding: 3px;
+    gap: 3px;
+}
+
+.seg-btn {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: 9px;
+    border: none;
+    background: transparent;
+    color: #607F8B;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+    white-space: nowrap;
+}
+
+.seg-btn:hover:not(.selected-dir):not(.selected-type) {
+    color: #183153;
+    background: rgba(24, 49, 83, 0.05);
+}
+
+.seg-btn.selected-dir {
+    background: #2563EB;
+    color: #FFFFFF;
+    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.28);
+}
+
+.seg-btn.selected-type {
+    background: #11846F;
+    color: #FFFFFF;
+    box-shadow: 0 1px 4px rgba(17, 132, 111, 0.28);
+}
+
+.seg-btn:focus-visible {
+    outline: 2px solid #2563EB;
+    outline-offset: 1px;
+}
+
+/* ── Selected Transportation Plan Card ─────────────────────────────────── */
+.selected-plan-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE8EB;
+    border-radius: 16px;
+    padding: 18px 22px;
+    box-shadow: 0 1px 4px rgba(24, 49, 83, 0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.selected-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #EEF4F6;
+    margin-bottom: 4px;
+}
+
+.selected-card-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.selected-card-eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: #607F8B;
+}
+
+.selected-card-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #183153;
+    margin: 0;
     letter-spacing: -0.2px;
 }
 
-.compact-card-title.combined-title {
-    font-size: 15px;
-    color: #475569;
-}
-
-.compact-active-badge {
-    background: #dcfce7;
-    color: #15803d;
-    font-size: 11px;
-    font-weight: 800;
-    padding: 3px 9px;
-    border-radius: 12px;
-    border: 1px solid #86efac;
+.plan-status-badge {
+    font-size: 11.5px;
+    font-weight: 700;
     letter-spacing: 0.4px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
 }
 
-.compact-stats-list {
+.plan-status-badge.badge-active {
+    background: #DCFCE7;
+    color: #0F846F;
+    border: 1px solid #A7F3D0;
+}
+
+.plan-status-badge.badge-pending {
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FDE68A;
+}
+
+/* ── Five Metric Rows ──────────────────────────────────────────────────── */
+.plan-metrics-rows {
     display: flex;
     flex-direction: column;
-    gap: 10px;
 }
 
-.stat-line {
+.plan-metric-row {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    font-size: 14px;
-    padding-bottom: 4px;
-    border-bottom: 1px dashed #f1f5f9;
+    justify-content: space-between;
+    padding: 10px 6px;
+    border-bottom: 1px solid #F0F5F7;
 }
 
-.stat-line:last-child {
+.plan-metric-row:last-child {
     border-bottom: none;
     padding-bottom: 0;
 }
 
-.stat-label {
-    font-weight: 700;
-    color: #475569;
+.metric-row-left {
+    display: flex;
+    align-items: center;
+    gap: 11px;
 }
 
-.stat-val {
-    font-weight: 700;
-    color: #0f172a;
+.metric-icon-wrap {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: #F0F7FA;
+    color: #607F8B;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
 }
 
-.stat-val.font-numeric {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 15px;
-}
-
-.stat-val.highlight-green {
-    color: #16a34a;
-}
-
-/* Loading Card */
-.compact-loading-card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 48px 24px;
-    text-align: center;
-    color: #64748b;
+.metric-label {
     font-size: 14px;
+    font-weight: 500;
+    color: #183153;
+}
+
+.metric-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: #183153;
+    font-variant-numeric: tabular-nums;
+}
+
+.metric-value.val-active {
+    color: #0F846F;
+}
+
+.metric-value.val-pending {
+    color: #B45309;
     font-weight: 600;
+}
+
+.metric-value.val-muted {
+    color: #607F8B;
+    font-weight: 600;
+}
+
+/* ── Loading Card ──────────────────────────────────────────────────────── */
+.plan-summary-loading-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE8EB;
+    border-radius: 16px;
+    padding: 48px 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 14px;
+    justify-content: center;
+    gap: 12px;
+    box-shadow: 0 1px 4px rgba(24, 49, 83, 0.04);
 }
 
-.loading-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid #e2e8f0;
-    border-top-color: #2563eb;
+.plan-spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid #DCE8EB;
+    border-top-color: #2563EB;
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: plan-spin 0.8s linear infinite;
 }
 
-@keyframes spin {
+.loading-text {
+    font-size: 14px;
+    color: #607F8B;
+    font-weight: 500;
+    margin: 0;
+}
+
+@keyframes plan-spin {
     to { transform: rotate(360deg); }
 }
 
-/* 3. Confirmation Section */
-.confirmation-box {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 24px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+/* ── Confirm Transportation Plan Card ──────────────────────────────────── */
+.confirm-plan-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE8EB;
+    border-radius: 16px;
+    padding: 18px 22px;
+    box-shadow: 0 1px 4px rgba(24, 49, 83, 0.04);
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    text-align: center;
+    gap: 12px;
 }
 
-.confirmation-prompt {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 700;
-    color: #0f172a;
-}
-
-.confirmation-action-buttons {
+.confirm-card-content {
     display: flex;
-    justify-content: center;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.confirm-card-info {
+    display: flex;
     align-items: center;
     gap: 14px;
-    width: 100%;
-    flex-wrap: wrap;
 }
 
-.btn-back {
-    padding: 12px 24px;
-    border-radius: 9px;
-    border: 1px solid #cbd5e1;
-    background: #ffffff;
-    color: #334155;
-    font-size: 14px;
+.confirm-icon-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: #E6F4F1;
+    color: #0F846F;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.confirm-text-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.confirm-heading {
+    font-size: 15px;
     font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    color: #183153;
+    margin: 0;
 }
 
-.btn-back:hover:not(:disabled) {
-    background: #f1f5f9;
-    border-color: #94a3b8;
-    color: #0f172a;
+.confirm-description {
+    font-size: 13px;
+    color: #607F8B;
+    margin: 0;
+    line-height: 1.4;
 }
 
+.confirm-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+/* Primary: Approve & Activate */
 .btn-confirm-plan {
-    padding: 12px 32px;
-    border-radius: 9px;
+    height: 42px;
+    padding: 0 24px;
+    border-radius: 12px;
     border: none;
-    background: #2563eb;
-    color: #ffffff;
+    background: #0F846F;
+    color: #FFFFFF;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 2px 6px rgba(15, 132, 111, 0.28);
+    white-space: nowrap;
 }
 
 .btn-confirm-plan:hover:not(:disabled) {
-    background: #1d4ed8;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
-    transform: translateY(-1px);
+    background: #0D7260;
+    box-shadow: 0 3px 10px rgba(15, 132, 111, 0.35);
 }
 
-.btn-confirm-plan:disabled,
-.btn-back:disabled {
+.btn-confirm-plan:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-    transform: none;
+    box-shadow: none;
 }
 
-/* Confirm Progress Overlay */
+.btn-confirm-plan.btn-is-active {
+    background: #E6F4F1;
+    color: #0F846F;
+    border: 1px solid #A7F3D0;
+    box-shadow: none;
+    cursor: default;
+    opacity: 1;
+}
+
+/* Secondary: Generate New Plan */
+.btn-generate-plan {
+    height: 42px;
+    padding: 0 20px;
+    border-radius: 12px;
+    border: none;
+    background: #2563EB;
+    color: #FFFFFF;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    transition: background-color 0.15s ease;
+    white-space: nowrap;
+}
+
+.btn-generate-plan:hover {
+    background: #1D4ED8;
+}
+
+/* Inline spinner inside button */
+.btn-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #FFFFFF;
+    border-radius: 50%;
+    animation: plan-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+/* ── Stale-Demand Warning ───────────────────────────────────────────────── */
+.confirm-stale-alert {
+    background: #FFF7ED;
+    border: 1px solid #FFEDD5;
+    border-radius: 11px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.stale-alert-icon {
+    color: #EA580C;
+    margin-top: 1px;
+    flex-shrink: 0;
+}
+
+.stale-alert-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.stale-alert-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #9A3412;
+}
+
+.stale-alert-desc {
+    font-size: 12.5px;
+    color: #C2410C;
+    margin: 0;
+    line-height: 1.4;
+}
+
+/* ── Full-Screen Confirmation Overlay ──────────────────────────────────── */
 .confirm-progress-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(15, 23, 42, 0.72);
+    inset: 0;
+    background: rgba(24, 49, 83, 0.45);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: 9999;
     padding: 20px;
+    box-sizing: border-box;
 }
 
 .confirm-progress-dialog {
-    background: #ffffff;
-    border-radius: 16px;
+    background: #FFFFFF;
+    border-radius: 18px;
     padding: 36px 32px;
-    max-width: 420px;
+    max-width: 400px;
     width: 100%;
     text-align: center;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 20px 48px rgba(24, 49, 83, 0.18);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 14px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #DCE8EB;
+    box-sizing: border-box;
 }
 
 .confirm-spinner {
     width: 44px;
     height: 44px;
-    border: 4px solid #e2e8f0;
-    border-top-color: #2563eb;
+    border: 4px solid #DCE8EB;
+    border-top-color: #0F846F;
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: plan-spin 0.8s linear infinite;
 }
 
 .confirm-step-title {
     margin: 0;
-    font-size: 18px;
-    font-weight: 800;
-    color: #0f172a;
+    font-size: 17px;
+    font-weight: 700;
+    color: #183153;
 }
 
 .confirm-substep-text {
     margin: 0;
     font-size: 13px;
-    color: #64748b;
+    color: #607F8B;
     line-height: 1.5;
 }
 
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 820px) {
+    .final-plan-container {
+        max-width: 100%;
+    }
 
+    .selection-controls-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .confirm-card-content {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+    }
+
+    .confirm-actions-group {
+        justify-content: flex-end;
+    }
+}
+
+@media (max-width: 600px) {
+    .final-plan-page {
+        padding: 14px 14px 28px;
+        justify-content: flex-start;
+    }
+
+    .plan-main-title {
+        font-size: 22px;
+    }
+
+    .segmented-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .segmented-control {
+        width: 100%;
+        display: flex;
+    }
+
+    .seg-btn {
+        flex: 1;
+    }
+
+    .confirm-actions-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .btn-confirm-plan,
+    .btn-generate-plan {
+        width: 100%;
+        justify-content: center;
+    }
+}

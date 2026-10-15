@@ -1,201 +1,179 @@
-import dotenv from "dotenv";
+import dotenv from 'dotenv';
 dotenv.config();
-import connectDB from "../config/db.js";
-import User from "../models/User.js";
-import Vehicle from "../models/Vehicle.js";
-import {
-    getConfirmedUsers,
-    deduplicateUsers,
-    calculateStoppingGroups,
-    resolveStopCoordinates
-} from "../services/aiAgentService.js";
+import connectDB from '../config/db.js';
+import { getAIData, resolveStopCoordinates } from '../services/aiAgentService.js';
 import {
     buildGlobalOptimizationMatrix,
     generateGlobalCandidateRoutes,
-    consolidateCandidateRoutes,
-    balanceCandidateRoutesToFleetCapacities,
-    optimizeTour2OptRoad,
+    consolidateSmallPassengerRoutes,
     assignVehiclesToOptimizedRoutes,
-    consolidateAndRebalanceLowOccupancyOutwardRoutes,
-    balanceRoutesToGuaranteedSeating,
-    sequenceOutwardRouteStops
-} from "../services/routeOptimizationService.js";
+    sequenceOutwardRouteStops,
+    optimizeTour2OptRoad,
+    isCandidateDemandCompatibleWithFleetProfile,
+    insertStopNearestCost
+} from '../services/routeOptimizationService.js';
 
-async function main() {
-    await connectDB();
-    const rawUsers = await User.find({ travelStatus: "Coming" }).lean();
-    const confirmed = getConfirmedUsers(rawUsers);
-    const { uniqueUsers } = deduplicateUsers(confirmed);
-    const totalComingDemand = uniqueUsers.length;
-    console.log("Total Coming Demand:", totalComingDemand);
+function consolidateCandidateRoutesWithFleet({
+    routes = [],
+    targetRouteCount = 9,
+    maxBusCapacity = 62,
+    fleetCapacities = null,
+    matrix,
+    tripMode = "FROM_SOURCE"
+}) {
+    if (!Array.isArray(routes) || routes.length <= targetRouteCount) return routes;
 
-    const stoppingGroups = calculateStoppingGroups(uniqueUsers);
-    const anchorHub = { name: "K. L. N. College of Engineering", latitude: 9.8515, longitude: 78.1882 };
-    const resolvedStops = await resolveStopCoordinates(stoppingGroups, anchorHub);
+    const effectiveFleetCaps = Array.isArray(fleetCapacities) && fleetCapacities.length > 0
+        ? fleetCapacities.sort((a,b) => b-a)
+        : null;
 
-    const availableVehicles = await Vehicle.find({ isActive: { $ne: false } }).sort({ capacity: -1 }).lean();
-    const sortedFleetDesc = [...availableVehicles].sort((a,b) => Number(b.capacity||0) - Number(a.capacity||0));
-    console.log(`Available Vehicles (${availableVehicles.length}):`, sortedFleetDesc.map(v => `${v.vehicleName}:${v.capacity}`).join(", "));
+    let currentRoutes = routes.map((r) => ({
+        ...r,
+        stops: (r.stops || []).map((s) => ({
+            ...s,
+            userIds: Array.isArray(s.userIds) ? [...s.userIds] : []
+        })),
+        users: Array.isArray(r.users) ? [...r.users] : []
+    }));
 
-    // Calculate theoretical capacity minimum
-    let accCap = 0;
-    let minCapacityBuses = 0;
-    for (const v of sortedFleetDesc) {
-        accCap += Number(v.capacity || 0);
-        minCapacityBuses++;
-        if (accCap >= totalComingDemand) break;
-    }
-    console.log(`Theoretical Capacity Minimum: ${minCapacityBuses} buses (${accCap} seats for ${totalComingDemand} demand)`);
+    let rounds = 0;
+    while (currentRoutes.length > targetRouteCount && rounds < 20) {
+        rounds++;
+        currentRoutes.sort((a, b) => a.assignedUsers - b.assignedUsers);
+        const smallestRoute = currentRoutes[0];
+        let allStopsAbsorbed = true;
 
-    const matrix = await buildGlobalOptimizationMatrix({ depot: anchorHub, stops: resolvedStops });
-    const maxBusCapacity = Number(sortedFleetDesc[0]?.capacity || 70);
+        for (const stop of smallestRoute.stops) {
+            const stopPax = stop.passengerCount || stop.userCount || stop.userIds?.length || 0;
+            const otherRoutes = currentRoutes.filter((r) => r.routeId !== smallestRoute.routeId);
 
-    // Initial candidates
-    const rawCandidates = generateGlobalCandidateRoutes({
-        stops: resolvedStops,
-        matrix,
-        maxBusCapacity,
-        fleetCapacities: sortedFleetDesc.map(v => Number(v.capacity || 0)),
-        tripMode: "FROM_SOURCE"
-    });
-    console.log(`Generated ${rawCandidates.length} initial candidate routes.`);
+            // Viable routes respecting maxBusCapacity AND fleet profile
+            let viableRoutes = otherRoutes.filter((r) => {
+                if (r.assignedUsers + stopPax > maxBusCapacity) return false;
+                if (effectiveFleetCaps) {
+                    const prospectiveDemands = currentRoutes.map((cr) => {
+                        if (cr.routeId === r.routeId) return cr.assignedUsers + stopPax;
+                        if (cr.routeId === smallestRoute.routeId) return Math.max(0, cr.assignedUsers - stopPax);
+                        return cr.assignedUsers;
+                    });
+                    if (!isCandidateDemandCompatibleWithFleetProfile(prospectiveDemands, effectiveFleetCaps)) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
-    // Test loop from K = minCapacityBuses to availableVehicles.length
-    for (let K = minCapacityBuses; K <= availableVehicles.length; K++) {
-        console.log(`\n======================================================`);
-        console.log(`[AI-FLEET] TESTING FLEET SIZE: ${K} BUSES`);
-        console.log(`======================================================`);
+            // If no viable route strictly satisfies fleet profile, relax to maxBusCapacity
+            if (viableRoutes.length === 0) {
+                viableRoutes = otherRoutes.filter((r) => r.assignedUsers + stopPax <= maxBusCapacity);
+            }
 
-        const candidateFleet = sortedFleetDesc.slice(0, K);
-        const candidateFleetCap = candidateFleet.reduce((sum, v) => sum + Number(v.capacity || 0), 0);
-        console.log(`Candidate Fleet Capacity: ${candidateFleetCap} seats across ${K} buses.`);
+            if (viableRoutes.length > 0) {
+                let bestTarget = null;
+                let minDelta = Infinity;
+                let bestInsert = null;
 
-        if (candidateFleetCap < totalComingDemand) {
-            console.log(`[AI-FLEET] K=${K} INFEASIBLE: Insufficient fleet capacity (${candidateFleetCap} < ${totalComingDemand})`);
-            continue;
+                for (const target of viableRoutes) {
+                    const insRes = insertStopNearestCost({
+                        tour: target.stops,
+                        stop,
+                        stopMatrixIndex: stop.matrixIndex,
+                        matrix,
+                        tripMode
+                    });
+                    if (insRes.costDelta < minDelta) {
+                        minDelta = insRes.costDelta;
+                        bestTarget = target;
+                        bestInsert = insRes;
+                    }
+                }
+
+                if (bestTarget && bestInsert) {
+                    bestTarget.stops = bestInsert.updatedTour;
+                    bestTarget.assignedUsers += stopPax;
+                    bestTarget.users.push(...(stop.userIds || []));
+                    continue;
+                }
+            }
+            allStopsAbsorbed = false;
+            break;
         }
 
-        // Deep copy candidate routes
-        let currentRoutes = rawCandidates.map(r => ({
-            ...r,
-            stops: [...r.stops],
-            users: [...(r.users || [])]
-        }));
-
-        // Consolidate candidate routes towards K
-        if (currentRoutes.length > K) {
-            currentRoutes = consolidateCandidateRoutes({
-                routes: currentRoutes,
-                targetRouteCount: K,
-                maxBusCapacity,
-                matrix,
-                tripMode: "FROM_SOURCE"
-            });
-        }
-        console.log(`After consolidation towards ${K}: ${currentRoutes.length} candidate routes.`);
-
-        // Balance candidate routes to fleet capacities
-        currentRoutes = balanceCandidateRoutesToFleetCapacities({
-            routes: currentRoutes,
-            fleet: candidateFleet,
-            matrix,
-            tripMode: "FROM_SOURCE",
-            sourceHub: anchorHub,
-            destinationHub: anchorHub
-        });
-
-        // 2-opt tour refinement
-        currentRoutes = currentRoutes.map(route => {
-            const opt = optimizeTour2OptRoad({
-                tour: route.stops,
-                matrix,
-                tripMode: "FROM_SOURCE"
-            });
-            return {
-                ...route,
-                stops: opt.tour,
-                routeDistanceKm: opt.roadDistanceKm
-            };
-        });
-
-        // Assign vehicles from candidateFleet
-        const { assignedRoutes } = assignVehiclesToOptimizedRoutes({
-            routes: currentRoutes,
-            availableVehicles: candidateFleet,
-            tripMode: "FROM_SOURCE"
-        });
-
-        let testRoutes = assignedRoutes;
-
-        // Consolidate low-occupancy routes
-        if (testRoutes.length > 1) {
-            testRoutes = consolidateAndRebalanceLowOccupancyOutwardRoutes({
-                routes: testRoutes,
-                availableVehicles: candidateFleet,
-                sourceHub: anchorHub,
-                matrix,
-                tripMode: "FROM_SOURCE"
-            });
-        }
-
-        // Guaranteed seating balancing
-        const seatingRes = balanceRoutesToGuaranteedSeating({
-            routes: testRoutes,
-            availableVehicles: candidateFleet,
-            matrix,
-            hub: anchorHub,
-            tripMode: "FROM_SOURCE"
-        });
-        testRoutes = seatingRes.balanced;
-
-        const totalAssigned = testRoutes.reduce((sum, r) => sum + (r.assignedUsers || 0), 0);
-        const totalStanding = seatingRes.totalStanding || 0;
-        const overCapCount = seatingRes.overCapacityCount || 0;
-
-        // Sequence and validate road progression for each route
-        let allContinuity = true;
-        let reversalCount = 0;
-        for (const route of testRoutes) {
-            const seq = sequenceOutwardRouteStops({
-                departureHub: anchorHub,
-                stops: route.stops,
-                matrix,
-                tripMode: "FROM_SOURCE"
-            });
-            route.stops = seq.stops;
-            route.routeDistanceKm = seq.routeDistanceKm;
-            route.totalRouteDuration = seq.totalRouteDuration;
-            route.longestPassengerTravelTime = seq.longestPassengerTravelTime;
-            route.averagePassengerTravelTime = seq.averagePassengerTravelTime;
-            route.passengersWithin60 = seq.passengersWithin60;
-            route.passengersAbove60 = seq.passengersAbove60;
-            route.qualityValidation = seq.qualityValidation;
-
-            const qv = seq.qualityValidation || {};
-            if ((qv.directionalReversals || 0) > 0) reversalCount += qv.directionalReversals;
-        }
-
-        const isFeasible = (totalAssigned === totalComingDemand) && (totalStanding === 0) && (overCapCount === 0);
-        console.log(`[AI-FLEET] Evaluation for K=${K}:`);
-        console.log(`  Routes: ${testRoutes.length}`);
-        console.log(`  Assigned: ${totalAssigned} / ${totalComingDemand} (Standing: ${totalStanding}, OverCapacity: ${overCapCount})`);
-        console.log(`  Directional Reversals: ${reversalCount}`);
-        console.log(`  Feasible: ${isFeasible ? "YES" : "NO"}`);
-
-        testRoutes.forEach((r, idx) => {
-            console.log(`    Route ${idx+1} [${r.vehicleName}]: ${r.assignedUsers}/${r.capacity} pax, ${r.stops.length} stops (${r.stops.map(s => s.name).join(" -> ")}) | Dist=${r.routeDistanceKm}km, LongestPax=${r.longestPassengerTravelTime}m`);
-        });
-
-        if (isFeasible) {
-            console.log(`\n>>> [AI-FLEET] SUCCESS! Lowest Feasible Fleet Selected: ${testRoutes.length} buses (K=${K}) <<<`);
+        if (allStopsAbsorbed) {
+            currentRoutes = currentRoutes.filter((r) => r.routeId !== smallestRoute.routeId);
+        } else {
             break;
         }
     }
 
+    return currentRoutes;
+}
+
+async function main() {
+    await connectDB();
+    const aiData = await getAIData({ forceRefresh: true });
+    const resolvedStops = await resolveStopCoordinates(aiData.stops);
+    const availableVehicles = aiData.availableVehicles;
+    const anchorHub = { name: "K.L.N. College of Engineering", latitude: 9.8324, longitude: 78.1884 };
+    const matrix = await buildGlobalOptimizationMatrix({ depot: anchorHub, stops: resolvedStops, options: {} });
+
+    const sortedFleetDesc = [...availableVehicles]
+        .filter((v) => v.isActive !== false && Number(v.capacity || v.seatCapacity || 0) > 0)
+        .sort((a, b) => Number(b.capacity || b.seatCapacity || 0) - Number(a.capacity || a.seatCapacity || 0));
+
+    const K = 9;
+    const candidateFleetForK = sortedFleetDesc.slice(0, K);
+
+    let candidateRoutes = generateGlobalCandidateRoutes({
+        stops: resolvedStops,
+        matrix,
+        maxBusCapacity: 62,
+        fleetCapacities: candidateFleetForK.map(v => v.capacity),
+        tripMode: 'FROM_SOURCE',
+        options: {}
+    });
+
+    candidateRoutes = consolidateSmallPassengerRoutes({
+        routes: candidateRoutes,
+        matrix,
+        maxBusCapacity: 62,
+        fleetCapacities: candidateFleetForK.map(v => v.capacity),
+        tripMode: 'FROM_SOURCE',
+        smallRouteThreshold: 15,
+        activeInwardStartingPlaces: [],
+        anchorHub,
+        sourceHub: anchorHub,
+        destinationHub: anchorHub,
+        auditTrail: []
+    });
+
+    console.log(`Routes before consolidateCandidateRoutesWithFleet (${candidateRoutes.length}):`, candidateRoutes.map(r => r.assignedUsers));
+
+    const consolidated = consolidateCandidateRoutesWithFleet({
+        routes: candidateRoutes,
+        targetRouteCount: 9,
+        maxBusCapacity: 62,
+        fleetCapacities: candidateFleetForK.map(v => v.capacity),
+        matrix,
+        tripMode: 'FROM_SOURCE'
+    });
+
+    console.log(`Routes after consolidateCandidateRoutesWithFleet (${consolidated.length}):`, consolidated.map(r => r.assignedUsers).sort((a,b) => b-a));
+    console.log(`Fleet capacities (${candidateFleetForK.length}):`, candidateFleetForK.map(v => v.capacity));
+
+    const assignRes = assignVehiclesToOptimizedRoutes({
+        routes: consolidated,
+        availableVehicles: candidateFleetForK,
+        tripMode: 'FROM_SOURCE'
+    });
+
+    console.log(`\nassignVehiclesToOptimizedRoutes result: assigned=${assignRes.assignedRoutes.length}, unassigned=${assignRes.unassignedRoutes.length}`);
+    assignRes.assignedRoutes.forEach(r => {
+        console.log(`  ${r.vehicleName} (cap ${r.capacity}): ${r.assignedUsers} pax, stops: ${r.stops.map(s => s.name).join(' -> ')}`);
+    });
+    console.log('Total assigned:', assignRes.assignedRoutes.reduce((s, r) => s + r.assignedUsers, 0));
+
     process.exit(0);
 }
 
-main().catch(err => {
-    console.error(err);
-    process.exit(1);
-});
+main().catch(console.error);
