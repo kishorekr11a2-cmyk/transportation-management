@@ -12,7 +12,7 @@
  */
 
 import mongoose from "mongoose";
-import MapLocation from "../models/MapLocation.js";
+import MapLocation from "../models/mapLocation.js";
 import Stop from "../models/Stop.js";
 import { isDbConnected } from "../config/db.js";
 

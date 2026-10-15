@@ -1,6 +1,6 @@
 import express from "express";
 import authMiddleware from "../middleware/authMiddleware.js";
-import MapLocation from "../models/MapLocation.js";
+import MapLocation from "../models/mapLocation.js";
 
 const router =
     express.Router();
