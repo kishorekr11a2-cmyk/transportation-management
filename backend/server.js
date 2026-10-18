@@ -1,11 +1,11 @@
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { startWhatsApp } from "./whatsapp/whatsappService.js";
-import connectDB, { isDbConnected, getDbStatus } from "./config/db.js";
+
+import { startWhatsApp } from "./services/whatsappService.js";
+import { connectDB, getDBHealth } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -20,19 +20,19 @@ import locationRoutes from "./routes/locationRoutes.js";
 import inwardStartingPlaceRoutes from "./routes/inwardStartingPlaceRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
 import secureRoutes from "./routes/secureRoutes.js";
-import { apiRateLimiter } from "./middleware/rateLimiter.js";
 
+import { apiRateLimiter } from "./middleware/rateLimiter.js";
 import { getAIMetrics } from "./services/aiAgentService.js";
 import { seedHistoricalRoutesIfEmpty } from "./services/historicalRouteService.js";
 
 dotenv.config();
 
 const app = express();
+const PORT = process.env.PORT || 5000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// CORS configuration for local development and production
 const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
@@ -56,87 +56,29 @@ app.use(
             return callback(new Error("Origin not allowed by CORS"));
         },
         credentials: true,
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization"]
+        methods: [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
+        ],
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "Cache-Control",
+            "Pragma",
+            "Expires"
+        ]
     })
 );
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Performance Timing Middleware for Key Admin & Data APIs
-app.use((req, res, next) => {
-    const isTargetEndpoint =
-        req.path.startsWith("/api/admin/dashboard") ||
-        req.path.startsWith("/api/users") ||
-        req.path.startsWith("/api/vehicles") ||
-        req.path.startsWith("/api/routes") ||
-        req.path.startsWith("/api/ai-agent") ||
-        req.path.startsWith("/api/schedules");
-
-    if (isTargetEndpoint) {
-        const start = Date.now();
-
-        res.on("finish", () => {
-            console.log(
-                `[PERFORMANCE] ${req.method} ${req.originalUrl}: ${Date.now() - start} ms`
-            );
-        });
-    }
-
-    next();
-});
-
-// Security headers & disable HTTP caching on all API endpoints
-app.use("/api", (req, res, next) => {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "DENY");
-    res.setHeader("X-XSS-Protection", "1; mode=block");
-    res.setHeader(
-        "Strict-Transport-Security",
-        "max-age=31536000; includeSubDomains"
-    );
-
-    res.set(
-        "Cache-Control",
-        "no-store, no-cache, must-revalidate, proxy-revalidate"
-    );
-    res.set("Pragma", "no-cache");
-    res.set("Expires", "0");
-    res.set("Surrogate-Control", "no-store");
-
-    next();
-});
-
-// General API Rate Limiter
 app.use("/api", apiRateLimiter);
 
-app.use(
-    "/uploads",
-    express.static(path.join(__dirname, "uploads"))
-);
-
-// Database connection
-connectDB().then(() => {
-    seedHistoricalRoutesIfEmpty().catch(() => {});
-});
-
-// Dashboard metrics
-app.get("/api/admin/dashboard/metrics", async (req, res) => {
-    try {
-        const metrics = await getAIMetrics();
-        res.json(metrics);
-    } catch (error) {
-        console.error("Dashboard metrics error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Unable to load dashboard metrics."
-        });
-    }
-});
-
-// Existing API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/vehicles", vehicleRoutes);
@@ -144,88 +86,75 @@ app.use("/api/routes", routeRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/excel", excelRoutes);
 app.use("/api/stops", stopRoutes);
-app.use("/api/map-locations", mapLocationRoutes);
+app.use("/api/map-location", mapLocationRoutes);
 app.use("/api/ai-agent", aiAgentRoutes);
 app.use("/api/location", locationRoutes);
-app.use("/api/locations", locationRoutes);
 app.use("/api/inward-starting-places", inwardStartingPlaceRoutes);
-
-// WhatsApp and Automation API
 app.use("/api/whatsapp", whatsappRoutes);
-app.use("/api/automation", whatsappRoutes);
-
-// Hardened Security Pipeline API
-// JWT Auth -> RBAC Authorization -> Rate Limiter -> Strong Endpoint
 app.use("/api/secure", secureRoutes);
 
-// Root
-app.get("/", (req, res) => {
-    res.json({
-        success: true,
-        message: "AI Transportation Management System API is running"
-    });
-});
-
-// General health check
 app.get("/api/health", (req, res) => {
-    const dbConnected = isDbConnected();
-
-    res.status(dbConnected ? 200 : 503).json({
-        success: dbConnected,
-        app: "ok",
-        database: dbConnected ? "ok" : "unavailable",
+    res.status(200).json({
+        success: true,
+        message: "Transportation Management API is running",
         timestamp: new Date().toISOString()
     });
 });
 
-// Database health check
-app.get("/api/health/db", (req, res) => {
-    const dbStatus = getDbStatus();
-
-    res.status(dbStatus.connected ? 200 : 503).json({
-        success: dbStatus.connected,
-        database: dbStatus.connected ? "ok" : "unavailable",
-        details: {
-            state: dbStatus.state,
-            host: dbStatus.host,
-            name: dbStatus.name
-        },
-        timestamp: new Date().toISOString()
-    });
-});
-
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: `Route not found: ${req.method} ${req.originalUrl}`
-    });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-    console.error("Server Error:", err);
-
-    res.status(500).json({
-        success: false,
-        message: "Internal server error",
-        error:
-            process.env.NODE_ENV === "development"
-                ? err.message
-                : undefined
-    });
-});
-
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, async () => {
-    console.log(`[SERVER] Running on port ${PORT}`);
-    console.log(`🚀 Server running on port ${PORT}`);
-
+app.get("/api/health/db", async (req, res) => {
     try {
-        await startWhatsApp();
-        console.log("📱 WhatsApp service started");
+        const health = await getDBHealth();
+        res.status(200).json(health);
     } catch (error) {
-        console.error("❌ WhatsApp startup failed:", error);
+        res.status(500).json({
+            success: false,
+            message: "Database health check failed",
+            error: error.message
+        });
     }
 });
+
+app.get("/api/ai-agent/metrics", async (req, res, next) => {
+    try {
+        const metrics = await getAIMetrics();
+        res.status(200).json(metrics);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.use((err, req, res, next) => {
+    console.error("[Server Error]", err);
+
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "Internal server error"
+    });
+});
+
+const startServer = async () => {
+    try {
+        await connectDB();
+
+        await seedHistoricalRoutesIfEmpty();
+
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+
+            if (process.env.NODE_ENV === "production") {
+                console.log("Production CORS enabled for the deployed frontend");
+            }
+        });
+
+        startWhatsApp();
+    } catch (error) {
+        console.error("Failed to start server:", error);
+        process.exit(1);
+    }
+};
+
+startServer();
