@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -31,19 +32,32 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// CORS configuration for local development and production
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+    "http://127.0.0.1:5176",
+    "https://transportation-management-38b1.onrender.com"
+];
+
 app.use(
     cors({
-        origin: [
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:5175",
-            "http://localhost:5176",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:5174",
-            "http://127.0.0.1:5175",
-            "http://127.0.0.1:5176"
-        ],
-        credentials: true
+        origin: (origin, callback) => {
+            if (!origin || allowedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+
+            console.warn(`[CORS] Blocked origin: ${origin}`);
+            return callback(new Error("Origin not allowed by CORS"));
+        },
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"]
     })
 );
 
@@ -78,7 +92,10 @@ app.use("/api", (req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("X-XSS-Protection", "1; mode=block");
-    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    res.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains"
+    );
 
     res.set(
         "Cache-Control",
@@ -108,7 +125,6 @@ connectDB().then(() => {
 app.get("/api/admin/dashboard/metrics", async (req, res) => {
     try {
         const metrics = await getAIMetrics();
-
         res.json(metrics);
     } catch (error) {
         console.error("Dashboard metrics error:", error);
@@ -138,7 +154,8 @@ app.use("/api/inward-starting-places", inwardStartingPlaceRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/automation", whatsappRoutes);
 
-// Hardened Security Pipeline API (JWT Auth -> RBAC Authorization -> Rate Limiter -> Strong Endpoint)
+// Hardened Security Pipeline API
+// JWT Auth -> RBAC Authorization -> Rate Limiter -> Strong Endpoint
 app.use("/api/secure", secureRoutes);
 
 // Root
